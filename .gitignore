@@ -1,0 +1,28 @@
+# --- Rust / Cargo ---
+/target
+Cargo.lock
+# (Keep Cargo.lock if this is an end-user application, which Covalence is)
+
+# --- Node / Vue ---
+node_modules
+dist
+dist-ssr
+*.local
+
+# --- IDEs & OS ---
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# --- Logs & Temp ---
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+logs
+*.log
