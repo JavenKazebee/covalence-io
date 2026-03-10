@@ -1,9 +1,9 @@
-use tokio::io::{AsyncBufReadExt, BufReader};
+use crate::drivers::{Driver, DriverContext};
 use async_trait::async_trait;
 use shared::{Event, Message, Value};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::broadcast;
-use tracing::{debug, info};
-use crate::drivers::{Driver, DriverContext};
+use tracing::info;
 
 pub struct VirtualKbDriver {
     id: String,
@@ -21,8 +21,15 @@ impl Driver for VirtualKbDriver {
         &self.id
     }
 
-    async fn start(&self, context: DriverContext, mut rx: broadcast::Receiver<Message>) -> Result<(), String> {
-        info!(driver = self.id, "Starting Virtual Keyboard Driver. Type command below:");
+    async fn start(
+        &self,
+        context: DriverContext,
+        mut rx: broadcast::Receiver<Message>,
+    ) -> Result<(), String> {
+        info!(
+            driver = self.id,
+            "Starting Virtual Keyboard Driver. Type command below:"
+        );
 
         let in_context = context;
         tokio::spawn(async move {
@@ -31,8 +38,10 @@ impl Driver for VirtualKbDriver {
 
             while let Ok(Some(line)) = reader.next_line().await {
                 let input = line.trim();
-                if input.is_empty() { continue; }
-                
+                if input.is_empty() {
+                    continue;
+                }
+
                 if let Some((key, value)) = input.split_once(' ') {
                     let value = match value.parse::<f64>() {
                         Ok(v) => Value::Float(v),
@@ -47,9 +56,17 @@ impl Driver for VirtualKbDriver {
         });
 
         while let Ok(msg) = rx.recv().await {
-            if let Event::Command { target, name: command, params } = msg.payload {
+            if let Event::Command {
+                target,
+                name: command,
+                params,
+            } = msg.payload
+            {
                 if target == self.id || target == "all" {
-                    println!("[from {}] Received command: {} ({:?})", msg.source, command, params);
+                    println!(
+                        "[from {}] Received command: {} ({:?})",
+                        msg.source, command, params
+                    );
                 }
             }
         }

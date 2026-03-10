@@ -19,6 +19,13 @@ pub struct Message {
 
 #[derive(Clone, Debug)]
 pub enum Event {
-    Signal { id: String, value: Value },
-    Command { target: String, name: String, params: HashMap<String, Value> },
+    Signal {
+        id: String,
+        value: Value,
+    },
+    Command {
+        target: String,
+        name: String,
+        params: HashMap<String, Value>,
+    },
 }

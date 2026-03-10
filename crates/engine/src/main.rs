@@ -1,7 +1,7 @@
 mod drivers;
-use shared::{Event, Message, Value};
+use shared::Message;
 use tokio::sync::broadcast;
-use tokio::time::{self, Duration};
+use tokio::time::Duration;
 use tracing::{Level, info};
 use tracing_subscriber::FmtSubscriber;
 
@@ -19,14 +19,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Engine starting...");
 
     // Global event bus
-    let (tx, rx) = broadcast::channel::<Message>(1024);
+    let (tx, _rx) = broadcast::channel::<Message>(1024);
 
     // Driver manager
     let mut manager = DriverManager::new(tx.clone());
     manager.register(Box::new(VirtualKbDriver::new("keyboard_1")));
     let cache = manager.get_cache();
     manager.start_all().await;
-
 
     // Print signals to the console
     let mut signal_rx = tx.subscribe();

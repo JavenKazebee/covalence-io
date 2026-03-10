@@ -2,14 +2,13 @@ pub mod virtual_kb;
 
 use async_trait::async_trait;
 use dashmap::DashMap;
-use shared::{Event, Message, Value};
+use shared::{Message, Value};
 use std::sync::Arc;
 use tokio::sync::broadcast;
-use tracing::{error, warn};
+use tracing::error;
 
 pub struct DriverContext {
     pub name: String,
-    pub tx: broadcast::Sender<Message>,
     pub cache: Arc<DashMap<String, Value>>,
 }
 
@@ -52,12 +51,10 @@ impl DriverManager {
     pub async fn start_all(self) {
         for driver in self.drivers {
             let id = driver.id().to_string();
-            let tx = self.tx.clone();
             let cache = self.cache.clone();
             let rx = self.tx.subscribe();
             let context = DriverContext {
                 name: id.clone(),
-                tx,
                 cache,
             };
             tokio::spawn(async move {
