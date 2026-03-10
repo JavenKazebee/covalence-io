@@ -1,46 +1,59 @@
-use tokio::sync::broadcast;
+mod drivers;
 use shared::{Event, Message, Value};
+use tokio::sync::broadcast;
 use tokio::time::{self, Duration};
+use tracing::{Level, info};
+use tracing_subscriber::FmtSubscriber;
+
+use crate::drivers::DriverManager;
+use crate::drivers::virtual_kb::VirtualKbDriver;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let (tx, _rx) = broadcast::channel::<Message>(1024);
+    // Initialize logging
+    let subscriber = FmtSubscriber::builder()
+        .with_max_level(Level::INFO)
+        .finish();
+    tracing::subscriber::set_global_default(subscriber)?;
 
-    println!("Engine started");
+    info!("Engine starting...");
 
-    let mut router = tx.subscribe();
+    // Global event bus
+    let (tx, rx) = broadcast::channel::<Message>(1024);
+
+    // Driver manager
+    let mut manager = DriverManager::new(tx.clone());
+    manager.register(Box::new(VirtualKbDriver::new("keyboard_1")));
+    let cache = manager.get_cache();
+    manager.start_all().await;
+
+
+    // Print signals to the console
+    let mut signal_rx = tx.subscribe();
     tokio::spawn(async move {
-        while let Ok(msg) = router.recv().await {
-            println!("Received message: {:?}", msg);
+        while let Ok(msg) = signal_rx.recv().await {
+            info!("Received signal: {} ({:?})", msg.source, msg.payload);
         }
     });
 
-    let tx_heartbeat = tx.clone(); // Clone the transmitter for this task
+    // Print telemetry cache to the console
+    let cache_monitor = cache.clone();
     tokio::spawn(async move {
-        let mut interval = time::interval(Duration::from_secs(2));
-        let mut count = 0;
-
+        let mut interval = tokio::time::interval(Duration::from_secs(5));
         loop {
-            interval.tick().await; // Wait for the next 2-second mark
-            count += 1;
-
-            let heartbeat_msg = Message {
-                seq: count,
-                source: "internal_clock".into(),
-                payload: Event::Input {
-                    source: "system".into(),
-                    id: "heartbeat".into(),
-                    value: Value::String(format!("Tick {}", count)),
-                },
-            };
-
-            // Send it to the bus!
-            let _ = tx_heartbeat.send(heartbeat_msg);
+            interval.tick().await;
+            if !cache_monitor.is_empty() {
+                println!("------ Telemetry Cache ------");
+                for entry in cache_monitor.iter() {
+                    println!("  {}: {:?}", entry.key(), entry.value());
+                }
+                println!("--------------------------------");
+            }
         }
     });
 
-    println!("All systems go.Press Ctrl+C to shut down...");
+    info!("All systems go.Press Ctrl+C to shut down...");
     tokio::signal::ctrl_c().await?;
-    println!("Shutting down...");
+    info!("Shutting down...");
     Ok(())
 }
