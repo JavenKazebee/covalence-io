@@ -1,10 +1,13 @@
+use std::collections::HashMap;
+
 #[derive(Clone, Debug)]
 pub enum Value {
+    Null,
     Bool(bool),
     Float(f64),
     String(String),
     List(Vec<Value>),
-    Map(std::collections::HashMap<String, Value>),
+    Object(std::collections::HashMap<String, Value>),
 }
 
 #[derive(Clone, Debug)]
@@ -16,6 +19,6 @@ pub struct Message {
 
 #[derive(Clone, Debug)]
 pub enum Event {
-    Input { source: String, id: String, value: Value },
-    Action { target: String, command: String, params: Option<Value> },
+    Signal { id: String, value: Value },
+    Command { target: String, name: String, params: HashMap<String, Value> },
 }
