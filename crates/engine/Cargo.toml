@@ -12,3 +12,5 @@ async-trait = "0.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dashmap = "6.1.0"
+uuid = { version = "1.22.0", features = ["v4"] }
+petgraph = "0.8.3"

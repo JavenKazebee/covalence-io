@@ -10,6 +10,29 @@ pub enum Value {
     Object(std::collections::HashMap<String, Value>),
 }
 
+impl Value {
+    pub fn get_type(&self) -> DataType {
+        match self {
+            Value::Null => DataType::Any,
+            Value::Bool(_) => DataType::Bool,
+            Value::Float(_) => DataType::Float,
+            Value::String(_) => DataType::String,
+            Value::List(_) => DataType::List,
+            Value::Object(_) => DataType::Object,
+        }
+    }
+}
+
+pub enum DataType {
+    Any,
+    Bool,
+    Float,
+    String,
+    List,
+    Object,
+    Trigger,
+}
+
 #[derive(Clone, Debug)]
 pub struct Message {
     pub seq: u64,

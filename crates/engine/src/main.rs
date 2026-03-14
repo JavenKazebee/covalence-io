@@ -1,4 +1,6 @@
 mod drivers;
+mod nodes;
+
 use shared::Message;
 use tokio::sync::broadcast;
 use tokio::time::Duration;
