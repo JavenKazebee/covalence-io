@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 pub mod registry;
 pub mod manager;
+pub mod impls;
 
 pub struct Pin {
     pub name: &'static str,
@@ -18,8 +19,8 @@ pub struct Edge {
 
 pub trait Node {
     fn id(&self) -> &'static str;
-    fn inputs(&self) -> Vec<Pin>;
-    fn outputs(&self) -> Vec<Pin>;
+    fn inputs(&self, instance: &NodeInstance) -> Vec<Pin>;
+    fn outputs(&self, instance: &NodeInstance) -> Vec<Pin>;
     fn execute(
         &self,
         inputs: &HashMap<String, Value>,
@@ -31,5 +32,6 @@ pub struct NodeInstance {
     pub id: Uuid,
     pub node_type: String,
     pub config: HashMap<String, Value>,
-    pub last_outputs: HashMap<String, Value>,    
+    pub last_outputs: HashMap<String, Value>,
+    pub last_error: Option<String>,
 }

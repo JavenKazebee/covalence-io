@@ -8,6 +8,7 @@ pub enum Value {
     String(String),
     List(Vec<Value>),
     Object(std::collections::HashMap<String, Value>),
+    Type(DataType),
 }
 
 impl Value {
@@ -19,10 +20,50 @@ impl Value {
             Value::String(_) => DataType::String,
             Value::List(_) => DataType::List,
             Value::Object(_) => DataType::Object,
+            Value::Type(_) => DataType::Any,
         }
     }
+
+    pub fn as_datatype(&self) -> Option<DataType> {
+        match self {
+            Value::Type(t) => Some(t.clone()),
+            _ => None,
+        }
+    }
+
+    pub fn as_float(&self) -> Option<f64> {
+        match self {
+            Value::Float(f) => Some(*f),
+            _ => None,
+        }
+    }
+
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            Value::Bool(b) => Some(*b),
+            _ => None,
+        }
+    }
+
+    pub fn as_string(&self) -> Option<String> {
+        match self {
+            Value::String(s) => Some(s.clone()),
+            _ => None,
+        }
+    }
+
+    pub fn as_list(&self) -> Option<Vec<Value>> {
+        match self {
+            Value::List(l) => Some(l.clone()),
+            _ => None,
+        }
+    }
+    
+    
+    
 }
 
+#[derive(Clone, Debug)]
 pub enum DataType {
     Any,
     Bool,
