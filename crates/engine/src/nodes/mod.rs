@@ -25,7 +25,7 @@ pub trait Node {
         &self,
         inputs: &HashMap<String, Value>,
         config: &HashMap<String, Value>,
-    ) -> HashMap<String, Value>;
+    ) -> NodeExecutionResult;
 }
 
 pub struct NodeInstance {
@@ -34,4 +34,9 @@ pub struct NodeInstance {
     pub config: HashMap<String, Value>,
     pub last_outputs: HashMap<String, Value>,
     pub last_error: Option<String>,
+}
+
+pub struct NodeExecutionResult {
+    pub outputs: HashMap<String, Value>,
+    pub error: Option<String>,
 }

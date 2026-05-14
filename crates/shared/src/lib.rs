@@ -1,4 +1,16 @@
 use std::collections::HashMap;
+use std::fmt;
+
+#[derive(Clone, Debug)]
+pub enum DataType {
+    Any,
+    Bool,
+    Float,
+    String,
+    List,
+    Object,
+    Trigger,
+}
 
 #[derive(Clone, Debug)]
 pub enum Value {
@@ -23,55 +35,127 @@ impl Value {
             Value::Type(_) => DataType::Any,
         }
     }
-
-    pub fn as_datatype(&self) -> Option<DataType> {
-        match self {
-            Value::Type(t) => Some(t.clone()),
-            _ => None,
-        }
-    }
-
-    pub fn as_float(&self) -> Option<f64> {
-        match self {
-            Value::Float(f) => Some(*f),
-            _ => None,
-        }
-    }
-
-    pub fn as_bool(&self) -> Option<bool> {
-        match self {
-            Value::Bool(b) => Some(*b),
-            _ => None,
-        }
-    }
-
-    pub fn as_string(&self) -> Option<String> {
-        match self {
-            Value::String(s) => Some(s.clone()),
-            _ => None,
-        }
-    }
-
-    pub fn as_list(&self) -> Option<Vec<Value>> {
-        match self {
-            Value::List(l) => Some(l.clone()),
-            _ => None,
-        }
-    }
-    
-    
-    
 }
 
-#[derive(Clone, Debug)]
-pub enum DataType {
-    Any,
-    Bool,
-    Float,
-    String,
-    List,
-    Object,
-    Trigger,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConversionError;
+
+impl fmt::Display for ConversionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Conversion error")
+    }
+}
+
+impl std::error::Error for ConversionError {}
+
+impl TryFrom<&Value> for f64 {
+    type Error = ConversionError;
+
+    fn try_from(value: &Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::Float(x) => Ok(*x),
+            _ => Err(ConversionError),
+        }
+    }
+}
+
+impl TryFrom<&Value> for bool {
+    type Error = ConversionError;
+
+    fn try_from(value: &Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::Bool(b) => Ok(*b),
+            _ => Err(ConversionError),
+        }
+    }
+}
+
+impl TryFrom<&Value> for String {
+    type Error = ConversionError;
+
+    fn try_from(value: &Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::String(s) => Ok(s.clone()),
+            _ => Err(ConversionError),
+        }
+    }
+}
+
+impl TryFrom<&Value> for Vec<Value> {
+    type Error = ConversionError;
+
+    fn try_from(value: &Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::List(l) => Ok(l.clone()),
+            _ => Err(ConversionError),
+        }
+    }
+}
+
+impl TryFrom<&Value> for HashMap<String, Value> {
+    type Error = ConversionError;
+
+    fn try_from(value: &Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::Object(m) => Ok(m.clone()),
+            _ => Err(ConversionError),
+        }
+    }
+}
+
+impl TryFrom<&Value> for DataType {
+    type Error = ConversionError;
+
+    fn try_from(value: &Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::Type(t) => Ok(t.clone()),
+            _ => Err(ConversionError),
+        }
+    }
+}
+
+impl TryFrom<&Value> for () {
+    type Error = ConversionError;
+
+    fn try_from(value: &Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::Null => Ok(()),
+            _ => Err(ConversionError),
+        }
+    }
+}
+
+impl TryFrom<Value> for String {
+    type Error = ConversionError;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::String(s) => Ok(s),
+            _ => Err(ConversionError),
+        }
+    }
+}
+
+impl TryFrom<Value> for Vec<Value> {
+    type Error = ConversionError;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::List(l) => Ok(l),
+            _ => Err(ConversionError),
+        }
+    }
+}
+
+impl TryFrom<Value> for HashMap<String, Value> {
+    type Error = ConversionError;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::Object(m) => Ok(m),
+            _ => Err(ConversionError),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
