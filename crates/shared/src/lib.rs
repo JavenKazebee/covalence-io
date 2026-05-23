@@ -35,6 +35,13 @@ impl Value {
             Value::Type(_) => DataType::Any,
         }
     }
+
+    pub fn as_datatype(&self) -> Option<DataType> {
+        match self {
+            Value::Type(t) => Some(t.clone()),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

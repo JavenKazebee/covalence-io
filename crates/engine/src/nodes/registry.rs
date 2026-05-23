@@ -8,7 +8,9 @@ pub struct NodeRegistry {
 
 impl NodeRegistry {
     pub fn new() -> Self {
-        Self { nodes: HashMap::new() }
+        Self {
+            nodes: HashMap::new(),
+        }
     }
 
     pub fn register<T: Node + 'static>(&mut self, node: T) {

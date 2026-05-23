@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use shared::{DataType, Value};
 use uuid::Uuid;
 
-pub mod registry;
-pub mod manager;
 pub mod impls;
+pub mod manager;
+pub mod registry;
 
 pub struct Pin {
     pub name: &'static str,
