@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
-use shared::{DataType, Value};
+use shared::{DataType, Message, Value};
+use tokio::sync::broadcast;
 
 use crate::nodes::{Node, NodeExecutionResult, NodeInstance, Pin};
 
@@ -51,15 +52,21 @@ impl Node for TypeConverter {
     }
 
     fn inputs(&self, _instance: &NodeInstance) -> Vec<Pin> {
-        vec![Pin {
-            name: "in",
-            data_type: DataType::Any,
-        }]
+        vec![
+            Pin {
+                name: "in",
+                data_type: DataType::Any,
+            },
+            Pin {
+                name: "target_type",
+                data_type: DataType::String,
+            },
+        ]
     }
 
     fn outputs(&self, instance: &NodeInstance) -> Vec<Pin> {
         let target_type = instance
-            .config
+            .defaults
             .get("target_type")
             .and_then(|v| v.as_datatype())
             .unwrap_or(DataType::Any);
@@ -72,16 +79,16 @@ impl Node for TypeConverter {
     fn execute(
         &self,
         inputs: &HashMap<String, Value>,
-        config: &HashMap<String, Value>,
+        _tx: &broadcast::Sender<Message>,
     ) -> NodeExecutionResult {
         let mut out = HashMap::new();
 
-        let target_type = match config.get("target_type").and_then(|v| v.as_datatype()) {
+        let target_type = match inputs.get("target_type").and_then(|v| v.as_datatype()) {
             Some(t) => t,
             None => {
                 return NodeExecutionResult {
                     outputs: out,
-                    error: Some("target_type config is missing or invalid".into()),
+                    error: Some("target_type input is missing or invalid".into()),
                 };
             }
         };

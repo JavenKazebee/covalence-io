@@ -14,6 +14,9 @@ cargo build
 # Check for errors without building
 cargo check
 
+# Format
+cargo fmt
+
 # Run tests
 cargo test
 
@@ -50,16 +53,28 @@ The only current driver is `VirtualKbDriver` — a stdin-based keyboard simulato
 
 A `petgraph::StableGraph` where nodes are `NodeInstance` and edges are `Edge` (carrying `from_pin`/`to_pin` names).
 
-- **`Node` trait** — implement `id()`, `inputs()`, `outputs()`, and `execute()`. Inputs/outputs return `Vec<Pin>` which can be dynamic based on the instance's `config`.
+- **`Node` trait** — implement `id()`, `inputs()`, `outputs()`, and `execute()`. Inputs/outputs return `Vec<Pin>` which can be dynamic based on the instance's `defaults`.
 - **`NodeRegistry`** — maps node type IDs (e.g. `"logic/type_converter"`) to `Box<dyn Node>`.
-- **`NodeManager`** — owns the graph and registry. `run_from(uuid)` does BFS to find downstream nodes then executes them in topological order. `run_all()` executes the entire graph in topological order. Execution resolves inputs by reading `last_outputs` from upstream nodes via incoming edges.
+- **`NodeManager`** — owns the graph and registry. `run_from(uuid)` does BFS to find downstream nodes then executes them in topological order. `run_all()` executes the entire graph in topological order. Execution resolves inputs by reading `last_outputs` from upstream nodes via incoming edges, then filling any unconnected pins from `NodeInstance.defaults`.
 
 ### Value System (`crates/shared/src/lib.rs`)
 
 `Value` is the universal data type: `Null | Bool | Float | String | List | Object | Trigger`. `TryFrom<&Value>` conversions are implemented for all concrete Rust types. Nodes receive and return `HashMap<String, Value>` for their input/output pins.
+
+### Pin Defaults
+
+Every node parameter is an input pin. `NodeInstance.defaults` holds fallback values for unconnected pins — set at graph-build time, overridden at runtime by any connected upstream pin. Topology-affecting params (e.g. `target_type` on `TypeConverter`, which shapes the output pin) are read from `instance.defaults` inside `outputs()` and are not connectable.
 
 ### Adding a New Node
 
 1. Create a struct implementing `Node` in `crates/engine/src/nodes/impls/`
 2. Register it in `NodeRegistry` via `registry.register(MyNode)`
 3. Node type IDs use slash-namespacing: `"category/node_name"`
+
+---
+
+### Design Goals
+
+This engine is a **Bitfocus Companion replacement** for live AVL (audio/video/lighting) production.
+It must handle thousands of inputs and commands per second and support any device type, including
+bidirectional devices (e.g. Stream Deck: button inputs + display outputs).

@@ -17,6 +17,10 @@ impl NodeRegistry {
         self.nodes.insert(node.id().to_string(), Box::new(node));
     }
 
+    pub fn register_boxed(&mut self, node: Box<dyn Node>) {
+        self.nodes.insert(node.id().to_string(), node);
+    }
+
     pub fn get(&self, id: &str) -> Option<&dyn Node> {
         self.nodes.get(id).map(|node| node.as_ref())
     }

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
-use shared::{DataType, Value};
+use shared::{DataType, Message, Value};
+use tokio::sync::broadcast;
 use uuid::Uuid;
 
 pub mod impls;
@@ -17,21 +18,23 @@ pub struct Edge {
     pub to_pin: String,
 }
 
-pub trait Node {
+pub trait Node: Send + Sync {
     fn id(&self) -> &'static str;
     fn inputs(&self, instance: &NodeInstance) -> Vec<Pin>;
     fn outputs(&self, instance: &NodeInstance) -> Vec<Pin>;
     fn execute(
         &self,
         inputs: &HashMap<String, Value>,
-        config: &HashMap<String, Value>,
+        tx: &broadcast::Sender<Message>,
     ) -> NodeExecutionResult;
+
 }
 
 pub struct NodeInstance {
     pub id: Uuid,
     pub node_type: String,
-    pub config: HashMap<String, Value>,
+    /// Default values for input pins. Connected pins override these at execution time.
+    pub defaults: HashMap<String, Value>,
     pub last_outputs: HashMap<String, Value>,
     pub last_error: Option<String>,
 }

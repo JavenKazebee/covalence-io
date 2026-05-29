@@ -5,7 +5,8 @@ use petgraph::{
     stable_graph::{NodeIndex, StableGraph},
     visit::{Bfs, Topo},
 };
-use shared::Value;
+use shared::{Message, Value};
+use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use crate::nodes::{Edge, NodeInstance, registry::NodeRegistry};
@@ -14,23 +15,25 @@ pub struct NodeManager {
     pub graph: StableGraph<NodeInstance, Edge>,
     pub registry: NodeRegistry,
     index_map: HashMap<Uuid, NodeIndex>,
+    tx: broadcast::Sender<Message>,
 }
 
 impl NodeManager {
-    pub fn new(registry: NodeRegistry) -> Self {
+    pub fn new(registry: NodeRegistry, tx: broadcast::Sender<Message>) -> Self {
         Self {
             graph: StableGraph::new(),
             registry,
             index_map: HashMap::new(),
+            tx,
         }
     }
 
-    pub fn add_node(&mut self, node_type: &str, config: HashMap<String, Value>) -> Option<Uuid> {
+    pub fn add_node(&mut self, node_type: &str, defaults: HashMap<String, Value>) -> Option<Uuid> {
         let id = Uuid::new_v4();
         let instance = NodeInstance {
             id,
             node_type: node_type.to_string(),
-            config,
+            defaults,
             last_outputs: HashMap::new(),
             last_error: None,
         };
@@ -61,7 +64,6 @@ impl NodeManager {
 
         let mut affected_indices = HashSet::new();
         let mut bfs = Bfs::new(&self.graph, start_index);
-
         while let Some(node_index) = bfs.next(&self.graph) {
             affected_indices.insert(node_index);
         }
@@ -82,6 +84,7 @@ impl NodeManager {
     }
 
     fn execute_node(&mut self, index: NodeIndex) {
+        // 1. Collect inputs from upstream neighbors
         let mut inputs = HashMap::new();
         let mut edges = self
             .graph
@@ -95,6 +98,22 @@ impl NodeManager {
             if let Some(source_output) = source.last_outputs.get(&edge.from_pin) {
                 inputs.insert(edge.to_pin.clone(), source_output.clone());
             }
+        }
+
+        // 2. Clone what we need before mutably borrowing the graph
+        let node_type = self.graph[index].node_type.clone();
+        let defaults = self.graph[index].defaults.clone();
+
+        // 3. Fill unconnected pins from defaults (connected pins take precedence)
+        for (key, val) in defaults {
+            inputs.entry(key).or_insert(val);
+        }
+
+        // 4. Look up and execute
+        if let Some(node) = self.registry.get(&node_type) {
+            let result = node.execute(&inputs, &self.tx);
+            self.graph[index].last_outputs = result.outputs;
+            self.graph[index].last_error = result.error;
         }
     }
 }

@@ -24,8 +24,9 @@ impl Driver for VirtualKbDriver {
     async fn start(
         &self,
         context: DriverContext,
-        mut rx: broadcast::Receiver<Message>,
+        rx: broadcast::Receiver<Message>,
     ) -> Result<(), String> {
+        let mut rx = rx;
         info!(
             driver = self.id,
             "Starting Virtual Keyboard Driver. Type command below:"

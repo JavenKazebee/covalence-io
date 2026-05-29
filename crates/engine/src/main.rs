@@ -8,7 +8,11 @@ use tracing::{Level, info};
 use tracing_subscriber::FmtSubscriber;
 
 use crate::drivers::DriverManager;
+use crate::drivers::timer::{TimerDriver, TimerMode};
 use crate::drivers::virtual_kb::VirtualKbDriver;
+use crate::nodes::impls::logic::TypeConverter;
+use crate::nodes::manager::NodeManager;
+use crate::nodes::registry::NodeRegistry;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -26,8 +30,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Driver manager
     let mut manager = DriverManager::new(tx.clone());
     manager.register(Box::new(VirtualKbDriver::new("keyboard_1")));
+    manager.register(Box::new(TimerDriver::new(
+        "show_clock",
+        TimerMode::CountUp,
+        true,
+    )));
+    manager.register(Box::new(TimerDriver::new(
+        "break_timer",
+        TimerMode::CountDown { from_ms: 600_000 },
+        false,
+    )));
+    manager.register(Box::new(TimerDriver::new(
+        "heartbeat",
+        TimerMode::Interval { every_ms: 1_000 },
+        true,
+    )));
+
     let cache = manager.get_cache();
+
+    // Collect driver-defined nodes before start_all() consumes the manager
+    let driver_nodes = manager.collect_nodes();
     manager.start_all().await;
+
+    // Node registry — built-in nodes + driver-contributed nodes
+    let mut registry = NodeRegistry::new();
+    registry.register(TypeConverter);
+    for node in driver_nodes {
+        registry.register_boxed(node);
+    }
+
+    let _node_manager = NodeManager::new(registry, tx.clone());
 
     // Print signals to the console
     let mut signal_rx = tx.subscribe();
@@ -53,7 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    info!("All systems go.Press Ctrl+C to shut down...");
+    info!("All systems go. Press Ctrl+C to shut down...");
     tokio::signal::ctrl_c().await?;
     info!("Shutting down...");
     Ok(())
