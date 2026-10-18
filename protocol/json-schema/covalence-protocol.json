@@ -1,0 +1,1113 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "covalence-protocol.json",
+    "$defs": {
+        "Request": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "Request.json",
+            "type": "object",
+            "properties": {
+                "t": {
+                    "type": "string",
+                    "const": "req"
+                },
+                "id": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 4294967295,
+                    "description": "Unique per direction per link."
+                },
+                "m": {
+                    "type": "string",
+                    "description": "Method name, for example `host.hello`."
+                },
+                "conn": {
+                    "type": "string",
+                    "description": "Connection this message concerns. Hosts route on it without decoding `p`."
+                },
+                "p": {
+                    "description": "Method parameters."
+                }
+            },
+            "required": [
+                "t",
+                "id",
+                "m",
+                "p"
+            ],
+            "description": "A request; the peer must answer with a response carrying the same `id`."
+        },
+        "ResponseOk": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "ResponseOk.json",
+            "type": "object",
+            "properties": {
+                "t": {
+                    "type": "string",
+                    "const": "res"
+                },
+                "id": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 4294967295
+                },
+                "ok": {
+                    "type": "boolean",
+                    "const": true
+                },
+                "r": {
+                    "description": "Method result."
+                }
+            },
+            "required": [
+                "t",
+                "id",
+                "ok",
+                "r"
+            ],
+            "description": "A successful response."
+        },
+        "ResponseErr": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "ResponseErr.json",
+            "type": "object",
+            "properties": {
+                "t": {
+                    "type": "string",
+                    "const": "res"
+                },
+                "id": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 4294967295
+                },
+                "ok": {
+                    "type": "boolean",
+                    "const": false
+                },
+                "e": {
+                    "$ref": "ProtocolError.json"
+                }
+            },
+            "required": [
+                "t",
+                "id",
+                "ok",
+                "e"
+            ],
+            "description": "A failed response."
+        },
+        "ProtocolError": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "ProtocolError.json",
+            "type": "object",
+            "properties": {
+                "code": {
+                    "$ref": "ErrorCode.json"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "data": {},
+                "retryable": {
+                    "type": "boolean"
+                }
+            },
+            "required": [
+                "code",
+                "message"
+            ]
+        },
+        "ErrorCode": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "ErrorCode.json",
+            "anyOf": [
+                {
+                    "type": "string",
+                    "const": "invalid_request"
+                },
+                {
+                    "type": "string",
+                    "const": "unknown_method"
+                },
+                {
+                    "type": "string",
+                    "const": "unsupported_version"
+                },
+                {
+                    "type": "string",
+                    "const": "invalid_params"
+                },
+                {
+                    "type": "string",
+                    "const": "not_found"
+                },
+                {
+                    "type": "string",
+                    "const": "not_connected"
+                },
+                {
+                    "type": "string",
+                    "const": "permission_denied"
+                },
+                {
+                    "type": "string",
+                    "const": "action_failed"
+                },
+                {
+                    "type": "string",
+                    "const": "timeout"
+                },
+                {
+                    "type": "string",
+                    "const": "cancelled"
+                },
+                {
+                    "type": "string",
+                    "const": "stale_term"
+                },
+                {
+                    "type": "string",
+                    "const": "restart_required"
+                },
+                {
+                    "type": "string",
+                    "const": "overloaded"
+                },
+                {
+                    "type": "string",
+                    "const": "internal"
+                }
+            ],
+            "description": "Spec §9."
+        },
+        "Notification": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "Notification.json",
+            "type": "object",
+            "properties": {
+                "t": {
+                    "type": "string",
+                    "const": "ntf"
+                },
+                "m": {
+                    "type": "string"
+                },
+                "conn": {
+                    "type": "string"
+                },
+                "p": {}
+            },
+            "required": [
+                "t",
+                "m",
+                "p"
+            ],
+            "description": "A fire-and-forget notification."
+        },
+        "Empty": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "Empty.json",
+            "type": "object",
+            "properties": {},
+            "description": "Params or result of a method that carries none."
+        },
+        "HostHello": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "HostHello.json",
+            "type": "object",
+            "properties": {
+                "protocol": {
+                    "$ref": "ProtocolRange.json"
+                },
+                "host": {
+                    "$ref": "HostInfo.json"
+                },
+                "node": {
+                    "$ref": "NodeInfo.json",
+                    "description": "Orbital only."
+                },
+                "capabilities": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "Capability.json"
+                    }
+                }
+            },
+            "required": [
+                "protocol",
+                "host",
+                "capabilities"
+            ],
+            "description": "`host.hello` params (host → core, req). Result: `HostWelcome`."
+        },
+        "ProtocolRange": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "ProtocolRange.json",
+            "type": "object",
+            "properties": {
+                "min": {
+                    "type": "string",
+                    "description": "Lowest protocol version the host speaks, for example `0.1.0`."
+                },
+                "max": {
+                    "type": "string",
+                    "description": "Highest protocol version the host speaks, for example `0.1.x`."
+                }
+            },
+            "required": [
+                "min",
+                "max"
+            ]
+        },
+        "HostInfo": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "HostInfo.json",
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "$ref": "HostKind.json"
+                },
+                "version": {
+                    "type": "string"
+                },
+                "runtime": {
+                    "type": "string",
+                    "description": "For example `deno 2.9.5`."
+                }
+            },
+            "required": [
+                "kind",
+                "version"
+            ]
+        },
+        "HostKind": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "HostKind.json",
+            "anyOf": [
+                {
+                    "type": "string",
+                    "const": "deno-shared"
+                },
+                {
+                    "type": "string",
+                    "const": "deno-isolated"
+                },
+                {
+                    "type": "string",
+                    "const": "orbital"
+                },
+                {
+                    "type": "string",
+                    "const": "wasm"
+                },
+                {
+                    "type": "string",
+                    "const": "external"
+                }
+            ]
+        },
+        "NodeInfo": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "NodeInfo.json",
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "publicKey": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "id",
+                "name",
+                "publicKey"
+            ]
+        },
+        "Capability": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "Capability.json",
+            "anyOf": [
+                {
+                    "type": "string",
+                    "const": "workers"
+                },
+                {
+                    "type": "string",
+                    "const": "permissions"
+                },
+                {
+                    "type": "string",
+                    "const": "surfaces"
+                },
+                {
+                    "type": "string",
+                    "const": "transports"
+                },
+                {
+                    "type": "string",
+                    "const": "simulate"
+                },
+                {
+                    "type": "string",
+                    "const": "computerControl"
+                }
+            ]
+        },
+        "HostWelcome": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "HostWelcome.json",
+            "type": "object",
+            "properties": {
+                "protocol": {
+                    "type": "string",
+                    "description": "The protocol version chosen for this session."
+                },
+                "session": {
+                    "type": "string"
+                },
+                "term": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 4294967295,
+                    "description": "Leadership term (ADR 0008)."
+                },
+                "coreId": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "protocol",
+                "session",
+                "term",
+                "coreId"
+            ],
+            "description": "`host.hello` result."
+        },
+        "JsonSchemaDoc": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "JsonSchemaDoc.json",
+            "type": "object",
+            "properties": {},
+            "unevaluatedProperties": {},
+            "description": "A JSON Schema document. Opaque to the protocol (ADR 0016)."
+        },
+        "PluginLoad": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "PluginLoad.json",
+            "type": "object",
+            "properties": {
+                "plugin": {
+                    "type": "string",
+                    "description": "Plugin ID, for example `io.covalence.videohub`."
+                },
+                "version": {
+                    "type": "string"
+                },
+                "bundle": {
+                    "type": "string",
+                    "description": "Path to the bundle, or a blob reference for an Orbital."
+                }
+            },
+            "required": [
+                "plugin",
+                "version",
+                "bundle"
+            ],
+            "description": "`plugin.load` params (core → host, req). Result: `PluginLoaded`."
+        },
+        "PluginLoaded": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "PluginLoaded.json",
+            "type": "object",
+            "properties": {
+                "manifest": {
+                    "$ref": "Manifest.json"
+                }
+            },
+            "required": [
+                "manifest"
+            ],
+            "description": "`plugin.load` result."
+        },
+        "Manifest": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "Manifest.json",
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "Reverse-DNS ID, for example `io.covalence.videohub`."
+                },
+                "name": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "string",
+                    "description": "Semver."
+                },
+                "protocol": {
+                    "type": "string",
+                    "description": "Semver range of supported protocol versions, for example `^0.1`."
+                },
+                "sdk": {
+                    "type": "string"
+                },
+                "runtime": {
+                    "type": "string",
+                    "const": "deno"
+                },
+                "license": {
+                    "type": "string"
+                },
+                "authors": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "homepage": {
+                    "type": "string"
+                },
+                "categories": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "icon": {
+                    "type": "string"
+                },
+                "config": {
+                    "$ref": "ConfigDef.json"
+                },
+                "secrets": {
+                    "$ref": "#/$defs/RecordSecretDef"
+                },
+                "permissions": {
+                    "$ref": "Permissions.json",
+                    "description": "Declared, but not yet enforced (ADR 0015)."
+                },
+                "connections": {
+                    "$ref": "ConnectionPolicy.json"
+                },
+                "actions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "ActionDef.json"
+                    }
+                },
+                "events": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "EventDef.json"
+                    }
+                },
+                "state": {
+                    "$ref": "#/$defs/RecordUnknown",
+                    "description": "State schema (state spec §1.2–1.4)."
+                },
+                "presets": {
+                    "type": "array",
+                    "items": {}
+                },
+                "surfaces": {
+                    "$ref": "#/$defs/RecordUnknown"
+                },
+                "simulator": {
+                    "$ref": "SimulatorSupport.json"
+                }
+            },
+            "required": [
+                "id",
+                "name",
+                "version",
+                "protocol",
+                "sdk",
+                "runtime",
+                "license",
+                "authors",
+                "categories",
+                "config",
+                "permissions",
+                "connections",
+                "actions",
+                "events",
+                "state"
+            ],
+            "$defs": {
+                "RecordSecretDef": {
+                    "type": "object",
+                    "properties": {},
+                    "unevaluatedProperties": {
+                        "$ref": "SecretDef.json"
+                    }
+                },
+                "RecordUnknown": {
+                    "type": "object",
+                    "properties": {},
+                    "unevaluatedProperties": {}
+                }
+            }
+        },
+        "ConfigDef": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "ConfigDef.json",
+            "type": "object",
+            "properties": {
+                "schema": {
+                    "$ref": "JsonSchemaDoc.json",
+                    "description": "Drives the connection form."
+                },
+                "ui": {
+                    "$ref": "#/$defs/RecordUnknown",
+                    "description": "Field order, groups, help, conditional visibility."
+                },
+                "version": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 4294967295,
+                    "description": "Config schema version (ADR 0006)."
+                }
+            },
+            "required": [
+                "schema",
+                "version"
+            ],
+            "$defs": {
+                "RecordUnknown": {
+                    "type": "object",
+                    "properties": {},
+                    "unevaluatedProperties": {}
+                }
+            }
+        },
+        "SecretDef": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "SecretDef.json",
+            "type": "object",
+            "properties": {
+                "label": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "label"
+            ]
+        },
+        "Permissions": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "Permissions.json",
+            "type": "object",
+            "properties": {
+                "net": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "Templates, for example `{config.host}:{config.port}`."
+                },
+                "serial": {
+                    "type": "boolean"
+                },
+                "udpBroadcast": {
+                    "type": "boolean"
+                },
+                "env": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "ConnectionPolicy": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "ConnectionPolicy.json",
+            "anyOf": [
+                {
+                    "type": "string",
+                    "const": "multiple"
+                },
+                {
+                    "type": "string",
+                    "const": "single"
+                }
+            ],
+            "description": "Policy for standby nodes (ADR 0008)."
+        },
+        "ActionDef": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "ActionDef.json",
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "params": {
+                    "$ref": "JsonSchemaDoc.json"
+                },
+                "result": {
+                    "$ref": "JsonSchemaDoc.json"
+                },
+                "idempotent": {
+                    "type": "boolean",
+                    "description": "Safe to retry with the same call ID."
+                },
+                "cancellable": {
+                    "type": "boolean"
+                },
+                "durationHint": {
+                    "anyOf": [
+                        {
+                            "type": "string",
+                            "const": "instant"
+                        },
+                        {
+                            "type": "string",
+                            "const": "short"
+                        },
+                        {
+                            "type": "string",
+                            "const": "long"
+                        }
+                    ]
+                },
+                "learn": {
+                    "type": "boolean",
+                    "description": "Supports \"learn current values\" for its params."
+                }
+            },
+            "required": [
+                "id",
+                "name",
+                "params"
+            ]
+        },
+        "EventDef": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "EventDef.json",
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "payload": {
+                    "$ref": "JsonSchemaDoc.json"
+                }
+            },
+            "required": [
+                "id",
+                "name"
+            ]
+        },
+        "SimulatorSupport": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "SimulatorSupport.json",
+            "type": "object",
+            "properties": {
+                "stateLevel": {
+                    "type": "boolean"
+                },
+                "protocolLevel": {
+                    "type": "boolean"
+                }
+            },
+            "required": [
+                "stateLevel",
+                "protocolLevel"
+            ]
+        },
+        "ConnCreate": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "ConnCreate.json",
+            "type": "object",
+            "properties": {
+                "plugin": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "string"
+                },
+                "alias": {
+                    "type": "string"
+                },
+                "config": {
+                    "$ref": "#/$defs/RecordUnknown"
+                },
+                "secrets": {
+                    "$ref": "#/$defs/RecordString"
+                },
+                "permissions": {
+                    "$ref": "Permissions.json",
+                    "description": "Resolved from the manifest templates and the config. Not yet enforced (ADR 0015)."
+                },
+                "mode": {
+                    "$ref": "ConnMode.json"
+                },
+                "isolate": {
+                    "type": "boolean"
+                }
+            },
+            "required": [
+                "plugin",
+                "version",
+                "alias",
+                "config",
+                "secrets",
+                "permissions",
+                "mode",
+                "isolate"
+            ],
+            "description": "`conn.create` params (core → host, req). Result: `Empty`.",
+            "$defs": {
+                "RecordUnknown": {
+                    "type": "object",
+                    "properties": {},
+                    "unevaluatedProperties": {}
+                },
+                "RecordString": {
+                    "type": "object",
+                    "properties": {},
+                    "unevaluatedProperties": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "ConnMode": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "ConnMode.json",
+            "anyOf": [
+                {
+                    "type": "string",
+                    "const": "live"
+                },
+                {
+                    "type": "string",
+                    "const": "simulate"
+                }
+            ]
+        },
+        "ConnDestroy": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "ConnDestroy.json",
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "reason"
+            ],
+            "description": "`conn.destroy` params (core → host, req). Result: `Empty`."
+        },
+        "ConnStatus": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "ConnStatus.json",
+            "type": "object",
+            "properties": {
+                "status": {
+                    "$ref": "ConnStatusKind.json"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "detail": {}
+            },
+            "required": [
+                "status"
+            ],
+            "description": "`conn.status` params (host → core, ntf)."
+        },
+        "ConnStatusKind": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "ConnStatusKind.json",
+            "anyOf": [
+                {
+                    "type": "string",
+                    "const": "connecting"
+                },
+                {
+                    "type": "string",
+                    "const": "ok"
+                },
+                {
+                    "type": "string",
+                    "const": "warning"
+                },
+                {
+                    "type": "string",
+                    "const": "error"
+                },
+                {
+                    "type": "string",
+                    "const": "disconnected"
+                }
+            ]
+        },
+        "PathValue": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "PathValue.json",
+            "type": "object",
+            "properties": {
+                "p": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "PathSegment.json"
+                    }
+                },
+                "v": {}
+            },
+            "required": [
+                "p",
+                "v"
+            ],
+            "description": "A path and its value."
+        },
+        "PathSegment": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "PathSegment.json",
+            "anyOf": [
+                {
+                    "type": "string"
+                },
+                {
+                    "type": "integer"
+                }
+            ],
+            "description": "A path segment: a key, or an integer collection key."
+        },
+        "StateSnapshot": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "StateSnapshot.json",
+            "type": "object",
+            "properties": {
+                "values": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "PathValue.json"
+                    }
+                },
+                "complete": {
+                    "type": "boolean",
+                    "const": true
+                }
+            },
+            "required": [
+                "values",
+                "complete"
+            ],
+            "description": "`state.snapshot` params (ntf). Replaces the connection's whole subtree."
+        },
+        "StatePatch": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "StatePatch.json",
+            "type": "object",
+            "properties": {
+                "ops": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "PatchOp.json"
+                    }
+                },
+                "ts": {
+                    "type": "number",
+                    "description": "Unix epoch milliseconds."
+                }
+            },
+            "required": [
+                "ops"
+            ],
+            "description": "`state.patch` params (ntf)."
+        },
+        "PatchOp": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "PatchOp.json",
+            "anyOf": [
+                {
+                    "$ref": "PathValue.json"
+                },
+                {
+                    "$ref": "PathDelete.json"
+                }
+            ]
+        },
+        "PathDelete": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "PathDelete.json",
+            "type": "object",
+            "properties": {
+                "p": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "PathSegment.json"
+                    }
+                },
+                "del": {
+                    "type": "boolean",
+                    "const": true
+                }
+            },
+            "required": [
+                "p",
+                "del"
+            ]
+        },
+        "EventEmit": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "EventEmit.json",
+            "type": "object",
+            "properties": {
+                "event": {
+                    "type": "string"
+                },
+                "payload": {},
+                "ts": {
+                    "type": "number",
+                    "description": "Unix epoch milliseconds."
+                }
+            },
+            "required": [
+                "event"
+            ],
+            "description": "`event.emit` params (ntf)."
+        },
+        "Log": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "Log.json",
+            "type": "object",
+            "properties": {
+                "level": {
+                    "$ref": "LogLevel.json"
+                },
+                "msg": {
+                    "type": "string"
+                },
+                "fields": {
+                    "$ref": "#/$defs/RecordUnknown"
+                }
+            },
+            "required": [
+                "level",
+                "msg"
+            ],
+            "description": "`log` params (ntf). The envelope's `conn` is optional here.",
+            "$defs": {
+                "RecordUnknown": {
+                    "type": "object",
+                    "properties": {},
+                    "unevaluatedProperties": {}
+                }
+            }
+        },
+        "LogLevel": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "LogLevel.json",
+            "anyOf": [
+                {
+                    "type": "string",
+                    "const": "trace"
+                },
+                {
+                    "type": "string",
+                    "const": "debug"
+                },
+                {
+                    "type": "string",
+                    "const": "info"
+                },
+                {
+                    "type": "string",
+                    "const": "warn"
+                },
+                {
+                    "type": "string",
+                    "const": "error"
+                }
+            ]
+        },
+        "ActionInvoke": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "ActionInvoke.json",
+            "type": "object",
+            "properties": {
+                "call": {
+                    "type": "string",
+                    "description": "ULID. Idempotency key; matches the journal's `action.requested.call`."
+                },
+                "run": {
+                    "type": "string",
+                    "description": "Flow run ID, for logs."
+                },
+                "term": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 4294967295,
+                    "description": "Fencing term. The host rejects any term lower than the highest it has seen."
+                },
+                "action": {
+                    "type": "string"
+                },
+                "params": {},
+                "deadline": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 4294967295,
+                    "description": "Milliseconds. The host gives up after this long."
+                }
+            },
+            "required": [
+                "call",
+                "term",
+                "action",
+                "params"
+            ],
+            "description": "`action.invoke` params (core → host, req). Result: `ActionResult`."
+        },
+        "ActionResult": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "ActionResult.json",
+            "type": "object",
+            "properties": {
+                "result": {}
+            },
+            "description": "`action.invoke` result."
+        },
+        "Message": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "Message.json",
+            "anyOf": [
+                {
+                    "$ref": "Request.json"
+                },
+                {
+                    "$ref": "ResponseOk.json"
+                },
+                {
+                    "$ref": "ResponseErr.json"
+                },
+                {
+                    "$ref": "Notification.json"
+                }
+            ]
+        }
+    }
+}

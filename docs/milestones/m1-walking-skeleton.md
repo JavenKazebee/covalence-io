@@ -28,14 +28,14 @@ Route a Blackmagic Videohub in simulate mode, end to end: API → core → outpu
 - [x] CI: `cargo fmt`, `clippy`, `cargo test`, `deno fmt`, `deno lint`, `deno test`.
 
 ### Phase 2: Protocol subset
-- [ ] TypeSpec schema for only what the slice needs:
+- [x] TypeSpec schema for only what the slice needs:
   - `host.hello` / `host.welcome`, `ping`
   - `plugin.load`, `conn.create` / `conn.destroy` / `conn.resync`, `conn.status`
   - `state.snapshot`, `state.patch`, `event.emit`, `log`
   - `action.invoke`
-- [ ] Generated Rust and TS types; check `typify` against the envelope union on day one (ADR 0016 fallback if it fails).
-- [ ] Framing in Rust and TS: `u32` big-endian length + MessagePack, plus the `COVALENCE_PROTOCOL_DEBUG=json` mode.
-- [ ] Shared golden vectors in `protocol/fixtures/`, encoded and decoded by both sides.
+- [x] TS types generated from the schema. Rust types hand-written, because `typify` failed the day-one test (ADR 0016 outcome).
+- [x] Framing in Rust and TS: `u32` big-endian length + MessagePack, plus the `COVALENCE_PROTOCOL_DEBUG=json` mode.
+- [x] Shared golden vectors in `protocol/fixtures/`, encoded and decoded by both sides.
 
 ### Phase 3: Core engine (Rust)
 - [ ] State tree: paths, values, per-value metadata (`ts`, `seq`, `quality`, `source`), `stale` on disconnect, dirty-path set.

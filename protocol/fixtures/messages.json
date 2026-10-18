@@ -1,0 +1,200 @@
+[
+  {
+    "name": "host.hello request",
+    "dir": "hostToCore",
+    "params": "HostHello",
+    "message": {
+      "t": "req", "id": 1, "m": "host.hello",
+      "p": {
+        "protocol": { "min": "0.1.0", "max": "0.1.x" },
+        "host": { "kind": "deno-shared", "version": "0.0.0", "runtime": "deno 2.9.5" },
+        "node": { "id": "01JAB3Z8Y4M2N5P7Q9R1S3T5V7", "name": "FOH Mac", "publicKey": "ed25519:AAAA" },
+        "capabilities": ["workers", "simulate", "computerControl"]
+      }
+    }
+  },
+  {
+    "name": "host.hello response",
+    "dir": "hostToCore", "method": "host.hello", "result": "HostWelcome",
+    "message": {
+      "t": "res", "id": 1, "ok": true,
+      "r": { "protocol": "0.1.0", "session": "01JAB3ZA0000000000000000S1", "term": 1, "coreId": "01JAB3ZA0000000000000000C1" }
+    }
+  },
+  {
+    "name": "ping request",
+    "dir": "hostToCore", "params": "Empty",
+    "message": { "t": "req", "id": 4294967295, "m": "ping", "p": {} }
+  },
+  {
+    "name": "ping response",
+    "dir": "hostToCore", "method": "ping", "result": "Empty",
+    "message": { "t": "res", "id": 4294967295, "ok": true, "r": {} }
+  },
+  {
+    "name": "plugin.load request",
+    "dir": "coreToHost", "params": "PluginLoad",
+    "message": {
+      "t": "req", "id": 1, "m": "plugin.load",
+      "p": { "plugin": "io.covalence.videohub", "version": "0.1.0", "bundle": "/var/lib/covalence/plugins/io.covalence.videohub@0.1.0" }
+    }
+  },
+  {
+    "name": "plugin.load response",
+    "dir": "coreToHost", "method": "plugin.load", "result": "PluginLoaded",
+    "message": {
+      "t": "res", "id": 1, "ok": true,
+      "r": {
+        "manifest": {
+          "id": "io.covalence.videohub",
+          "name": "Blackmagic Videohub",
+          "version": "0.1.0",
+          "protocol": "^0.1",
+          "sdk": "0.0.0",
+          "runtime": "deno",
+          "license": "MIT",
+          "authors": ["Covalence IO contributors"],
+          "homepage": "https://github.com/JavenKazebee/covalence-io",
+          "categories": ["video-routing"],
+          "icon": "icon.svg",
+          "config": {
+            "schema": {
+              "type": "object",
+              "properties": { "host": { "type": "string", "format": "hostname" }, "port": { "type": "integer", "default": 9990 } },
+              "required": ["host"]
+            },
+            "ui": { "order": ["host", "port"] },
+            "version": 1
+          },
+          "secrets": { "password": { "label": "Password", "description": "Only for locked routers" } },
+          "permissions": { "net": ["{config.host}:{config.port}"], "serial": false, "udpBroadcast": false, "env": [] },
+          "connections": "multiple",
+          "actions": [
+            {
+              "id": "route", "name": "Set route", "description": "Route an input to an output",
+              "params": { "type": "object", "properties": { "output": { "type": "integer" }, "input": { "type": "integer" } } },
+              "result": { "type": "object" },
+              "idempotent": true, "cancellable": false, "durationHint": "instant", "learn": true
+            }
+          ],
+          "events": [
+            { "id": "routeChanged", "name": "Route changed", "payload": { "type": "object" } }
+          ],
+          "state": {
+            "outputs": { "collection": { "key": "index", "label": "name" }, "item": { "source": { "type": "number", "kind": "id" } } }
+          },
+          "presets": [{ "name": "Route button" }],
+          "surfaces": {},
+          "simulator": { "stateLevel": true, "protocolLevel": true }
+        }
+      }
+    }
+  },
+  {
+    "name": "conn.create request",
+    "dir": "coreToHost", "params": "ConnCreate",
+    "message": {
+      "t": "req", "id": 2, "m": "conn.create", "conn": "01JAB3ZB0000000000000000V1",
+      "p": {
+        "plugin": "io.covalence.videohub", "version": "0.1.0", "alias": "vh",
+        "config": { "host": "10.0.0.12", "port": 9990 },
+        "secrets": { "password": "hunter2" },
+        "permissions": { "net": ["10.0.0.12:9990"] },
+        "mode": "simulate", "isolate": false
+      }
+    }
+  },
+  {
+    "name": "conn.create response",
+    "dir": "coreToHost", "method": "conn.create", "result": "Empty",
+    "message": { "t": "res", "id": 2, "ok": true, "r": {} }
+  },
+  {
+    "name": "conn.destroy request",
+    "dir": "coreToHost", "params": "ConnDestroy",
+    "message": { "t": "req", "id": 3, "m": "conn.destroy", "conn": "01JAB3ZB0000000000000000V1", "p": { "reason": "deleted by user" } }
+  },
+  {
+    "name": "conn.resync request",
+    "dir": "coreToHost", "params": "Empty",
+    "message": { "t": "req", "id": 4, "m": "conn.resync", "conn": "01JAB3ZB0000000000000000V1", "p": {} }
+  },
+  {
+    "name": "action.invoke request",
+    "dir": "coreToHost", "params": "ActionInvoke",
+    "message": {
+      "t": "req", "id": 5, "m": "action.invoke", "conn": "01JAB3ZB0000000000000000V1",
+      "p": {
+        "call": "01JAB3ZC0000000000000000A1", "run": "01JAB3ZC0000000000000000R1", "term": 1,
+        "action": "route", "params": { "output": 1, "input": 3 }, "deadline": 5000
+      }
+    }
+  },
+  {
+    "name": "action.invoke success",
+    "dir": "coreToHost", "method": "action.invoke", "result": "ActionResult",
+    "message": { "t": "res", "id": 5, "ok": true, "r": { "result": { "previous": 0 } } }
+  },
+  {
+    "name": "action.invoke failure",
+    "dir": "coreToHost", "method": "action.invoke",
+    "message": {
+      "t": "res", "id": 6, "ok": false,
+      "e": { "code": "stale_term", "message": "term 1 is older than 2", "data": { "seen": 2 }, "retryable": false }
+    }
+  },
+  {
+    "name": "conn.status notification",
+    "dir": "hostToCore", "params": "ConnStatus",
+    "message": {
+      "t": "ntf", "m": "conn.status", "conn": "01JAB3ZB0000000000000000V1",
+      "p": { "status": "warning", "message": "slow responses", "detail": { "latencyMs": 812 } }
+    }
+  },
+  {
+    "name": "state.snapshot notification",
+    "dir": "hostToCore", "params": "StateSnapshot",
+    "message": {
+      "t": "ntf", "m": "state.snapshot", "conn": "01JAB3ZB0000000000000000V1",
+      "p": {
+        "values": [
+          { "p": ["inputs", 0, "name"], "v": "Cam 1" },
+          { "p": ["outputs", "SDI 4", "source"], "v": 3 },
+          { "p": ["model"], "v": { "name": "Videohub 20x20", "ports": [20, 20], "locked": false, "notes": null } }
+        ],
+        "complete": true
+      }
+    }
+  },
+  {
+    "name": "state.patch notification",
+    "dir": "hostToCore", "params": "StatePatch",
+    "message": {
+      "t": "ntf", "m": "state.patch", "conn": "01JAB3ZB0000000000000000V1",
+      "p": {
+        "ops": [
+          { "p": ["outputs", 1, "source"], "v": 3 },
+          { "p": ["timers", "countdown", "remaining"], "v": 12.5 },
+          { "p": ["inputs", 7], "del": true }
+        ],
+        "ts": 1760781600123.5
+      }
+    }
+  },
+  {
+    "name": "event.emit notification",
+    "dir": "hostToCore", "params": "EventEmit",
+    "message": {
+      "t": "ntf", "m": "event.emit", "conn": "01JAB3ZB0000000000000000V1",
+      "p": { "event": "routeChanged", "payload": { "output": 1, "input": 3 }, "ts": 1760781600000 }
+    }
+  },
+  {
+    "name": "log notification without a connection",
+    "dir": "hostToCore", "params": "Log",
+    "message": {
+      "t": "ntf", "m": "log",
+      "p": { "level": "warn", "msg": "worker restarted", "fields": { "conn": "01JAB3ZB0000000000000000V1", "restarts": 2 } }
+    }
+  }
+]

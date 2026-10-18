@@ -17,6 +17,17 @@
 - **Golden vectors are required either way.** Every message type has fixtures that both the Rust and TypeScript test suites decode, re-encode and compare.
 - Opaque payloads that are themselves JSON Schema (`config.schema`, action `params`) are typed as plain JSON values, not modelled in TypeSpec.
 
+## Outcome of the first-day test (2026-10-18)
+The fallback applies: **Rust types are hand-written**, TypeScript types are generated.
+
+With `typify` 0.8.0 (the latest stable release) on the envelope from the [plugin protocol](../specs/plugin-protocol.md) §2.1:
+- `const` was dropped: `t: "req"` became `t: String` and `ok: true` became `ok: bool`, so the discriminator wasn't enforced.
+- The union became `#[serde(untagged)]`, so decoding tries each variant in turn. A notification carrying a stray `id` decoded as a request.
+- Rewriting the schema to `oneOf` with single-value `enum` tags enforced the tags, but the enum stayed untagged, and it required changing the wire format to suit the tool.
+- Opaque payloads became `serde_json::Value`, which can't hold MessagePack binary (needed later for `surface.draw` and `io.data`).
+
+`json-schema-to-typescript` produced clean output: literal types and a proper discriminated union.
+
 ## Consequences
 - The schema is readable and reviewable, and generated types can't drift from it.
 - A Node toolchain (pnpm) is needed to change the schema, but not to build the core or write plugins.

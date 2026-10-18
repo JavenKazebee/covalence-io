@@ -17,7 +17,7 @@ The protocol is the contract between the **core** and any **host**. Message shap
 | **Connection** | A configured instance of a plugin, with an ID (ULID) and an alias |
 | **Surface** | A control device a host provides (Orbital, or plugin-provided surfaces) |
 
-One host stream multiplexes many connections. Every message that concerns a connection carries `conn`.
+One host stream multiplexes many connections. Every message that concerns a connection carries `conn` **in the envelope** (§2.1), never in its params, so a host can route a message to the right worker without decoding `p`. Param shapes below that still show `conn` (for methods not yet in the schema) follow the same rule.
 
 ---
 
@@ -31,7 +31,9 @@ One host stream multiplexes many connections. Every message that concerns a conn
 
 - **Frame:** a `u32` big-endian length, then a MessagePack body. Maximum frame size is 16 MiB; larger payloads (images, files) are chunked.
 - **Debug mode:** set `COVALENCE_PROTOCOL_DEBUG=json` for newline-delimited JSON, so the traffic is readable in a terminal.
-- **Keepalive:** either side sends `ping` every 2 s. Three missed pings mark the link dead.
+- **Keepalive:** either side sends a `ping` request (params and result `{}`) every 2 s. Three unanswered pings mark the link dead.
+- **Integers:** a peer may send any integer as a 64-bit MessagePack integer. JS decoders turn those within the safe range back into plain numbers (state spec §1.2).
+- **Timestamps** (`ts`) are Unix epoch milliseconds, as a number.
 
 ### 2.1 Envelope
 
@@ -93,12 +95,14 @@ The response is `{ manifest: Manifest }`. The core checks it against the signed 
 
 ### 3.3 Connection lifecycle (core → host, req)
 
+The connection ID is the envelope's `conn`. Results are `{}`.
+
 | Method | Params |
 |---|---|
-| `conn.create` | `{conn, plugin, version, alias, config, secrets, permissions, mode: "live" \| "simulate", isolate: boolean}` |
-| `conn.configure` | `{conn, config, secrets?}` (live reconfiguration; the plugin may answer `restartRequired`) |
-| `conn.destroy` | `{conn, reason}` |
-| `conn.resync` | `{conn}`: asks for a fresh `state.snapshot` (after failover or reconnect) |
+| `conn.create` | `{plugin, version, alias, config, secrets, permissions, mode: "live" \| "simulate", isolate: boolean}` |
+| `conn.configure` | `{config, secrets?}` (live reconfiguration; the plugin may answer `restartRequired`) |
+| `conn.destroy` | `{reason}` |
+| `conn.resync` | `{}`: asks for a fresh `state.snapshot` (after failover or reconnect) |
 
 `permissions` are resolved by the core from the manifest templates and the config, for example `net: ["10.0.0.12:9990"]`. The Deno host applies them to the connection's worker.
 
@@ -184,9 +188,10 @@ This only narrows or extends what the manifest declares (enum values, collection
 
 ### 5.1 `action.invoke` (core → host, req)
 
+Params (the connection is the envelope's `conn`):
+
 ```ts
 {
-  conn: string,
   call: string,           // ULID; idempotency key; matches the journal's action.requested.call
   run?: string,           // flow run ID (for logs)
   term: number,           // fencing (state spec §4)
@@ -217,12 +222,12 @@ This only narrows or extends what the manifest declares (enum values, collection
 
 | Method | Type | Params |
 |---|---|---|
-| `state.snapshot` | ntf | `{conn, values: [Path, Value][], complete: true}`: replaces the connection's whole subtree |
-| `state.patch` | ntf | `{conn, ops: [{p: Path, v: Value} \| {p: Path, del: true}], ts?}` |
-| `event.emit` | ntf | `{conn, event: string, payload?: unknown, ts?}` |
-| `log` | ntf | `{conn?, level: "trace" \| "debug" \| "info" \| "warn" \| "error", msg, fields?}` |
+| `state.snapshot` | ntf | `{values: {p: Path, v: Value}[], complete: true}`: replaces the connection's whole subtree |
+| `state.patch` | ntf | `{ops: [{p: Path, v: Value} \| {p: Path, del: true}], ts?}` |
+| `event.emit` | ntf | `{event: string, payload?: unknown, ts?}` |
+| `log` | ntf | `{level: "trace" \| "debug" \| "info" \| "warn" \| "error", msg, fields?}` |
 
-Paths are segment arrays ([ADR 0017](../adr/0017-wire-paths-as-segment-arrays.md)) relative to the connection root: `["timers", "countdown", "remaining"]`. The core adds the connection prefix and validates against the schema. Invalid patches are dropped and logged.
+The envelope's `conn` is required, except for `log`. Paths are segment arrays ([ADR 0017](../adr/0017-wire-paths-as-segment-arrays.md)) relative to the connection root: `["timers", "countdown", "remaining"]`. The core adds the connection prefix and validates against the schema. Invalid patches are dropped and logged.
 
 **Backpressure:**
 - The SDK coalesces patches per path within a 1 ms window by default.

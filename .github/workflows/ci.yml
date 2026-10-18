@@ -34,7 +34,7 @@ jobs:
       - run: deno fmt --check
       - run: deno lint
       - run: deno check packages/ plugins/
-      - run: deno test
+      - run: deno task test
 
   protocol-schema:
     runs-on: ubuntu-latest
@@ -46,3 +46,9 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Regenerate JSON Schema and TS types
+        run: pnpm --filter @covalence-io/protocol-schema build
+      - name: Fail if generated files are stale
+        run: |
+          git status --porcelain protocol/json-schema packages/protocol/types.gen.ts
+          test -z "$(git status --porcelain protocol/json-schema packages/protocol/types.gen.ts)"

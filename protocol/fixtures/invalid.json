@@ -1,0 +1,31 @@
+[
+  { "name": "missing t", "message": { "id": 1, "m": "ping", "p": {} } },
+  { "name": "unknown t", "message": { "t": "evt", "m": "ping", "p": {} } },
+  { "name": "request without id", "message": { "t": "req", "m": "ping", "p": {} } },
+  { "name": "negative id", "message": { "t": "req", "id": -1, "m": "ping", "p": {} } },
+  { "name": "request without p", "message": { "t": "req", "id": 1, "m": "ping" } },
+  { "name": "ok response without r", "message": { "t": "res", "id": 1, "ok": true } },
+  { "name": "ok response with e", "message": { "t": "res", "id": 1, "ok": true, "e": { "code": "internal", "message": "x" } } },
+  { "name": "error response without e", "message": { "t": "res", "id": 1, "ok": false } },
+  { "name": "ok is a string", "message": { "t": "res", "id": 1, "ok": "true", "r": {} } },
+  {
+    "name": "unknown host kind", "dir": "hostToCore", "params": "HostHello",
+    "message": { "t": "req", "id": 1, "m": "host.hello", "p": { "protocol": { "min": "0.1.0", "max": "0.1.x" }, "host": { "kind": "deno", "version": "0" }, "capabilities": [] } }
+  },
+  {
+    "name": "patch delete with del false", "dir": "hostToCore", "params": "StatePatch",
+    "message": { "t": "ntf", "m": "state.patch", "p": { "ops": [{ "p": ["a"], "del": false }] } }
+  },
+  {
+    "name": "unknown connection status", "dir": "hostToCore", "params": "ConnStatus",
+    "message": { "t": "ntf", "m": "conn.status", "p": { "status": "fine" } }
+  },
+  {
+    "name": "action.invoke without call", "dir": "coreToHost", "params": "ActionInvoke",
+    "message": { "t": "req", "id": 1, "m": "action.invoke", "p": { "term": 1, "action": "route", "params": {} } }
+  },
+  {
+    "name": "path segment is a boolean", "dir": "hostToCore", "params": "StatePatch",
+    "message": { "t": "ntf", "m": "state.patch", "p": { "ops": [{ "p": [true], "v": 1 }] } }
+  }
+]
