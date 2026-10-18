@@ -8,6 +8,7 @@ pub mod gate;
 pub mod host;
 pub mod journal;
 pub mod state;
+pub mod text_path;
 
 pub use covalence_protocol::PROTOCOL_VERSION;
 pub use engine::{ActionOutcome, ActionRequest, Core, CoreError};

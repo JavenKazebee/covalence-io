@@ -1,17 +1,17 @@
 # Milestone 1: Walking skeleton
 
-- **Status:** In progress
+- **Status:** Done
 - **Started:** 2026-10-18
 
 Route a Blackmagic Videohub in simulate mode, end to end: API → core → output gate → Deno plugin host → plugin → state patch → journal. Every layer of the architecture is touched; no layer is built out.
 
 ## Done when
 
-- [ ] `POST /actions` with `vh.route {output: 1, input: 3}` journals `action.requested` → `action.dispatched` → `action.result`.
-- [ ] The plugin's `state.patch` updates `vh.outputs[1].source`.
-- [ ] `GET /journal/{seq}/why` walks the cause chain back to the API call.
-- [ ] Killing the Deno host process makes the core restart it and resync state in under 3 s.
-- [ ] All of the above runs in CI with no hardware.
+- [x] `POST /actions` with `vh.route {output: 1, input: 3}` journals `action.requested` → `action.dispatched` → `action.result`.
+- [x] The plugin's `state.patch` updates `vh.outputs[1].source`.
+- [x] `GET /journal/{seq}/why` walks the cause chain back to the API call.
+- [x] Killing the Deno host process makes the core restart it and resync state in under 3 s.
+- [ ] All of the above runs in CI with no hardware. (Passes locally; not yet confirmed on GitHub Actions.)
 
 ## Phases
 
@@ -50,13 +50,38 @@ Route a Blackmagic Videohub in simulate mode, end to end: API → core → outpu
 - [x] Protocol-level fake Videohub server for the plugin's own tests ([ADR 0012](../adr/0012-simulated-devices.md)).
 
 ### Phase 5: Thin server and acceptance test
-- [ ] `axum` endpoints: `POST /connections`, `GET /state`, `POST /actions`, `GET /journal`, `GET /journal/{seq}/why`.
-- [ ] Connections stored in the `entities` table. The project op log is deferred.
-- [ ] End-to-end script for every "Done when" item, including the restart timing.
+- [x] `axum` endpoints: `POST /connections`, `GET /state`, `POST /actions`, `GET /journal`, `GET /journal/{seq}/why`.
+- [x] Connections stored in the `entities` table. The project op log is deferred.
+- [x] End-to-end script for every "Done when" item, including the restart timing.
 
 ## Ordering
 
 Phases 0–2 run in sequence. Phases 3 (Rust) and 4 (TypeScript) depend only on the protocol, so they can run in parallel. Phase 5 joins them.
+
+## Running it
+
+```bash
+cargo run -p covalence-server -- --data data
+```
+
+```bash
+curl -s -XPOST localhost:7680/connections -H 'content-type: application/json' -d '{"plugin":"io.covalence.videohub","alias":"vh","config":{"host":"10.0.0.12"}}'
+```
+
+```bash
+curl -s -XPOST localhost:7680/actions -H 'content-type: application/json' -d '{"action":"vh.route","params":{"output":1,"input":3}}'
+```
+
+```bash
+curl -sg 'localhost:7680/state?path=vh.outputs[1]'
+```
+
+The acceptance test is `crates/covalence-server/tests/e2e.rs` (needs `deno` on the PATH).
+
+## Known gaps, carried forward
+
+- A plugin's `state.patch` and `event.emit` carry no link to the action that caused them, so `why` on a state change can't reach the action yet.
+- In simulate mode the simulated device lives in the plugin worker, so a host crash resets it to its initial state.
 
 ## Out of scope
 

@@ -20,6 +20,10 @@ jobs:
       - name: Install toolchain from rust-toolchain.toml
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
+      # The server's end-to-end tests run the real Deno plugin host.
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version-file: .dvmrc
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked

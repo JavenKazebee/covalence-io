@@ -1,8 +1,9 @@
 //! SQLite working store: entities, runtime journal, snapshots and assets (ADR 0006).
 //!
-//! Milestone 1 only needs the runtime journal and `meta` (state spec §5). The
-//! store knows nothing about entry kinds: the core encodes `origin` as JSON and
-//! `data` as MessagePack, and this crate keeps the bytes.
+//! Milestone 1 needs the runtime journal, `meta` and materialised `entities`
+//! (state spec §5); the project op log comes later. The store knows nothing
+//! about entry kinds or entity types: the core encodes journal `origin` as JSON
+//! and `data` as MessagePack, entity bodies as JSON, and this crate keeps them.
 
 use std::path::Path;
 
@@ -38,6 +39,17 @@ pub struct JournalRow {
     pub data: Vec<u8>,
 }
 
+/// One materialised project entity (state spec §5).
+#[derive(Clone, Debug, PartialEq)]
+pub struct EntityRow {
+    pub kind: String,
+    pub id: String,
+    /// Starts at 1 and goes up by one on every write.
+    pub rev: u64,
+    /// JSON.
+    pub body: String,
+}
+
 /// Each entry upgrades the schema by one version (`PRAGMA user_version`).
 const MIGRATIONS: &[&str] = &[
     // 1: runtime journal and meta.
@@ -56,6 +68,14 @@ const MIGRATIONS: &[&str] = &[
     CREATE TABLE meta (
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL
+    ) STRICT;",
+    // 2: materialised entities.
+    "CREATE TABLE entities (
+        type TEXT    NOT NULL,
+        id   TEXT    NOT NULL,
+        rev  INTEGER NOT NULL,
+        body TEXT    NOT NULL,
+        PRIMARY KEY (type, id)
     ) STRICT;",
 ];
 
@@ -164,6 +184,54 @@ impl Store {
         )?;
         Ok(())
     }
+
+    /// Creates or replaces an entity and returns its new revision.
+    pub fn put_entity(&self, kind: &str, id: &str, body: &str) -> Result<u64> {
+        let rev: i64 = self.db.query_row(
+            "INSERT INTO entities (type, id, rev, body) VALUES (?1, ?2, 1, ?3)
+             ON CONFLICT (type, id) DO UPDATE SET rev = rev + 1, body = excluded.body
+             RETURNING rev",
+            [kind, id, body],
+            |row| row.get(0),
+        )?;
+        Ok(rev as u64)
+    }
+
+    pub fn entity(&self, kind: &str, id: &str) -> Result<Option<EntityRow>> {
+        Ok(self
+            .db
+            .prepare_cached(&format!("{SELECT_ENTITY} WHERE type = ?1 AND id = ?2"))?
+            .query_row([kind, id], entity_row)
+            .optional()?)
+    }
+
+    /// Every entity of one type, ordered by ID.
+    pub fn entities(&self, kind: &str) -> Result<Vec<EntityRow>> {
+        let mut stmt = self
+            .db
+            .prepare_cached(&format!("{SELECT_ENTITY} WHERE type = ?1 ORDER BY id"))?;
+        let rows = stmt.query_map([kind], entity_row)?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Returns whether the entity existed.
+    pub fn delete_entity(&self, kind: &str, id: &str) -> Result<bool> {
+        Ok(self.db.execute(
+            "DELETE FROM entities WHERE type = ?1 AND id = ?2",
+            [kind, id],
+        )? > 0)
+    }
+}
+
+const SELECT_ENTITY: &str = "SELECT type, id, rev, body FROM entities";
+
+fn entity_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<EntityRow> {
+    Ok(EntityRow {
+        kind: row.get(0)?,
+        id: row.get(1)?,
+        rev: row.get::<_, i64>(2)? as u64,
+        body: row.get(3)?,
+    })
 }
 
 const SELECT_JOURNAL: &str =
@@ -241,6 +309,38 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         store.append_journal(&row(1, None)).unwrap();
         assert!(store.append_journal(&row(1, None)).is_err());
+    }
+
+    #[test]
+    fn entities_bump_revisions_and_survive_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("project.db");
+        {
+            let store = Store::open(&path).unwrap();
+            assert_eq!(store.put_entity("connection", "b", "{}").unwrap(), 1);
+            assert_eq!(
+                store.put_entity("connection", "a", r#"{"v":1}"#).unwrap(),
+                1
+            );
+            assert_eq!(
+                store.put_entity("connection", "a", r#"{"v":2}"#).unwrap(),
+                2
+            );
+            assert_eq!(store.put_entity("page", "a", "{}").unwrap(), 1);
+        }
+        let store = Store::open(&path).unwrap();
+        let a = store.entity("connection", "a").unwrap().unwrap();
+        assert_eq!((a.rev, a.body.as_str()), (2, r#"{"v":2}"#));
+        let ids: Vec<String> = store
+            .entities("connection")
+            .unwrap()
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(ids, ["a", "b"]);
+        assert!(store.delete_entity("connection", "a").unwrap());
+        assert!(!store.delete_entity("connection", "a").unwrap());
+        assert_eq!(store.entity("connection", "a").unwrap(), None);
     }
 
     #[test]
