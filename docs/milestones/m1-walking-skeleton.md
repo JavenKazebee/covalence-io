@@ -80,7 +80,7 @@ The acceptance test is `crates/covalence-server/tests/e2e.rs` (needs `deno` on t
 
 ## Known gaps, carried forward
 
-- A plugin's `state.patch` and `event.emit` carry no link to the action that caused them, so `why` on a state change can't reach the action yet.
+- In live mode a Videohub route's `state.patch` arrives with the device's echo, outside the action, so it has no `cause`. Only changes made while an action runs (the simulator, or optimistic writes in `run`) link to it.
 - In simulate mode the simulated device lives in the plugin worker, so a host crash resets it to its initial state.
 
 ## Out of scope

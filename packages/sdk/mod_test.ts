@@ -1,5 +1,11 @@
 import { assertEquals, assertRejects } from "@std/assert";
-import { ActionError, definePlugin, PROTOCOL_VERSION, s } from "./mod.ts";
+import {
+  ActionError,
+  type BaseContext,
+  definePlugin,
+  PROTOCOL_VERSION,
+  s,
+} from "./mod.ts";
 import { ConnectionRuntime } from "./runtime.ts";
 
 const plugin = definePlugin({
@@ -96,8 +102,8 @@ Deno.test("live: connecting status, snapshot, ok, then patch before event and re
   });
   assertEquals(res, { result: "h" });
   assertEquals(strip(sent), [
-    ["state.patch", { ops: [{ p: ["level"], v: 2 }] }],
-    ["event.emit", { event: "bumped", payload: { level: 2 } }],
+    ["state.patch", { ops: [{ p: ["level"], v: 2 }], call: "c1" }],
+    ["event.emit", { event: "bumped", payload: { level: 2 }, call: "c1" }],
   ]);
   await rt.destroy("test");
 });
@@ -161,6 +167,7 @@ Deno.test("simulate: uses the simulator hooks and coalesces patches", async () =
   await rt.invoke({ call: "c", action: "bump", params: { by: 5 } });
   assertEquals(strip(sent), [["state.patch", {
     ops: [{ p: ["level"], v: -5 }],
+    call: "c",
   }]]);
 
   sent.length = 0;
@@ -178,4 +185,54 @@ Deno.test("simulate: uses the simulator hooks and coalesces patches", async () =
   await rt.destroy("test");
   rt.context.emit("bumped", { level: 1 });
   assertEquals(sent.length, 1, "nothing is sent after destroy");
+});
+
+Deno.test("patches carry the call only while its action runs", async () => {
+  const { sent, sink } = recorder();
+  let kept: BaseContext | undefined;
+  const p = definePlugin({
+    id: "io.example.calls",
+    name: "Calls",
+    version: "1.0.0",
+    config: s.object({}),
+    state: { a: s.number(), b: s.number() },
+    actions: {
+      set: { name: "Set", params: s.object({}), run() {} },
+    },
+    simulator: {
+      init: (sim) => sim.state.set({ a: 0, b: 0 }),
+      actions: {
+        set: async (sim) => {
+          kept = sim;
+          sim.state.patch("a", 1);
+          await new Promise((r) => setTimeout(r, 5)); // past the window
+          sim.state.patch("a", 2);
+          sim.state.patch("b", 2);
+        },
+      },
+    },
+  });
+  const rt = new ConnectionRuntime(p, {
+    alias: "calls",
+    mode: "simulate",
+    config: {},
+  }, sink);
+  await rt.start();
+  sent.length = 0;
+
+  // Device traffic before the action is sent apart from it.
+  rt.context.state.patch("b", 1);
+  await rt.invoke({ call: "c9", action: "set", params: {} });
+  kept!.state.patch("a", 3); // after the action finished
+  rt.flush();
+  assertEquals(strip(sent), [
+    ["state.patch", { ops: [{ p: ["b"], v: 1 }] }],
+    ["state.patch", { ops: [{ p: ["a"], v: 1 }], call: "c9" }],
+    ["state.patch", {
+      ops: [{ p: ["a"], v: 2 }, { p: ["b"], v: 2 }],
+      call: "c9",
+    }],
+    ["state.patch", { ops: [{ p: ["a"], v: 3 }] }],
+  ]);
+  await rt.destroy("test");
 });

@@ -224,11 +224,13 @@ Params (the connection is the envelope's `conn`):
 | Method | Type | Params |
 |---|---|---|
 | `state.snapshot` | ntf | `{values: {p: Path, v: Value}[], complete: true}`: replaces the connection's whole subtree |
-| `state.patch` | ntf | `{ops: [{p: Path, v: Value} \| {p: Path, del: true}], ts?}` |
-| `event.emit` | ntf | `{event: string, payload?: unknown, ts?}` |
+| `state.patch` | ntf | `{ops: [{p: Path, v: Value} \| {p: Path, del: true}], call?, ts?}` |
+| `event.emit` | ntf | `{event: string, payload?: unknown, call?, ts?}` |
 | `log` | ntf | `{level: "trace" \| "debug" \| "info" \| "warn" \| "error", msg, fields?}` |
 
 The envelope's `conn` is required, except for `log`. Paths are segment arrays ([ADR 0017](../adr/0017-wire-paths-as-segment-arrays.md)) relative to the connection root: `["timers", "countdown", "remaining"]`. The core adds the connection prefix and validates against the schema. Invalid patches are dropped and logged.
+
+**Causation:** `call` is the `action.invoke` call ID (§5.1) of the action that produced the change or event. The SDK sets it for writes and events made through the context an action's `run` (or its simulator handler) receives, while that call is running; one patch never mixes ops from different calls, or from a call and outside one. Changes from device traffic outside an action (including a device's echo of a command an action sent) carry no `call`. While the call is in flight on that connection, the core journals the entry with `cause` → the call's `action.requested` entry (state spec §2.2); a `call` it doesn't know, or one belonging to another connection, is ignored. The host must send these before the call's response, and the core handles a host's messages in the order it sent them.
 
 **Backpressure:**
 - The SDK coalesces patches per path within a 1 ms window by default.

@@ -149,9 +149,17 @@ async fn walking_skeleton() {
         .filter(|e| e["seq"] == requested || e["cause"] == requested)
         .map(|e| e["kind"].as_str().unwrap())
         .collect();
+    // The plugin's patch and event name the call, so they are caused by the
+    // request too, and land before the result.
     assert_eq!(
         kinds_caused_by_request,
-        ["action.requested", "action.dispatched", "action.result"]
+        [
+            "action.requested",
+            "action.dispatched",
+            "state.patch",
+            "event",
+            "action.result"
+        ]
     );
 
     // Done when 2: the plugin's state.patch updates vh.outputs[1].source.
@@ -172,6 +180,25 @@ async fn walking_skeleton() {
     let root = chain.last().unwrap();
     assert_eq!(root["kind"], "action.requested");
     assert_eq!(root["origin"], json!({ "user": "api", "client": "http" }));
+
+    // ... and from the state change it made.
+    let leaves = server
+        .get(&format!("/state?path={}", encode("vh.outputs[1].source")))
+        .await;
+    let patch_seq = leaves[0]["seq"].as_u64().unwrap();
+    let chain = server.get(&format!("/journal/{patch_seq}/why")).await;
+    let kinds: Vec<&str> = chain
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(kinds, ["state.patch", "action.requested"]);
+    assert_eq!(chain[1]["seq"], requested);
+    assert_eq!(
+        chain[1]["origin"],
+        json!({ "user": "api", "client": "http" })
+    );
 
     // Done when 4: kill the host; it restarts and state resyncs within budget.
     let health = server.get("/health").await;

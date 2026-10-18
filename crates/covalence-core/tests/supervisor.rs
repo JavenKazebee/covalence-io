@@ -121,14 +121,23 @@ async fn routes_an_action_end_to_end() {
     assert_eq!(outcome.verdict, Verdict::Dispatch);
     assert_eq!(outcome.result, Some(Ok(None)));
 
-    eventually("route patch", || {
-        shared.state.value(&source(1)) == Some(Value::from(3))
-    })
-    .await;
+    // The host sends the patch before the result, and the core keeps that
+    // order, so the state is already updated.
+    assert_eq!(shared.state.value(&source(1)), Some(Value::from(3)));
     let leaf = shared.state.leaf(&source(1)).unwrap();
     assert_eq!(leaf.meta.quality, Quality::Good);
     let patch = shared.journal.get(leaf.meta.seq).unwrap().unwrap();
     assert!(matches!(patch.record, Record::StatePatch(_)));
+    // The patch names its call, so it is caused by the request.
+    assert_eq!(patch.cause, Some(outcome.requested));
+    let chain: Vec<&str> = shared
+        .journal
+        .why(patch.seq)
+        .unwrap()
+        .iter()
+        .map(|e| e.record.kind())
+        .collect();
+    assert_eq!(chain, ["state.patch", "action.requested"]);
 
     // why(action.result) walks back to the request.
     let chain: Vec<&str> = shared
@@ -156,6 +165,11 @@ async fn routes_an_action_end_to_end() {
             .any(|e| matches!(&e.record, Record::Event(ev) if ev.event == "routeChanged"))
     })
     .await;
+    let event = entries(&shared.journal)
+        .into_iter()
+        .find(|e| matches!(&e.record, Record::Event(_)))
+        .unwrap();
+    assert_eq!(event.cause, Some(outcome.requested));
 
     // A failing action journals a failed result.
     let mut fail = route(0, 0);
@@ -214,7 +228,7 @@ async fn gate_suppresses_without_invoking() {
         params: Value::Nil,
         deadline: None,
     };
-    let err = core.host().invoke(CONN, &invoke).await.unwrap_err();
+    let err = core.host().invoke(CONN, &invoke, None).await.unwrap_err();
     assert_eq!(err.code, ErrorCode::StaleTerm);
 
     core.shutdown().await;

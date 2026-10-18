@@ -11,7 +11,9 @@
 //!   created again and sent `conn.resync`;
 //! - routes `state.snapshot`, `state.patch`, `event.emit`, `conn.status` and
 //!   `log` into the state tree and the journal;
-//! - sends `action.invoke` and correlates the response.
+//! - sends `action.invoke` and correlates the response. While a call is in
+//!   flight, patches and events that name it (`call`) are journaled with
+//!   `cause` → its `action.requested` entry.
 //!
 //! The registry of plugins and connections is the desired state; it outlives
 //! any one host process.
@@ -137,8 +139,32 @@ struct Inner {
     registry: tokio::sync::Mutex<Registry>,
     /// Connection modes, readable without waiting for the registry.
     modes: Mutex<HashMap<ConnId, ConnMode>>,
+    /// Action calls in flight, by call ID.
+    calls: Mutex<HashMap<String, InFlight>>,
     status: watch::Sender<HostStatus>,
     shutdown: watch::Sender<bool>,
+}
+
+/// An `action.invoke` the host hasn't answered yet.
+struct InFlight {
+    conn: ConnId,
+    /// The `action.requested` entry.
+    requested: Seq,
+    run: Option<String>,
+}
+
+/// Forgets an in-flight call when its invoke finishes or is dropped.
+struct CallGuard<'a> {
+    inner: &'a Inner,
+    call: Option<String>,
+}
+
+impl Drop for CallGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(call) = &self.call {
+            self.inner.calls().remove(call);
+        }
+    }
 }
 
 #[derive(Default)]
@@ -164,6 +190,7 @@ impl Host {
             shared,
             registry: tokio::sync::Mutex::new(Registry::default()),
             modes: Mutex::new(HashMap::new()),
+            calls: Mutex::new(HashMap::new()),
             status,
             shutdown,
         });
@@ -248,14 +275,33 @@ impl Host {
     }
 
     /// Sends `action.invoke`. Only the output gate should call this.
+    ///
+    /// `requested` is the call's `action.requested` entry: patches and events
+    /// the host sends for this call before it answers are journaled with
+    /// `cause` pointing at it.
     pub async fn invoke(
         &self,
         conn: &str,
         invoke: &ActionInvoke,
+        requested: Option<Seq>,
     ) -> Result<ActionResult, ProtocolError> {
         let link = self.inner.registry.lock().await.link.clone();
         let Some(link) = link else {
             return Err(not_connected("the plugin host is not running"));
+        };
+        let _guard = CallGuard {
+            inner: &self.inner,
+            call: requested.map(|requested| {
+                self.inner.calls().insert(
+                    invoke.call.clone(),
+                    InFlight {
+                        conn: conn.to_owned(),
+                        requested,
+                        run: invoke.run.clone(),
+                    },
+                );
+                invoke.call.clone()
+            }),
         };
         let timeout = match invoke.deadline {
             // A little longer than the deadline, so the host's own timeout wins.
@@ -284,6 +330,22 @@ impl Drop for Host {
 impl Inner {
     fn modes(&self) -> MutexGuard<'_, HashMap<ConnId, ConnMode>> {
         self.modes.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn calls(&self) -> MutexGuard<'_, HashMap<String, InFlight>> {
+        self.calls.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The `cause` and `run` for an entry produced by `call` on `conn`. A call
+    /// that isn't in flight, or belongs to another connection, gives neither.
+    fn caused_by(&self, conn: &str, call: Option<&str>) -> (Option<Seq>, Option<String>) {
+        call.and_then(|call| {
+            self.calls()
+                .get(call)
+                .filter(|f| f.conn == conn)
+                .map(|f| (Some(f.requested), f.run.clone()))
+        })
+        .unwrap_or_default()
     }
 
     fn set_status(&self, phase: HostPhase, generation: u64, pid: Option<u32>) {
@@ -412,7 +474,7 @@ async fn run_session(
     let (in_tx, mut incoming) = mpsc::unbounded_channel();
     let link = Arc::new(Link::new(out_tx));
     let writer = tokio::spawn(write_frames(stdin, out_rx, config.format));
-    let reader = tokio::spawn(read_frames(stdout, link.clone(), in_tx, config.format));
+    let reader = tokio::spawn(read_frames(stdout, in_tx, config.format));
 
     let mut hello_done = false;
     let hello_deadline = tokio::time::sleep(config.hello_timeout);
@@ -475,8 +537,10 @@ async fn run_session(
                     route(inner, ntf);
                 }
             }
-            // Responses are completed by the reader.
-            Event::Incoming(Some(Message::Response(_))) => {}
+            // Completed here, in order with notifications: the patches and
+            // events a host sends before an action's result are routed (and
+            // can still find the call in flight) before the result lands.
+            Event::Incoming(Some(Message::Response(res))) => link.complete(res.id, res.outcome),
             Event::HelloTimeout => {
                 break SessionEnd::Failed(format!(
                     "no host.hello within {:?}",
@@ -736,7 +800,8 @@ fn route(inner: &Inner, ntf: Notification) {
                 ops,
                 replaces: Some(StatePath::root(conn.clone())),
             };
-            apply_state(inner, &conn, origin, record, None, |tree, meta| {
+            let entry = NewEntry::new(origin, Record::StatePatch(record));
+            apply_state(inner, &conn, entry, None, |tree, meta| {
                 tree.replace_subtree(&conn, &snapshot.values, meta)
             });
         }
@@ -759,19 +824,28 @@ fn route(inner: &Inner, ntf: Notification) {
                 ops,
                 replaces: None,
             };
-            apply_state(inner, &conn, origin, record, patch.ts, |tree, meta| {
+            let (cause, run) = inner.caused_by(&conn, patch.call.as_deref());
+            let entry = NewEntry::new(origin, Record::StatePatch(record))
+                .cause(cause)
+                .run(run);
+            apply_state(inner, &conn, entry, patch.ts, |tree, meta| {
                 tree.apply_patch(&conn, &patch.ops, meta)
             });
         }
         N::EventEmit(event) => {
-            inner.append(NewEntry::new(
-                origin,
-                Record::Event(EventRecord {
-                    source: Source::Conn(conn),
-                    event: event.event,
-                    payload: event.payload,
-                }),
-            ));
+            let (cause, run) = inner.caused_by(&conn, event.call.as_deref());
+            inner.append(
+                NewEntry::new(
+                    origin,
+                    Record::Event(EventRecord {
+                        source: Source::Conn(conn),
+                        event: event.event,
+                        payload: event.payload,
+                    }),
+                )
+                .cause(cause)
+                .run(run),
+            );
         }
         N::Log(log) => {
             inner.append(NewEntry::new(
@@ -791,13 +865,12 @@ fn route(inner: &Inner, ntf: Notification) {
 fn apply_state(
     inner: &Inner,
     conn: &str,
-    origin: Origin,
-    record: StatePatchRecord,
+    entry: NewEntry,
     ts: Option<f64>,
     apply: impl FnOnce(&mut crate::state::StateTree, &Meta) -> crate::state::Dirty,
 ) {
     inner.shared.state.mutate(|tree| {
-        let Some(seq) = inner.append(NewEntry::new(origin, Record::StatePatch(record))) else {
+        let Some(seq) = inner.append(entry) else {
             return ((), Default::default());
         };
         let meta = Meta {
@@ -929,7 +1002,6 @@ async fn write_frames(
 
 async fn read_frames(
     mut stdout: ChildStdout,
-    link: Arc<Link>,
     incoming: mpsc::UnboundedSender<Message>,
     format: Format,
 ) {
@@ -944,7 +1016,6 @@ async fn read_frames(
         loop {
             match decoder.next_message() {
                 Ok(None) => break,
-                Ok(Some(Message::Response(res))) => link.complete(res.id, res.outcome),
                 Ok(Some(message)) => {
                     if incoming.send(message).is_err() {
                         return;

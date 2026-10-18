@@ -928,6 +928,10 @@
                         "$ref": "PatchOp.json"
                     }
                 },
+                "call": {
+                    "type": "string",
+                    "description": "The `action.invoke` call that produced this change, if any. Unset for\nchanges from device traffic outside an action."
+                },
                 "ts": {
                     "type": "number",
                     "description": "Unix epoch milliseconds."
@@ -980,6 +984,10 @@
                     "type": "string"
                 },
                 "payload": {},
+                "call": {
+                    "type": "string",
+                    "description": "The `action.invoke` call that produced this event, if any."
+                },
                 "ts": {
                     "type": "number",
                     "description": "Unix epoch milliseconds."

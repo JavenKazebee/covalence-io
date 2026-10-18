@@ -164,7 +164,11 @@ impl Core {
             deadline: req.deadline,
         };
         let started = Instant::now();
-        let result = self.host.invoke(&req.conn, &invoke).await.map(|r| r.result);
+        let result = self
+            .host
+            .invoke(&req.conn, &invoke, Some(requested))
+            .await
+            .map(|r| r.result);
         let duration_ms = started.elapsed().as_millis() as u64;
         let (ok, value, error) = match &result {
             Ok(value) => (true, value.clone(), None),
