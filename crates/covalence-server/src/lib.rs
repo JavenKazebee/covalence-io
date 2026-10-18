@@ -12,6 +12,7 @@
 //! | `POST /actions`              | Requests an action: `{action: "vh.route", params}`       |
 //! | `GET /journal?from&limit`    | Journal entries, oldest first                            |
 //! | `GET /journal/{seq}/why`     | The cause chain from an entry back to its root           |
+//! | `GET /ws`                    | Live state, journal and host status (see `ws`)           |
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -29,6 +30,7 @@ use covalence_store::Store;
 use serde::{Deserialize, Serialize};
 
 mod api;
+mod ws;
 
 pub use api::router;
 
@@ -157,6 +159,8 @@ pub struct App {
     /// Project entities. The journal has its own connection to the same file.
     store: Mutex<Store>,
     conns: RwLock<BTreeMap<ConnId, Connection>>,
+    /// Set at shutdown, so long-lived WebSocket sessions let go of the app.
+    closing: tokio::sync::watch::Sender<bool>,
 }
 
 impl App {
@@ -200,6 +204,7 @@ impl App {
             plugins,
             store: Mutex::new(store),
             conns: RwLock::new(conns),
+            closing: tokio::sync::watch::Sender::new(false),
         });
         let registering = app.clone();
         tokio::spawn(async move { registering.register().await });
@@ -255,6 +260,7 @@ impl App {
     /// Stops the plugin host. Waits for other holders of the app (request
     /// handlers) to finish first, for up to a few seconds.
     pub async fn shutdown(self: Arc<Self>) {
+        self.closing.send_replace(true);
         let mut app = self;
         for _ in 0..50 {
             match Arc::try_unwrap(app) {

@@ -91,6 +91,31 @@ Action parameters can refer to a collection for their choices (`choices: { from:
 
 Patches are coalesced per path within one scheduler turn: the latest value wins, but **events are never coalesced**.
 
+### 1.6 UI subscriptions (`GET /ws`)
+
+UI clients get live state over a WebSocket at `/ws`. Each frame is one JSON text message. Paths use the text form (§1.1).
+
+**Client → server** (`op`):
+
+| Message | Does |
+|---|---|
+| `{op: "subscribe", paths: ["vh.outputs"]}` | Adds path prefixes and answers with a `snapshot` of them. An alias that doesn't exist yet is fine. |
+| `{op: "unsubscribe", paths: [...]}` | Removes prefixes exactly as they were subscribed. Answers `unsubscribed`. |
+| `{op: "journal", on: true}` | Starts or stops the live journal tail. Answers `{type: "journal", on}`. Use `GET /journal` for the backlog and dedupe by `seq`. |
+
+**Server → client** (`type`):
+
+| Message | Meaning |
+|---|---|
+| `host` `{host: {phase, generation, pid}}` | Plugin host status. Sent first, then on every change. |
+| `snapshot` `{paths, leaves}` | Every leaf under `paths`. Replace whatever the client holds under them. |
+| `patch` `{set, deleted}` | Changed leaves under the subscriptions, coalesced for about one frame. `deleted` lists text paths. |
+| `journal` `{entry}` | One journal entry (§2.1). Never coalesced. |
+| `lagged` `{feed: "journal", missed}` | The tail fell behind and dropped entries. Refetch them over HTTP. |
+| `error` `{message}` | A bad request. The session carries on. |
+
+Leaves have the same shape as in `GET /state`: `{path, value, quality, ts, seq}`. When a client falls behind the core's change feed, it gets a fresh `snapshot` of all its subscriptions instead of a gap. At shutdown the server closes the socket.
+
 ---
 
 ## 2. Two logs

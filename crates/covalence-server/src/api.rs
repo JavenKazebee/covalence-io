@@ -9,9 +9,9 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use covalence_core::gate::Verdict;
-use covalence_core::host::HostPhase;
+use covalence_core::host::{HostPhase, HostStatus};
 use covalence_core::journal::{Entry, Origin, Seq};
-use covalence_core::state::{Quality, StatePath};
+use covalence_core::state::{Leaf, Quality, StatePath};
 use covalence_core::{ActionRequest, CoreError, text_path};
 use covalence_protocol::connection::ConnMode;
 use covalence_protocol::state::PathSegment;
@@ -36,6 +36,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/actions", post(request_action))
         .route("/journal", get(journal))
         .route("/journal/{seq}/why", get(why))
+        .route("/ws", get(crate::ws::upgrade))
         .with_state(app)
 }
 
@@ -61,17 +62,22 @@ type ApiResult<T> = Result<T, ApiError>;
 
 async fn health(State(app): State<Arc<App>>) -> Json<JsonValue> {
     let status = app.core.host().status().borrow().clone();
+    let journal = &app.core.shared().journal;
+    Json(json!({
+        "host": host_json(&status),
+        "journal": { "lastSeq": journal.last_seq(), "term": journal.term() },
+    }))
+}
+
+/// Host status as the API reports it.
+pub(crate) fn host_json(status: &HostStatus) -> JsonValue {
     let phase = match status.phase {
         HostPhase::Starting => "starting",
         HostPhase::Ready => "ready",
         HostPhase::Down => "down",
         HostPhase::Stopped => "stopped",
     };
-    let journal = &app.core.shared().journal;
-    Json(json!({
-        "host": { "phase": phase, "generation": status.generation, "pid": status.pid },
-        "journal": { "lastSeq": journal.last_seq(), "term": journal.term() },
-    }))
+    json!({ "phase": phase, "generation": status.generation, "pid": status.pid })
 }
 
 async fn plugins(State(app): State<Arc<App>>) -> Json<JsonValue> {
@@ -193,14 +199,27 @@ struct StateQuery {
     path: Option<String>,
 }
 
+/// A state leaf as the API and the WebSocket send it.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct StateLeaf {
+pub(crate) struct StateLeaf {
     path: String,
     value: JsonValue,
     quality: Quality,
     ts: u64,
     seq: Seq,
+}
+
+impl StateLeaf {
+    pub(crate) fn new(alias: &str, path: &[PathSegment], leaf: &Leaf) -> Self {
+        StateLeaf {
+            path: text_path::format(alias, path),
+            value: serde_json::to_value(&leaf.value).unwrap_or(JsonValue::Null),
+            quality: leaf.meta.quality,
+            ts: leaf.meta.ts,
+            seq: leaf.meta.seq,
+        }
+    }
 }
 
 async fn state(
@@ -226,13 +245,8 @@ async fn state(
         roots
             .iter()
             .flat_map(|(alias, root)| {
-                tree.leaves_under(root).map(move |(path, leaf)| StateLeaf {
-                    path: text_path::format(alias, &path.path),
-                    value: serde_json::to_value(&leaf.value).unwrap_or(JsonValue::Null),
-                    quality: leaf.meta.quality,
-                    ts: leaf.meta.ts,
-                    seq: leaf.meta.seq,
-                })
+                tree.leaves_under(root)
+                    .map(move |(path, leaf)| StateLeaf::new(alias, &path.path, leaf))
             })
             .collect()
     });
