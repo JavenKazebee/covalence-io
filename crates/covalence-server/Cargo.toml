@@ -8,7 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-axum = "0.8"
+axum = { version = "0.8", features = ["ws"] }
 clap = { version = "4.6.7", features = ["derive"] }
 covalence-core.workspace = true
 covalence-protocol.workspace = true
@@ -28,4 +28,6 @@ workspace = true
 [dev-dependencies]
 http-body-util = "0.1.5"
 tempfile = "3.27.0"
+tokio-tungstenite = "0.29"
+futures-util = "0.3"
 tower = { version = "0.5", features = ["util"] }
