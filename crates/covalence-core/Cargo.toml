@@ -1,0 +1,15 @@
+[package]
+name = "covalence-core"
+description = "Covalence IO engine: state tree, journal, output gate, host supervision"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+covalence-protocol.workspace = true
+covalence-store.workspace = true
+
+[lints]
+workspace = true

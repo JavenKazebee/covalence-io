@@ -1,0 +1,14 @@
+[package]
+name = "covalence-store"
+description = "Covalence IO SQLite store: entities, journal, snapshots"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+
+
+[lints]
+workspace = true

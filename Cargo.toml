@@ -1,0 +1,21 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT"
+repository = "https://github.com/JavenKazebee/covalence-io"
+
+[workspace.dependencies]
+covalence-protocol = { path = "crates/covalence-protocol" }
+covalence-core = { path = "crates/covalence-core" }
+covalence-store = { path = "crates/covalence-store" }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }

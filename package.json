@@ -1,0 +1,6 @@
+{
+  "name": "covalence-io",
+  "private": true,
+  "packageManager": "pnpm@10.16.1",
+  "engines": { "node": ">=22" }
+}

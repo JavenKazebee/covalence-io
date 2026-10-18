@@ -1,0 +1,5 @@
+{
+  "name": "@covalence-io/plugin-host",
+  "version": "0.0.0",
+  "exports": "./main.ts"
+}

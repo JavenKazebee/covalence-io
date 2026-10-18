@@ -1,0 +1,5 @@
+{
+  "name": "@covalence-io/plugin-videohub",
+  "version": "0.0.0",
+  "exports": "./mod.ts"
+}

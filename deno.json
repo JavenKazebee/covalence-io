@@ -1,0 +1,14 @@
+{
+  "workspace": [
+    "./packages/protocol",
+    "./packages/sdk",
+    "./packages/plugin-host",
+    "./plugins/videohub"
+  ],
+  "fmt": { "include": ["packages/", "plugins/"] },
+  "lint": { "include": ["packages/", "plugins/"] },
+  "test": { "include": ["packages/", "plugins/"] },
+  "imports": {
+    "@std/assert": "jsr:@std/assert@^1.0.19"
+  }
+}

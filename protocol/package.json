@@ -1,0 +1,5 @@
+{
+  "name": "@covalence-io/protocol-schema",
+  "private": true,
+  "description": "TypeSpec source for the plugin protocol (ADR 0016)"
+}
