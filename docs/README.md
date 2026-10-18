@@ -9,6 +9,8 @@
 ## Specs (drafts)
 - [State model and event log](specs/state-and-event-log.md)
 - [Plugin protocol](specs/plugin-protocol.md)
+- [Flows](specs/flows.md)
+- [Bindings](specs/bindings.md)
 
 ## Architecture decision records
 
@@ -31,5 +33,7 @@
 | [0015](adr/0015-defer-plugin-permission-enforcement.md) | Defer plugin permission enforcement until third-party plugins | Accepted |
 | [0016](adr/0016-protocol-schema-tooling.md) | Protocol schema tooling: TypeSpec → JSON Schema | Accepted |
 | [0017](adr/0017-wire-paths-as-segment-arrays.md) | State paths on the wire are segment arrays | Accepted |
+| [0018](adr/0018-flows-as-step-trees.md) | Flows are structured step trees; bindings are expressions | Accepted |
+| [0019](adr/0019-dynamic-action-targets-and-interfaces.md) | Dynamic action targets and plugin interfaces | Proposed |
 
 Each record covers its context, the decision, its consequences and the alternatives considered. Don't edit an accepted record to change its decision; write a new one that supersedes it.

@@ -2,6 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-10-18
+- **Amended by:** [0019](0019-dynamic-action-targets-and-interfaces.md) (proposed): bindings and state triggers track dependencies at run time; `oxc` extraction becomes editor-only
 
 ## Context
 Expressions appear everywhere: labels, colours, conditions, triggers, action parameters. Users also need script steps for custom logic. Requirements:

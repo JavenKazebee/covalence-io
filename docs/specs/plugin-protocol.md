@@ -151,6 +151,7 @@ interface Manifest {
   events: EventDef[];
   state: StateSchema;            // see the state spec §1.2–1.4
   presets?: PresetDef[];         // suggested button and page templates
+  implements?: InterfaceImpls;   // proposed: interfaces such as "camera.ptz@1" (ADR 0019)
   surfaces?: SurfaceProviderDef; // if the plugin provides surfaces (for example a web panel)
   simulator?: { stateLevel: boolean; protocolLevel: boolean };
 }

@@ -55,6 +55,8 @@ These are the user-facing terms. Product and component names use the chemistry t
 | **Connection** | A configured, running instance of a plugin ("ProPresenter – FOH Mac"). It has an **alias** used in expressions (`pp`). |
 | **Manifest** | What a plugin declares: config, permissions, actions, events, state schema, presets. |
 | **Action** | Something a connection can do, with typed parameters (`videohub.route`). |
+| **Target** | What an action acts on: a connection, optionally narrowed to one item it controls. Fixed, or chosen at run time ([ADR 0019](adr/0019-dynamic-action-targets-and-interfaces.md)). |
+| **Interface** | A versioned contract for one kind of device (`camera.ptz@1`) that plugins implement, so one action or binding works across brands. |
 | **Event** | Something that happened at a moment in time (`pp.timerEnded`). |
 | **State** | Typed values that persist over time, held in one tree (`pp.timers.countdown.remaining`). |
 | **Variable** | User-defined state (`var.serviceStarted`). |
@@ -62,8 +64,8 @@ These are the user-facing terms. Product and component names use the chemistry t
 | **Control** | One input or output on a surface: button, encoder, fader, touch strip, display. |
 | **Gesture** | An interpreted input: press, release, double-press, long-press, hold-repeat, turn. |
 | **Page** | A layout of control bindings shown on a surface. |
-| **Binding** | A reactive link from expressions to a control's look (label, colour, image). |
-| **Flow** | The single unit of automation: trigger(s) + optional conditions + steps. Button action lists, rules and node graphs are all flows. |
+| **Binding** | Dataflow: a reactive link from state to a control's look (label, colour, image), stored as a value, template, rules, map or expression ([spec](specs/bindings.md)). Faders and encoders use **value mappings** in the other direction. |
+| **Flow** | The single unit of automation: trigger(s) + optional conditions + a tree of steps. Control flow only. Button action lists, rules and node graphs are all flows ([spec](specs/flows.md)). |
 | **Run** | One execution of a flow, with a handle, a status and a cancellation token. |
 | **Expression** | A JS expression, used in bindings, conditions and parameters. |
 | **Script** | A JS/TS script step inside a flow. |
@@ -77,13 +79,18 @@ These are the user-facing terms. Product and component names use the chemistry t
 | **Rule view** | When / if / then cards, schedules, state triggers | A flow with a trigger, a condition and steps |
 | **Flow view** | Node graph: branches, loops, parallel paths, waits, script steps | A flow |
 
+All three views show the same structured step tree ([ADR 0018](adr/0018-flows-as-step-trees.md)). In the node graph, blocks are nested regions and edges only show order. Values move through expressions, not wires.
+
 You can always move a flow up to a more powerful view ("Open as flow"). A linear flow can also go back down to the simpler view.
 
 ## Flow runtime semantics (summary)
 
+The full definition is in the [flow spec](specs/flows.md).
+
 - **Triggers:** gesture on a control, event, state condition (edge-triggered), schedule, flow-called-by-flow, API or OSC call, and startup.
 - **Concurrency mode per flow:** `parallel` | `queue` | `restart` | `ignore` (when a run is already active).
-- **Steps:** action, wait (duration), wait-until (expression, timeout), branch, loop, parallel, call flow, set variable, script, log.
+- **Steps:** action, wait (duration), wait-until (expression, timeout), call flow, set variable, script, log, stop, break, continue.
+- **Blocks:** group (with catch and finally), branch, loop, parallel.
 - **Cancellation:** cooperative at every step boundary and inside scripts, via the QuickJS interrupt hook.
 - **Every step is journaled** with causation, so the timeline can answer "why did this fire?"
 

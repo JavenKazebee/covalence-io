@@ -45,7 +45,7 @@ type Value =
 
 The **state schema** (declared by the plugin manifest, or by the user for variables) adds meaning to the plain types:
 - `unit`: `ms`, `s`, `dB`, `%`, `Hz`, `K`, `fps`
-- `kind`: `duration`, `timestamp`, `color`, `enum` (with labels), `percent`, `id`
+- `kind`: `duration`, `timestamp`, `color`, `enum` (with labels), `percent`, `id`, `target` (a connection or item, with an optional `interface` constraint; proposed in [ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md))
 - `range`, `step`
 - `readOnly`
 - `description`
@@ -137,12 +137,12 @@ Ordering is defined **only** by `seq` within a log. `ts` is for display.
 | `event` | `{source, event, payload}` | From a plugin, the core or a script |
 | `state.patch` | `{ops: [{path, value} \| {path, delete: true}]}` | Paths stored in ID form |
 | `state.quality` | `{subtree, quality}` | Marks a subtree stale or good |
-| `trigger.matched` | `{flow, trigger}` | `cause` → the event, gesture or patch |
+| `trigger.matched` | `{flow, trigger, blocked?}` | `cause` → the event, gesture or patch |
 | `run.started` | `{flow, run, mode, inputs}` | |
 | `run.step` | `{run, step, status: started\|done\|failed\|skipped, detail?}` | |
 | `run.checkpoint` | `{run, step, locals}` | For `resume` on failover |
 | `run.finished` | `{run, status: ok\|failed\|cancelled\|aborted, error?}` | |
-| `action.requested` | `{call, conn, action, params, deadline?}` | `call` is the idempotency key |
+| `action.requested` | `{call, conn, key?, via?, action, params, deadline?}` | `call` is the idempotency key. `key` and `via` (interface) record a resolved dynamic target ([ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md)) |
 | `action.dispatched` | `{call}` | Passed the output gate |
 | `action.suppressed` | `{call, reason: standby\|simulate\|showLock\|permission\|staleTerm}` | |
 | `action.result` | `{call, ok, result?, error?, durationMs}` | |
@@ -157,7 +157,7 @@ Ordering is defined **only** by `seq` within a log. `ts` is for display.
 
 ### 2.3 Project op log
 
-Entities: `connection`, `surface`, `page`, `control_binding`, `flow`, `variable`, `asset`, `user`, `role_assignment`, `setting`, `restore_point`.
+Entities: `connection`, `surface`, `page`, `control_binding`, `value_mapping`, `flow`, `variable`, `asset`, `user`, `role_assignment`, `setting`, `restore_point`.
 
 ```ts
 interface ProjectOp extends Entry {
