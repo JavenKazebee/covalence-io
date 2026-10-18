@@ -217,12 +217,12 @@ This only narrows or extends what the manifest declares (enum values, collection
 
 | Method | Type | Params |
 |---|---|---|
-| `state.snapshot` | ntf | `{conn, values: {[path]: Value}, complete: true}`: replaces the connection's whole subtree |
-| `state.patch` | ntf | `{conn, ops: [{p: string, v: Value} \| {p: string, del: true}], ts?}` |
+| `state.snapshot` | ntf | `{conn, values: [Path, Value][], complete: true}`: replaces the connection's whole subtree |
+| `state.patch` | ntf | `{conn, ops: [{p: Path, v: Value} \| {p: Path, del: true}], ts?}` |
 | `event.emit` | ntf | `{conn, event: string, payload?: unknown, ts?}` |
 | `log` | ntf | `{conn?, level: "trace" \| "debug" \| "info" \| "warn" \| "error", msg, fields?}` |
 
-Paths are relative to the connection root (`timers.countdown.remaining`). The core adds the connection prefix and validates against the schema. Invalid patches are dropped and logged.
+Paths are segment arrays ([ADR 0017](../adr/0017-wire-paths-as-segment-arrays.md)) relative to the connection root: `["timers", "countdown", "remaining"]`. The core adds the connection prefix and validates against the schema. Invalid patches are dropped and logged.
 
 **Backpressure:**
 - The SDK coalesces patches per path within a 1 ms window by default.
@@ -355,8 +355,8 @@ export default definePlugin({
 
 ## 12. Open questions
 
-1. Schema tool: TypeSpec → JSON Schema, or JSON Schema written by hand? Decide when `protocol/` is created.
-2. Should `state.patch` paths be strings (`"outputs[3].source"`) or segment arrays (`["outputs", 3, "source"]`) on the wire? Arrays are cheaper to validate.
+1. ~~Schema tool~~: TypeSpec → JSON Schema. See [ADR 0016](../adr/0016-protocol-schema-tooling.md).
+2. ~~Path format on the wire~~: segment arrays. See [ADR 0017](../adr/0017-wire-paths-as-segment-arrays.md).
 3. Transferring Orbital plugin bundles: should the core push the package over the link, or should the Orbital fetch it from the registry?
 4. Should plugins be able to define **custom gestures or controls**, such as a jog wheel's acceleration curve, or does the core own all gesture logic?
 5. Port number and mDNS TXT records for Orbital discovery.

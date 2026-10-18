@@ -1,6 +1,6 @@
 # 0002 – Plugins defined protocol-first
 
-- **Status:** Accepted. The choice of schema tool is still Proposed.
+- **Status:** Accepted. The schema tool is decided in [0016](0016-protocol-schema-tooling.md).
 - **Date:** 2026-10-18
 
 ## Context

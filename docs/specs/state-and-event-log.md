@@ -28,6 +28,7 @@ All live values in the system share one namespace.
 
 - **Segments** match `[A-Za-z_][A-Za-z0-9_]*`. Collection keys that aren't valid identifiers use bracket syntax: `vh.outputs["SDI 4"].source`.
 - **Aliases** are unique per project, must not collide with the reserved roots, and are renameable.
+- **On the wire and in storage, paths are segment arrays** (`["outputs", "SDI 4", "source"]`), per [ADR 0017](../adr/0017-wire-paths-as-segment-arrays.md). The dotted text form is for expressions, the UI and logs.
 - **The stored form uses IDs, not aliases.** The project stores references as `{conn: <connectionId>, path: [...]}`, and the alias is shown only when rendering text. Renaming an alias therefore never breaks a reference.
 
 ### 1.2 Values
