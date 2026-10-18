@@ -56,3 +56,18 @@ jobs:
         run: |
           git status --porcelain protocol/json-schema packages/protocol/types.gen.ts
           test -z "$(git status --porcelain protocol/json-schema packages/protocol/types.gen.ts)"
+
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter ui type-check
+      - run: pnpm --filter ui lint
+      - run: pnpm --filter ui test
+      - run: pnpm --filter ui build

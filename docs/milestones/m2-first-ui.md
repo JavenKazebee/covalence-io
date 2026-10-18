@@ -23,14 +23,14 @@ Put a face on M1. The core serves a Vue 3 UI ([ADR 0005](../adr/0005-web-ui-vue-
 - [x] Messages documented in the [state spec](../specs/state-and-event-log.md) §1.6.
 
 ### Phase 2: UI scaffold
-- [ ] `packages/ui`: Vue 3 + TypeScript + Vite + Pinia, in the pnpm workspace.
-- [ ] Vite dev proxy for the API and `/ws` to `:7680`.
-- [ ] CI: type-check, lint, build.
+- [x] `packages/ui`: Vue 3 + TypeScript + Vite + Pinia, in the pnpm workspace.
+- [x] Vite dev proxy for the API and `/ws` to `:7680`.
+- [x] CI: type-check, lint, build.
 
 ### Phase 3: Live state client
-- [ ] One shared WebSocket feeding a Pinia store (path → leaf).
-- [ ] Components subscribe on mount and unsubscribe on unmount.
-- [ ] Reconnect with backoff, resubscribing afterwards.
+- [x] One shared WebSocket feeding a Pinia store (path → leaf).
+- [x] Components subscribe on mount and unsubscribe on unmount.
+- [x] Reconnect with backoff, resubscribing afterwards.
 
 ### Phase 4: Screens
 - [ ] Connections: list and create.
