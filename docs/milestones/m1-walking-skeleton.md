@@ -11,7 +11,7 @@ Route a Blackmagic Videohub in simulate mode, end to end: API → core → outpu
 - [x] The plugin's `state.patch` updates `vh.outputs[1].source`.
 - [x] `GET /journal/{seq}/why` walks the cause chain back to the API call.
 - [x] Killing the Deno host process makes the core restart it and resync state in under 3 s.
-- [ ] All of the above runs in CI with no hardware. (Passes locally; not yet confirmed on GitHub Actions.)
+- [x] All of the above runs in CI with no hardware.
 
 ## Phases
 

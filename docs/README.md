@@ -4,7 +4,8 @@
 - [Architecture overview](architecture.md): components, core concepts and repo layout.
 
 ## Milestones
-- [M1: Walking skeleton](milestones/m1-walking-skeleton.md) (in progress)
+- [M1: Walking skeleton](milestones/m1-walking-skeleton.md) (done)
+- [M2: First UI slice](milestones/m2-first-ui.md) (in progress)
 
 ## Specs (drafts)
 - [State model and event log](specs/state-and-event-log.md)
