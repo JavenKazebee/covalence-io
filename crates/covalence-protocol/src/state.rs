@@ -34,6 +34,10 @@ pub struct StateSnapshot {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct StatePatch {
     pub ops: Vec<PatchOp>,
+    /// The `action.invoke` call that produced this change, if any. Unset for
+    /// changes from device traffic outside an action.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call: Option<String>,
     /// Unix epoch milliseconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ts: Option<f64>,
@@ -58,6 +62,9 @@ pub struct EventEmit {
     pub event: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload: Option<Value>,
+    /// The `action.invoke` call that produced this event, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call: Option<String>,
     /// Unix epoch milliseconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ts: Option<f64>,

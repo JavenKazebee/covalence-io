@@ -177,6 +177,7 @@
           { "p": ["timers", "countdown", "remaining"], "v": 12.5 },
           { "p": ["inputs", 7], "del": true }
         ],
+        "call": "01JAB3ZC0000000000000000A1",
         "ts": 1760781600123.5
       }
     }
@@ -186,7 +187,7 @@
     "dir": "hostToCore", "params": "EventEmit",
     "message": {
       "t": "ntf", "m": "event.emit", "conn": "01JAB3ZB0000000000000000V1",
-      "p": { "event": "routeChanged", "payload": { "output": 1, "input": 3 }, "ts": 1760781600000 }
+      "p": { "event": "routeChanged", "payload": { "output": 1, "input": 3 }, "call": "01JAB3ZC0000000000000000A1", "ts": 1760781600000 }
     }
   },
   {

@@ -54,6 +54,8 @@ export class ConnectionRuntime {
   readonly #coalesceMs: number;
   readonly #tree = new StateTree();
   readonly #pending = new PatchCoalescer();
+  /** The call the pending ops belong to (spec §6 `call`). */
+  #pendingCall: string | undefined;
   readonly #abort = new AbortController();
   readonly #ctx: BaseContext<unknown, Record<string, unknown>>;
   #timer: ReturnType<typeof setTimeout> | undefined;
@@ -128,6 +130,9 @@ export class ConnectionRuntime {
     if (this.#destroyed) {
       throw new ActionError("not_connected", "connection destroyed");
     }
+    // Writes through this call's context carry its call ID while it runs.
+    let running = true;
+    const ctx = this.#makeContext(() => running ? invoke.call : undefined);
     const call: CallInfo = {
       call: invoke.call,
       run: invoke.run,
@@ -145,13 +150,11 @@ export class ConnectionRuntime {
             `${invoke.action} is not simulated`,
           );
         }
-        result = await handler(this.#ctx, invoke.params, call);
+        result = await handler(ctx, invoke.params, call);
       } else {
         if (!up) throw new ActionError("not_connected", "not connected");
-        const ctx: Context = Object.assign(Object.create(this.#ctx), {
-          session: this.#session,
-        });
-        result = await spec.run(ctx, invoke.params, call);
+        const live: Context = Object.assign(ctx, { session: this.#session });
+        result = await spec.run(live, invoke.params, call);
       }
     } catch (err) {
       if (err instanceof ActionError) throw err;
@@ -160,6 +163,7 @@ export class ConnectionRuntime {
       }
       throw new ActionError("action_failed", errorMessage(err));
     } finally {
+      running = false;
       this.flush(); // state lands before the result
     }
     return result === undefined ? {} : { result };
@@ -190,19 +194,28 @@ export class ConnectionRuntime {
     }
     clearTimeout(this.#timer);
     this.#pending.clear();
+    this.#pendingCall = undefined;
   }
 
   /** Sends pending patches now. */
   flush() {
     clearTimeout(this.#timer);
     this.#timer = undefined;
+    const call = this.#pendingCall;
+    this.#pendingCall = undefined;
     if (!this.#snapshotSent) {
       // The first snapshot will carry these values.
       this.#pending.clear();
       return;
     }
     const ops = this.#pending.take();
-    if (ops.length > 0) this.#send("state.patch", { ops, ts: Date.now() });
+    if (ops.length === 0) return;
+    this.#send(
+      "state.patch",
+      call === undefined
+        ? { ops, ts: Date.now() }
+        : { ops, call, ts: Date.now() },
+    );
   }
 
   #send(method: string, params: unknown) {
@@ -214,6 +227,7 @@ export class ConnectionRuntime {
     clearTimeout(this.#timer);
     this.#timer = undefined;
     this.#pending.clear();
+    this.#pendingCall = undefined;
     this.#snapshotSent = true;
     this.#send("state.snapshot", {
       values: this.#tree.leaves(),
@@ -221,8 +235,12 @@ export class ConnectionRuntime {
     });
   }
 
-  #queue(ops: PatchOp[]) {
+  #queue(ops: PatchOp[], call: string | undefined) {
     if (ops.length === 0 || this.#destroyed) return;
+    // One patch carries one call: ops from another call (or from outside
+    // any call) go out first.
+    if (this.#pending.size > 0 && this.#pendingCall !== call) this.flush();
+    this.#pendingCall = call;
     for (const op of ops) this.#pending.add(op);
     this.#timer ??= setTimeout(() => this.flush(), this.#coalesceMs);
   }
@@ -231,22 +249,28 @@ export class ConnectionRuntime {
     this.#send("log", fields ? { level, msg, fields } : { level, msg });
   }
 
-  #makeContext(): BaseContext<unknown, Record<string, unknown>> {
+  /**
+   * Builds a hook context. `call` names the action call that writes and
+   * events made through it belong to, if any.
+   */
+  #makeContext(
+    call: () => string | undefined = () => undefined,
+  ): BaseContext<unknown, Record<string, unknown>> {
     const tree = this.#tree;
     const write =
       (fn: (path: Path, value: unknown) => PatchOp[]) =>
       (pathOrValue: PathLike | Record<string, unknown>, value?: unknown) => {
         if (typeof pathOrValue === "string" || Array.isArray(pathOrValue)) {
-          this.#queue(fn(toPath(pathOrValue as PathLike), value));
+          this.#queue(fn(toPath(pathOrValue as PathLike), value), call());
         } else {
-          this.#queue(fn([], pathOrValue));
+          this.#queue(fn([], pathOrValue), call());
         }
       };
     const state: StateApi = {
       get: (path) => tree.get(path === undefined ? [] : toPath(path)),
       set: write((p, v) => tree.set(p, v)),
       patch: write((p, v) => tree.patch(p, v)),
-      delete: (path) => this.#queue(tree.delete(toPath(path))),
+      delete: (path) => this.#queue(tree.delete(toPath(path)), call()),
     };
     const log: Logger = {
       trace: (msg, fields) => this.#log("trace", msg, fields),
@@ -261,7 +285,7 @@ export class ConnectionRuntime {
       conn: init.conn,
       alias: init.alias,
       mode: init.mode,
-      config: withDefaults(def.config, init.config ?? {}),
+      config: this.#ctx?.config ?? withDefaults(def.config, init.config ?? {}),
       secrets: init.secrets ?? {},
       state,
       log,
@@ -269,12 +293,12 @@ export class ConnectionRuntime {
       emit: (event, payload) => {
         if (this.#destroyed) return;
         this.flush(); // keep patches written before the event ahead of it
-        this.#send(
-          "event.emit",
-          payload === undefined
-            ? { event, ts: Date.now() }
-            : { event, payload, ts: Date.now() },
-        );
+        const params: Record<string, unknown> = { event };
+        if (payload !== undefined) params.payload = payload;
+        const id = call();
+        if (id !== undefined) params.call = id;
+        params.ts = Date.now();
+        this.#send("event.emit", params);
       },
       status: (status, message, detail) => {
         if (this.#destroyed) return;

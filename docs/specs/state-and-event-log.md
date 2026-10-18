@@ -134,8 +134,8 @@ Ordering is defined **only** by `seq` within a log. `ts` is for display.
 |---|---|---|
 | `input.raw` | `{surface, control, kind: down\|up\|turn\|touch\|value, value?, deviceTs?}` | `deviceTs` comes from the Orbital's clock, if remote |
 | `input.gesture` | `{surface, control, gesture: press\|release\|double\|long\|hold\|turn, delta?}` | `cause` → the `input.raw` entry |
-| `event` | `{source, event, payload}` | From a plugin, the core or a script |
-| `state.patch` | `{ops: [{path, value} \| {path, delete: true}]}` | Paths stored in ID form |
+| `event` | `{source, event, payload}` | From a plugin, the core or a script. From a plugin action: `cause` → the `action.requested` entry |
+| `state.patch` | `{ops: [{path, value} \| {path, delete: true}]}` | Paths stored in ID form. From a plugin action: `cause` → the `action.requested` entry ([plugin protocol](plugin-protocol.md) §6 `call`) |
 | `state.quality` | `{subtree, quality}` | Marks a subtree stale or good |
 | `trigger.matched` | `{flow, trigger, blocked?}` | `cause` → the event, gesture or patch |
 | `run.started` | `{flow, run, mode, inputs}` | |

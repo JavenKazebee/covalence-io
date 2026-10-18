@@ -90,8 +90,17 @@ Deno.test("simulate: hello, load, create, route, resync, destroy", async () => {
     assertEquals((patch.p as { ops: unknown }).ops, [
       { p: ["outputs", 1, "source"], v: 3 },
     ]);
+    // The simulator's change names the call that made it.
+    assertEquals(
+      (patch.p as { call?: string }).call,
+      "01JCALL0000000000000000001",
+    );
     const event = await core.waitFor(is(conn, "event.emit"), { from: mark });
     assertEquals((event.p as { event: string }).event, "routeChanged");
+    assertEquals(
+      (event.p as { call?: string }).call,
+      "01JCALL0000000000000000001",
+    );
     assertEquals((event.p as { payload: unknown }).payload, {
       output: 1,
       input: 3,
@@ -181,6 +190,8 @@ Deno.test("live (JSON debug mode): routes through the fake Videohub", async () =
     assertEquals((patch.p as { ops: unknown }).ops, [
       { p: ["outputs", 1, "source"], v: 3 },
     ]);
+    // Live, the change arrives with the device's echo, outside the action.
+    assertEquals((patch.p as { call?: string }).call, undefined);
     await core.waitFor(is(conn, "event.emit"), { from: mark });
 
     // A change made at the device.

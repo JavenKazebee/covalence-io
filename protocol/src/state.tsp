@@ -32,6 +32,12 @@ model StateSnapshot {
 model StatePatch {
   ops: PatchOp[];
 
+  /**
+   * The `action.invoke` call that produced this change, if any. Unset for
+   * changes from device traffic outside an action.
+   */
+  call?: string;
+
   /** Unix epoch milliseconds. */
   ts?: float64;
 }
@@ -50,6 +56,9 @@ model PathDelete {
 model EventEmit {
   event: string;
   payload?: unknown;
+
+  /** The `action.invoke` call that produced this event, if any. */
+  call?: string;
 
   /** Unix epoch milliseconds. */
   ts?: float64;

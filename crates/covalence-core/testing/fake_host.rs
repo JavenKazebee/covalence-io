@@ -206,6 +206,7 @@ impl Host {
                         p: source_path(output),
                         v: Value::from(input),
                     })],
+                    call: Some(invoke.call.clone()),
                     ts: None,
                 };
                 self.notify::<host_to_core::StatePatch>(Some(conn), &patch);
@@ -218,6 +219,7 @@ impl Host {
                     &EventEmit {
                         event: "routeChanged".into(),
                         payload: Some(payload),
+                        call: Some(invoke.call.clone()),
                         ts: None,
                     },
                 );

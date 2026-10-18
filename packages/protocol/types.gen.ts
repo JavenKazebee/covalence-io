@@ -360,6 +360,11 @@ export interface StateSnapshot {
 export interface StatePatch {
   ops: PatchOp[];
   /**
+   * The `action.invoke` call that produced this change, if any. Unset for
+   * changes from device traffic outside an action.
+   */
+  call?: string;
+  /**
    * Unix epoch milliseconds.
    */
   ts?: number;
@@ -374,6 +379,10 @@ export interface PathDelete {
 export interface EventEmit {
   event: string;
   payload?: unknown;
+  /**
+   * The `action.invoke` call that produced this event, if any.
+   */
+  call?: string;
   /**
    * Unix epoch milliseconds.
    */
