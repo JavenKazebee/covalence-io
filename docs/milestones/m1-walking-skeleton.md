@@ -38,10 +38,10 @@ Route a Blackmagic Videohub in simulate mode, end to end: API → core → outpu
 - [x] Shared golden vectors in `protocol/fixtures/`, encoded and decoded by both sides.
 
 ### Phase 3: Core engine (Rust)
-- [ ] State tree: paths, values, per-value metadata (`ts`, `seq`, `quality`, `source`), `stale` on disconnect, dirty-path set.
-- [ ] Runtime journal: in-memory ring plus SQLite (WAL), gap-free `seq`, `cause`. Only the kinds the slice uses.
-- [ ] Output gate: the real pipeline. Simulate mode and term fencing work; role and show lock are pass-through stubs.
-- [ ] Host supervisor: spawn the Deno host, health pings, restart with backoff, `conn.resync` after restart.
+- [x] State tree: paths, values, per-value metadata (`ts`, `seq`, `quality`, `source`), `stale` on disconnect, dirty-path set.
+- [x] Runtime journal: in-memory ring plus SQLite (WAL), gap-free `seq`, `cause`. Only the kinds the slice uses.
+- [x] Output gate: the real pipeline. Simulate mode and term fencing work; role and show lock are pass-through stubs.
+- [x] Host supervisor: spawn the Deno host, health pings, restart with backoff, `conn.resync` after restart.
 
 ### Phase 4: SDK, plugin host, Videohub plugin (TypeScript / Deno)
 - [ ] Minimal `definePlugin`: `ctx.state.patch`, `ctx.emit`, actions, state-level simulator hook.
