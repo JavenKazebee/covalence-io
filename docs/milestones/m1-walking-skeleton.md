@@ -44,10 +44,10 @@ Route a Blackmagic Videohub in simulate mode, end to end: API → core → outpu
 - [ ] Host supervisor: spawn the Deno host, health pings, restart with backoff, `conn.resync` after restart.
 
 ### Phase 4: SDK, plugin host, Videohub plugin (TypeScript / Deno)
-- [ ] Minimal `definePlugin`: `ctx.state.patch`, `ctx.emit`, actions, state-level simulator hook.
-- [ ] Plugin host: one Deno process, one worker per connection, coarse process-level allowlist (ADR 0015).
-- [ ] Videohub plugin: simulator, plus real TCP via Deno sockets (host transports are deferred).
-- [ ] Protocol-level fake Videohub server for the plugin's own tests ([ADR 0012](../adr/0012-simulated-devices.md)).
+- [x] Minimal `definePlugin`: `ctx.state.patch`, `ctx.emit`, actions, state-level simulator hook.
+- [x] Plugin host: one Deno process, one worker per connection, coarse process-level allowlist (ADR 0015).
+- [x] Videohub plugin: simulator, plus real TCP via Deno sockets (host transports are deferred).
+- [x] Protocol-level fake Videohub server for the plugin's own tests ([ADR 0012](../adr/0012-simulated-devices.md)).
 
 ### Phase 5: Thin server and acceptance test
 - [ ] `axum` endpoints: `POST /connections`, `GET /state`, `POST /actions`, `GET /journal`, `GET /journal/{seq}/why`.
