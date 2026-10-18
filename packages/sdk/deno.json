@@ -1,5 +1,9 @@
 {
   "name": "@covalence-io/sdk",
   "version": "0.0.0",
-  "exports": "./mod.ts"
+  "exports": {
+    ".": "./mod.ts",
+    "./runtime": "./runtime.ts",
+    "./simulator": "./simulator.ts"
+  }
 }
