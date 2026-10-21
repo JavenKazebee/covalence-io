@@ -15,7 +15,7 @@ export function useLiveClient(): LiveClient {
 
 /**
  * Live leaves at or below `path`. Subscribes on mount and unsubscribes on
- * unmount; a changed `path` moves the subscription.
+ * unmount; a changed `path` moves the subscription, and an empty one drops it.
  */
 export function useLiveState(path: MaybeRefOrGetter<string>) {
   const store = useLiveStore();
@@ -30,9 +30,11 @@ export function useLiveState(path: MaybeRefOrGetter<string>) {
     held = next;
   }
 
+  // An empty path holds nothing, e.g. before there's a connection to show.
+  const wanted = () => toValue(path) || null;
   onMounted(() => {
-    hold(toValue(path));
-    watch(() => toValue(path), hold);
+    hold(wanted());
+    watch(wanted, hold);
   });
   onBeforeUnmount(() => hold(null));
 

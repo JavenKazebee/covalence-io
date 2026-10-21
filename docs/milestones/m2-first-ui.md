@@ -33,11 +33,11 @@ Put a face on M1. The core serves a Vue 3 UI ([ADR 0005](../adr/0005-web-ui-vue-
 - [x] Reconnect with backoff, resubscribing afterwards.
 
 ### Phase 4: Screens
-- [ ] Connections: list and create.
-- [ ] State: tree with quality badges.
-- [ ] Actions: manifest-driven form.
-- [ ] Journal: live tail plus a `why` drawer.
-- [ ] Host status in the header.
+- [x] Connections: list and create.
+- [x] State: tree with quality badges.
+- [x] Actions: manifest-driven form.
+- [x] Journal: live tail plus a `why` drawer.
+- [x] Host status in the header.
 
 ### Phase 5: Serving and acceptance
 - [ ] The server serves the built UI (`--ui <dir>`, SPA fallback).

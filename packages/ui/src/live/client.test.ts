@@ -131,7 +131,7 @@ describe("live client", () => {
     client.followJournal({ entry: (e) => entries.push(e.seq), lagged: (n) => (missed = n) });
     socket().deliver({ type: "host", host: { phase: "ready", generation: 1, pid: 42 } });
     socket().deliver({ type: "journal", on: true });
-    socket().deliver({ type: "journal", entry: { seq: 7, ts: "", kind: "log" } });
+    socket().deliver({ type: "journal", entry: { seq: 7, term: 1, ts: "", mono: 0, origin: { core: "system" }, kind: "log", data: null } });
     socket().deliver({ type: "lagged", feed: "journal", missed: 3 });
     vi.spyOn(console, "warn").mockImplementation(() => {});
     socket().deliver({ type: "error", message: "bad path" });

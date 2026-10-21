@@ -21,13 +21,27 @@ export interface HostStatus {
   pid: number | null;
 }
 
-/** A runtime journal entry (§2.1). Phase 4 gives it a closer type. */
+/** Who produced a journal entry (§2.1). */
+export type Origin =
+  | { user: string; client: string }
+  | { conn: string }
+  | { surface: string; orbital?: string }
+  | { flow: string; run: string; step: string }
+  | { core: string };
+
+/** A runtime journal entry (§2.1). `data` depends on `kind` (§2.2). */
 export interface JournalEntry {
   seq: number;
+  term: number;
+  /** RFC 3339, for display only. */
   ts: string;
-  kind: string;
+  mono: number;
+  origin: Origin;
+  /** Seq of the entry that directly caused this one. */
   cause?: number;
-  [field: string]: unknown;
+  run?: string;
+  kind: string;
+  data: unknown;
 }
 
 export type ClientMessage =
