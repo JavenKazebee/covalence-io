@@ -13,6 +13,8 @@
 //! | `GET /journal?from&limit`    | Journal entries, oldest first                            |
 //! | `GET /journal/{seq}/why`     | The cause chain from an entry back to its root           |
 //! | `GET /ws`                    | Live state, journal and host status (see `ws`)           |
+//!
+//! Any other path is the built web UI, when there is one (see `ui`).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -30,9 +32,11 @@ use covalence_store::Store;
 use serde::{Deserialize, Serialize};
 
 mod api;
+mod ui;
 mod ws;
 
 pub use api::router;
+pub use ui::{DEFAULT_UI_DIR, with_ui};
 
 /// Entity type for connections in the store.
 const CONNECTION: &str = "connection";

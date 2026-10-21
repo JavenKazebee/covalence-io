@@ -71,3 +71,34 @@ jobs:
       - run: pnpm --filter ui lint
       - run: pnpm --filter ui test
       - run: pnpm --filter ui build
+
+  # M2 acceptance: a browser drives the real server, serving the built UI,
+  # with the real Deno plugin host and Videohub in simulate mode.
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version-file: .dvmrc
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter ui build
+      - run: cargo build --locked -p covalence-server
+      - run: pnpm --filter ui exec playwright install --with-deps chromium
+      - run: pnpm --filter ui smoke
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-report
+          path: |
+            packages/ui/playwright-report/
+            packages/ui/test-results/
+          retention-days: 7
