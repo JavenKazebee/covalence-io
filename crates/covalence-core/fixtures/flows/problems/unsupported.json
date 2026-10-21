@@ -1,0 +1,41 @@
+{
+  "flow": {
+    "name": "Later",
+    "enabled": true,
+    "conditions": ["var.armed"],
+    "triggers": [
+      { "kind": "state", "when": "vh.outputs[1].source == 3", "edge": "rising" },
+      {
+        "kind": "event",
+        "source": { "interface": "router@1" },
+        "event": "routeChanged",
+        "filter": "trigger.payload.output == 1"
+      }
+    ],
+    "concurrency": "ignore",
+    "failover": "resume",
+    "body": [
+      {
+        "id": "route1",
+        "kind": "action",
+        "target": { "expr": "var.router", "constraint": { "plugin": "io.covalence.videohub" } },
+        "action": "route",
+        "params": { "output": 1, "input": { "expr": "local.input" } },
+        "retry": { "attempts": 2 }
+      },
+      { "id": "g", "kind": "group", "steps": [] }
+    ]
+  },
+  "errors": [
+    { "path": ["conditions"], "code": "unsupported" },
+    { "path": ["failover"], "code": "unsupported" },
+    { "path": ["triggers", 0, "kind"], "code": "unsupported" },
+    { "path": ["triggers", 1, "filter"], "code": "unsupported" },
+    { "path": ["triggers", 1, "source"], "code": "unsupported" },
+    { "path": ["body", 0, "retry"], "code": "unsupported" },
+    { "path": ["body", 0, "target"], "code": "unsupported" },
+    { "path": ["body", 0, "params", "input"], "code": "unsupported" },
+    { "path": ["body", 1, "kind"], "code": "unsupported" }
+  ],
+  "warnings": []
+}

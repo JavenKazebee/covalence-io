@@ -1,0 +1,36 @@
+{
+  "flow": {
+    "name": "Echo",
+    "slug": "echo",
+    "enabled": true,
+    "triggers": [
+      {
+        "kind": "event",
+        "source": { "conn": "01JBZ7P0D3F5G7H9J1K3L5M7N9" },
+        "event": "routeChanged"
+      }
+    ],
+    "concurrency": "ignore",
+    "body": [
+      {
+        "id": "route1",
+        "kind": "action",
+        "target": { "conn": "01JBZ7P0D3F5G7H9J1K3L5M7N9" },
+        "action": "route",
+        "params": { "output": 2, "input": 2 }
+      },
+      {
+        "id": "other",
+        "kind": "action",
+        "target": { "conn": "01JBZ7P0D3F5G7H9J1K3L5M7NB" },
+        "action": "anything",
+        "params": { "free": "form" }
+      }
+    ]
+  },
+  "errors": [],
+  "warnings": [
+    { "path": ["body", 1, "target"], "code": "unchecked" },
+    { "path": ["triggers", 0], "code": "selfTrigger" }
+  ]
+}

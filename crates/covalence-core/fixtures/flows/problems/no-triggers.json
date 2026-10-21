@@ -1,0 +1,11 @@
+{
+  "flow": {
+    "name": "Idle",
+    "slug": "taken",
+    "enabled": false,
+    "concurrency": "parallel",
+    "body": []
+  },
+  "errors": [{ "path": ["slug"], "code": "duplicateSlug" }],
+  "warnings": [{ "path": ["triggers"], "code": "noTriggers" }]
+}

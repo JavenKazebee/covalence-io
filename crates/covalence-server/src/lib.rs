@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
+use covalence_core::flow::{self, Flow, FlowId};
 use covalence_core::host::{HostConfig, HostPhase};
 use covalence_core::journal::{DEFAULT_RING_CAPACITY, Journal};
 use covalence_core::state::ConnId;
@@ -121,8 +122,9 @@ pub enum StartError {
     Store(#[from] covalence_store::StoreError),
     #[error(transparent)]
     Journal(#[from] covalence_core::journal::JournalError),
-    #[error("stored connection {id} is unreadable: {source}")]
+    #[error("stored {kind} {id} is unreadable: {source}")]
     Entity {
+        kind: &'static str,
         id: String,
         source: serde_json::Error,
     },
@@ -163,6 +165,7 @@ pub struct App {
     /// Project entities. The journal has its own connection to the same file.
     store: Mutex<Store>,
     conns: RwLock<BTreeMap<ConnId, Connection>>,
+    flows: RwLock<BTreeMap<FlowId, Flow>>,
     /// Set at shutdown, so long-lived WebSocket sessions let go of the app.
     closing: tokio::sync::watch::Sender<bool>,
 }
@@ -193,21 +196,17 @@ impl App {
             })
             .collect();
 
-        let mut conns = BTreeMap::new();
-        for row in store.entities(CONNECTION)? {
-            let conn: Connection =
-                serde_json::from_str(&row.body).map_err(|source| StartError::Entity {
-                    id: row.id.clone(),
-                    source,
-                })?;
-            conns.insert(conn.id.clone(), conn);
-        }
+        let conns = load(&store, CONNECTION, |c: &Connection| c.id.clone())?;
+        // Flows were validated when they were saved; they aren't checked again
+        // here (flow spec §8.4).
+        let flows = load(&store, flow::ENTITY, |f: &Flow| f.id.clone())?;
 
         let app = Arc::new(App {
             core,
             plugins,
             store: Mutex::new(store),
             conns: RwLock::new(conns),
+            flows: RwLock::new(flows),
             closing: tokio::sync::watch::Sender::new(false),
         });
         let registering = app.clone();
@@ -249,6 +248,39 @@ impl App {
         self.conns().values().find(|c| c.alias == alias).cloned()
     }
 
+    /// Every flow, by ID.
+    pub fn flows(&self) -> BTreeMap<FlowId, Flow> {
+        self.flows.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Stores a flow, replacing any with the same ID. The caller has
+    /// validated it.
+    pub fn put_flow(&self, flow: Flow) -> Result<(), covalence_store::StoreError> {
+        let body = serde_json::to_string(&flow).expect("flows encode as JSON");
+        self.store
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .put_entity(flow::ENTITY, &flow.id, &body)?;
+        self.flows
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(flow.id.clone(), flow);
+        Ok(())
+    }
+
+    /// Removes a flow, returning it if there was one.
+    pub fn delete_flow(&self, id: &str) -> Result<Option<Flow>, covalence_store::StoreError> {
+        self.store
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .delete_entity(flow::ENTITY, id)?;
+        Ok(self
+            .flows
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(id))
+    }
+
     /// Waits until the plugin host is up, so manifests are available.
     async fn host_ready(&self, timeout: Duration) -> bool {
         let mut status = self.core.host().status();
@@ -275,6 +307,24 @@ impl App {
         }
         tracing::warn!("app still in use at shutdown; dropping the host");
     }
+}
+
+/// Reads every stored entity of one type, keyed by `id`.
+fn load<T: serde::de::DeserializeOwned>(
+    store: &Store,
+    kind: &'static str,
+    id: impl Fn(&T) -> String,
+) -> Result<BTreeMap<String, T>, StartError> {
+    let mut out = BTreeMap::new();
+    for row in store.entities(kind)? {
+        let entity: T = serde_json::from_str(&row.body).map_err(|source| StartError::Entity {
+            kind,
+            id: row.id.clone(),
+            source,
+        })?;
+        out.insert(id(&entity), entity);
+    }
+    Ok(out)
 }
 
 fn resolve(root: &Path, path: &Path) -> PathBuf {

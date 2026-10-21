@@ -49,7 +49,9 @@ pub enum Origin {
     Flow {
         flow: String,
         run: String,
-        step: String,
+        /// Absent on run-level entries (`run.started`, `run.finished`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        step: Option<String>,
     },
     User {
         user: String,
@@ -651,5 +653,38 @@ mod tests {
         // serde_json sorts object keys, so compare in JSON form.
         let back: Entry = serde_json::from_value(json.clone()).unwrap();
         assert_eq!(serde_json::to_value(&back).unwrap(), json);
+    }
+
+    #[test]
+    fn flow_origins_decode_with_and_without_a_step() {
+        for origin in [
+            Origin::Flow {
+                flow: "f1".into(),
+                run: "r1".into(),
+                step: None,
+            },
+            Origin::Flow {
+                flow: "f1".into(),
+                run: "r1".into(),
+                step: Some("route1".into()),
+            },
+            user(),
+        ] {
+            let json = serde_json::to_string(&origin).unwrap();
+            assert_eq!(
+                serde_json::from_str::<Origin>(&json).unwrap(),
+                origin,
+                "{json}"
+            );
+        }
+        assert_eq!(
+            serde_json::to_value(Origin::Flow {
+                flow: "f1".into(),
+                run: "r1".into(),
+                step: None,
+            })
+            .unwrap(),
+            serde_json::json!({ "flow": "f1", "run": "r1" })
+        );
     }
 }

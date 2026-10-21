@@ -1,12 +1,14 @@
-//! The Covalence IO engine: state tree, runtime journal, output gate and host supervision.
+//! The Covalence IO engine: state tree, runtime journal, output gate, host supervision and flows.
 
 use std::sync::Arc;
 
 pub mod clock;
 pub mod engine;
+pub mod flow;
 pub mod gate;
 pub mod host;
 pub mod journal;
+pub mod schema;
 pub mod state;
 pub mod text_path;
 
