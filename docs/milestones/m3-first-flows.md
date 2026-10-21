@@ -19,14 +19,16 @@ The first automation. A flow is a trigger plus a flat list of `action` and `wait
 ## Phases
 
 ### Phase 0: Decisions and docs
-- [ ] Write down the M3 subset of the flow spec: the `Flow` fields, the `api` and `event` triggers, the `action` (fixed target only) and `wait` (duration only) steps, `timeout` and `onError`. Everything else is rejected on save with a clear error, not ignored.
-- [ ] The REST shape for flows and runs, and the WebSocket additions (if any beyond `flow.*` state), in the [state spec](../specs/state-and-event-log.md).
-- [ ] Decide where flow types live. Flows aren't plugin protocol, so serde types in `covalence-core`, with TS types for the UI, are the likely answer. Record it, and say if it needs an ADR.
-- [ ] Guard against a flow re-triggering itself (an event trigger on a connection the flow also acts on). Either reject it on save or note it as a known gap.
+- [x] The M3 subset of the flow spec: `api` and `event` triggers, fixed-target `action` and duration `wait` steps, `timeout` and `onError`, validation, run semantics and causes ([flow spec](../specs/flows.md) §8). Everything else is rejected on save.
+- [x] The REST shape for flows and runs ([flow spec](../specs/flows.md) §9). No new WebSocket messages: status is `flow.*` state, runs are journal entries.
+- [x] Flow types are serde types in `covalence_core::flow`, mirrored by hand in the UI, with shared JSON fixtures to catch drift ([ADR 0020](../adr/0020-project-entity-types-in-the-core.md)).
+- [x] Self-triggering: a run-time loop guard blocks a trigger that descends from a run of the same flow, plus a save-time warning ([flow spec](../specs/flows.md) §8.6). Live device echoes without a `cause` stay a known gap.
 
 ### Phase 1: Flow model and storage (Rust)
 - [ ] `Flow`, `Trigger`, `Step` types with serde, matching the spec's YAML field names.
-- [ ] Validation: unique step IDs matching `[a-z][A-Za-z0-9_]*`, a known connection and action, parameters checked against the action's schema, durations that parse.
+- [ ] Validation per flow spec §8.4, returning `{path, code, message}` errors and warnings.
+- [ ] Fixtures in `crates/covalence-core/fixtures/flows/`, valid and invalid.
+- [ ] `Origin::Flow` gets an optional `step`.
 - [ ] Flows stored in the `entities` table, loaded at startup.
 
 ### Phase 2: Flow runtime (Rust)
@@ -36,11 +38,12 @@ The first automation. A flow is a trigger plus a flat list of `action` and `wait
 - [ ] Journal kinds `trigger.matched`, `run.started`, `run.step`, `run.finished`.
 - [ ] Concurrency modes per flow. Cancellation is cooperative at step boundaries and during waits. An action already in flight finishes; `action.cancel` is out of scope.
 - [ ] Trigger matcher for `event` triggers: a plugin `event` entry from a matching connection and event name starts a run, with `cause` → that entry.
+- [ ] Loop guard (flow spec §8.6) and the queue limit of 16.
 - [ ] `flow.<slug>.running` and `flow.<slug>.lastRun.{status, startedAt, durationMs, error?}` in the state tree.
 - [ ] Unit tests on a paused clock: ordering, cancel during wait, every concurrency mode, failure and `onError: continue`.
 
 ### Phase 3: HTTP API (Rust)
-- [ ] `GET/POST /flows`, `GET/PUT/DELETE /flows/{id}`, `POST /flows/{id}/run` (returns the run ID), `GET /runs` (active and recent), `POST /runs/{run}/cancel`.
+- [ ] The endpoints in [flow spec](../specs/flows.md) §9, added to the API table in `covalence-server`'s `lib.rs`.
 - [ ] Validation errors returned per field, so the UI can show them next to the step.
 - [ ] End-to-end test for every "Done when" item that the API can reach.
 
@@ -56,7 +59,7 @@ The first automation. A flow is a trigger plus a flat list of `action` and `wait
 
 ## Ordering
 
-Phase 0 comes first. Phases 1 → 2 → 3 run in sequence in Rust. Phase 4 can start once the Phase 0 REST shape is written down, against a stub or the Phase 3 API. Phase 5 joins them.
+Phase 0 comes first. Phases 1 → 2 → 3 run in sequence in Rust. Phase 4 can start now that the REST shape is written down, against a stub or the Phase 3 API. Phase 5 joins them.
 
 ## Out of scope
 

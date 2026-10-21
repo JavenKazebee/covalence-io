@@ -147,7 +147,7 @@ type Origin =
   | { user: string; client: string }          // a UI or API user
   | { conn: string }                          // a connection (via its host)
   | { surface: string; orbital?: string }
-  | { flow: string; run: string; step: string }
+  | { flow: string; run: string; step?: string }   // no step on run-level entries
   | { core: "scheduler" | "system" | "replication" };
 ```
 
@@ -162,7 +162,7 @@ Ordering is defined **only** by `seq` within a log. `ts` is for display.
 | `event` | `{source, event, payload}` | From a plugin, the core or a script. From a plugin action: `cause` → the `action.requested` entry |
 | `state.patch` | `{ops: [{path, value} \| {path, delete: true}]}` | Paths stored in ID form. From a plugin action: `cause` → the `action.requested` entry ([plugin protocol](plugin-protocol.md) §6 `call`) |
 | `state.quality` | `{subtree, quality}` | Marks a subtree stale or good |
-| `trigger.matched` | `{flow, trigger, blocked?}` | `cause` → the event, gesture or patch |
+| `trigger.matched` | `{flow, trigger, blocked?, reason?}` | `cause` → the event, gesture or patch. `reason` says why it was blocked ([flow spec](flows.md) §8.5) |
 | `run.started` | `{flow, run, mode, inputs}` | |
 | `run.step` | `{run, step, status: started\|done\|failed\|skipped, detail?}` | |
 | `run.checkpoint` | `{run, step, locals}` | For `resume` on failover |

@@ -1,7 +1,7 @@
 # Spec: Flows
 
 - **Status:** Draft v0.1
-- **Related:** [ADR 0018](../adr/0018-flows-as-step-trees.md), [ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md), [ADR 0004](../adr/0004-javascript-expressions-and-scripts.md), [ADR 0008](../adr/0008-redundancy-and-failover.md), [ADR 0014](../adr/0014-time-sources-and-scheduling.md), [state and event log](state-and-event-log.md), [bindings](bindings.md)
+- **Related:** [ADR 0018](../adr/0018-flows-as-step-trees.md), [ADR 0020](../adr/0020-project-entity-types-in-the-core.md), [ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md), [ADR 0004](../adr/0004-javascript-expressions-and-scripts.md), [ADR 0008](../adr/0008-redundancy-and-failover.md), [ADR 0014](../adr/0014-time-sources-and-scheduling.md), [state and event log](state-and-event-log.md), [bindings](bindings.md)
 
 A flow is the single unit of automation: triggers, optional conditions, and a body of steps. Button action lists, rules and node graphs are all flows. Flows are **control flow only**. Values move through expressions, not edges ([ADR 0018](../adr/0018-flows-as-step-trees.md)).
 
@@ -239,10 +239,130 @@ Keys appear in a fixed order. Fields that are always expressions (`when`, `until
 
 ---
 
-## 8. Open questions
+## 8. The M3 subset
+
+[Milestone 3](../milestones/m3-first-flows.md) implements the Button-view shape (§6) without expressions. This section is what the core accepts until QuickJS arrives. **Anything outside it is rejected on save with an error, never stored and ignored.** Types live in `covalence_core::flow` ([ADR 0020](../adr/0020-project-entity-types-in-the-core.md)).
+
+### 8.1 Flow fields
+
+| Field | M3 |
+|---|---|
+| `id` | Assigned by the server on create (ULID). Ignored in a create body. Must match the URL on update |
+| `name` | Required, non-empty |
+| `slug` | Optional on create: derived from `name` (camelCase, ASCII, deduplicated with a number). Must match `[a-z][A-Za-z0-9_]*` and be unique |
+| `enabled` | Required |
+| `triggers` | `api` and `event` only (§8.2). May be empty, with a warning: the flow can't start |
+| `conditions`, `inputs`, `outputs` | Must be absent |
+| `concurrency` | Required. All four modes |
+| `failover` | Optional; only `abort` (the default) |
+| `body` | `action` and `wait` steps only (§8.3); no blocks |
+| `editor` | Stored as-is, never read by the runtime |
+
+### 8.2 Triggers
+
+| Kind | Fields | Notes |
+|---|---|---|
+| `api` | none | Fired by `POST /flows/{id}/run` (§9). A flow without one can't be run from the API or the UI's Run button |
+| `event` | `source: {conn}`, `event` | `event` must be in the plugin manifest's `events`. No `filter`, no `{plugin}` or `{interface}` sources |
+
+`trigger.matched` names the trigger by its index in `triggers`.
+
+### 8.3 Steps
+
+Common fields: `id`, `kind`, `name?`, `enabled?`, `timeout?`, `onError?`. `retry` is rejected.
+
+| Kind | Fields | Notes |
+|---|---|---|
+| `action` | `target: {conn}`, `action`, `params` | A fixed target with no `key`. `params` are literal values, checked against the action's params schema. A value shaped `{expr: ...}` is rejected as "expressions aren't supported yet" |
+| `wait` | `for: Duration` | A duration string only |
+
+- **Durations** match `^(\d+h)?(\d+m)?(\d+s)?(\d+ms)?$`, are not empty, and are greater than zero: `500ms`, `2s`, `1m30s`.
+- **An action step** fails if the action returns an error (with that error), if the output gate suppresses it (code `suppressed`, with the reason), or if its connection isn't running (code `unavailable`). Its `result` is the action's result.
+- **A `timeout`** fails the step with code `timeout`. A late `action.result` is still journaled but no longer affects the run.
+- **`enabled: false`** journals the step as `skipped`.
+
+### 8.4 Validation
+
+Errors block the save; warnings don't. There are no drafts yet.
+
+- **Errors:** anything outside §8.1–8.3, a duplicate or malformed step ID, a duplicate slug, an unknown connection, an action or event the connection's plugin doesn't declare, parameters that fail the action's schema, a bad duration.
+- **Warnings:** no triggers; an `event` trigger on a connection the flow also acts on (see §8.6); a connection whose plugin hasn't loaded yet, so its actions and events couldn't be checked.
+- Each problem is `{path, code, message}`, where `path` is a segment array into the flow, e.g. `["body", 1, "params", "input"]`.
+- Stored flows aren't revalidated at startup. If a connection disappears, its steps fail at run time with `unavailable`.
+
+### 8.5 Runs
+
+- **A run** has a ULID, a status (`queued`, `running`, `ok`, `failed`, `cancelled`), and a copy of the flow taken when it started. Editing or disabling a flow doesn't touch runs already active. Deleting it cancels them.
+- **Concurrency.**
+  - `queue`: a queued trigger gets its run ID straight away but journals nothing more until it starts. The queue holds at most 16 runs. Past that, the trigger is blocked with reason `queueFull` (§10 question 2).
+  - `restart`: cancels the active run and starts the new one once the old run has journaled `run.finished`.
+- **Cancellation** happens at step boundaries and during a wait. An action already in flight is waited for: its step ends `done` or `failed`, then the run ends `cancelled`. Cancelling a queued run removes it and journals `run.finished cancelled`.
+- **Journal entries for a run** carry `run` in the envelope and origin `{flow, run, step?}` (`step` only on step-level entries). Causes:
+
+  | Entry | `cause` → |
+  |---|---|
+  | `trigger.matched` | the `event` entry; none for `api` (origin is the user) |
+  | `run.started` | `trigger.matched` |
+  | `run.step` | `run.started` |
+  | `action.requested` | that step's `run.step started` |
+  | `run.finished` | `run.started` (or `trigger.matched` for a queued run that never started) |
+
+- `run.started` data is `{flow, run, mode, inputs}`, with `mode` the flow's concurrency mode and `inputs` `{}`.
+- `run.step` `detail` is `{position, error?}`. In M3 the position is `[stepId]`.
+- `trigger.matched` gains a `reason` when `blocked`: `ignore` (concurrency), `queueFull`, `loop` (§8.6), or `condition` once conditions exist.
+- **State:** `flow.<slug>.running` and `flow.<slug>.lastRun.{status, startedAt, durationMs, error?}` (§5.4). `startedAt` is milliseconds since the epoch, like a leaf's `ts`. Deleting a flow deletes its subtree.
+- **The core keeps** every active and queued run plus the last 100 finished runs in memory, for `GET /runs`. The journal is the record; the list is a convenience and is empty after a restart.
+
+### 8.6 Loop guard
+
+Without filters, a flow that listens to an event on a connection and also acts on that connection re-triggers itself forever. Two flows can do the same to each other.
+
+- **At run time, a trigger is blocked with reason `loop`** when the entry that fired it descends, through `cause`, from a run of the same flow. That catches self-loops and loops through other flows. The check follows the chain only back to its first `run.started` of this flow, so it stays short.
+- **On save,** an `event` trigger on a connection the flow's own steps act on is a warning (§8.4).
+- **Known gap:** a live device's echo often arrives without a `cause` ([M1 known gaps](../milestones/m1-walking-skeleton.md#known-gaps-carried-forward)), so the guard can't see live loops. Event filters, which come with expressions, are the real fix.
+
+---
+
+## 9. HTTP API (M3)
+
+JSON throughout. Validation failures are `422 {errors, warnings}` (§8.4). Successful saves return the flow and any warnings.
+
+| Method and path | Body | Returns |
+|---|---|---|
+| `GET /flows` | | `Flow[]` |
+| `POST /flows` | a `Flow` without `id` | `201 {flow, warnings}` |
+| `GET /flows/{id}` | | `Flow`, or `404` |
+| `PUT /flows/{id}` | a whole `Flow` | `200 {flow, warnings}`. Replaces it; active runs keep their copy |
+| `DELETE /flows/{id}` | | `204`. Cancels its runs and deletes `flow.<slug>` |
+| `POST /flows/{id}/run` | `{}` | `200 {matched, status: started \| queued \| blocked, run?, reason?}`. `409` if the flow is disabled or has no `api` trigger |
+| `GET /runs?flow=<id>` | | `Run[]`, newest first: active, queued, then recent (§8.5) |
+| `GET /runs/{run}` | | `Run`, or `404` once it has aged out |
+| `POST /runs/{run}/cancel` | | `202 {run, status}`. `409` if it has already finished |
+
+```ts
+interface Run {
+  run: string;
+  flow: string;                 // flow ID
+  status: "queued" | "running" | "ok" | "failed" | "cancelled";
+  matched: number;              // seq of trigger.matched
+  started?: number;             // seq of run.started
+  finished?: number;            // seq of run.finished
+  startedAt?: number;           // ms since the epoch
+  durationMs?: number;
+  position?: string[];          // while running
+  error?: { code: string; message: string };
+}
+```
+
+- `matched`, `started` and `finished` are journal sequence numbers, so the UI can open `why` on any of them.
+- **No new WebSocket messages.** The UI subscribes to `flow` (or `flow.<slug>`) for status and reads `trigger.matched` and `run.*` entries from the journal tail ([state spec](state-and-event-log.md) §1.6).
+
+---
+
+## 10. Open questions
 
 1. Should `local` names be declared up front (better types, clearer checkpoints), or is inferring them from `set` steps enough?
-2. Should `queue` concurrency have a maximum queue length, and what happens when it's full?
+2. Should `queue` concurrency have a maximum queue length, and what happens when it's full? M3 uses 16 and blocks the trigger with `queueFull` (§8.5). Revisit with real shows.
 3. Is a dedicated state-machine flow type needed for v1, or are loops, variables and separate flows enough? Collect real show flows before deciding.
 4. Should called flows run inside the caller's run (shared cancellation, one timeline entry), or as linked runs? Proposal: a linked run, with cancellation passed down.
 5. Step-level `retry` on blocks: allow it, or keep it on leaf steps only, to avoid re-running parts of a block that already took effect?
