@@ -7,6 +7,8 @@ cargo run -p covalence-server   # API on :7680
 pnpm --filter ui dev            # UI on :5173, proxying the API and /ws to :7680
 ```
 
+`pnpm dev` at the repo root runs both in one terminal; Ctrl-C stops both.
+
 `pnpm --filter ui` also runs `type-check`, `lint`, `test` and `build`. Once built,
 `cargo run -p covalence-server` serves the UI at `/` from `packages/ui/dist`
 (`--ui <dir>` to serve another build, `--no-ui` for the API only).
