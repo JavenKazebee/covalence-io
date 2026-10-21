@@ -296,12 +296,12 @@ Errors block the save; warnings don't. There are no drafts yet.
 - **Concurrency.**
   - `queue`: a queued trigger gets its run ID straight away but journals nothing more until it starts. The queue holds at most 16 runs. Past that, the trigger is blocked with reason `queueFull` (§10 question 2).
   - `restart`: cancels the active run and starts the new one once the old run has journaled `run.finished`.
-- **Cancellation** happens at step boundaries and during a wait. An action already in flight is waited for: its step ends `done` or `failed`, then the run ends `cancelled`. Cancelling a queued run removes it and journals `run.finished cancelled`.
+- **Cancellation** happens at step boundaries and during a wait. A wait that is cut short journals its step `failed` with code `cancelled`. An action already in flight is waited for: its step ends `done` or `failed`, then the run ends `cancelled`. Cancelling a queued run removes it and journals `run.finished cancelled`.
 - **Journal entries for a run** carry `run` in the envelope and origin `{flow, run, step?}` (`step` only on step-level entries). Causes:
 
   | Entry | `cause` → |
   |---|---|
-  | `trigger.matched` | the `event` entry; none for `api` (origin is the user) |
+  | `trigger.matched` | the `event` entry (origin is the core); none for `api` (origin is the user) |
   | `run.started` | `trigger.matched` |
   | `run.step` | `run.started` |
   | `action.requested` | that step's `run.step started` |

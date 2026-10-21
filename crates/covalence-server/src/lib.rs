@@ -17,15 +17,18 @@
 //! Any other path is the built web UI, when there is one (see `ui`).
 
 use std::collections::BTreeMap;
+use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, RwLock};
+use std::pin::Pin;
+use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::time::Duration;
 
-use covalence_core::flow::{self, Flow, FlowId};
+use covalence_core::engine::{ActionOutcome, ActionRequest, Actions};
+use covalence_core::flow::{self, Flow, FlowId, Runtime};
 use covalence_core::host::{HostConfig, HostPhase};
 use covalence_core::journal::{DEFAULT_RING_CAPACITY, Journal};
 use covalence_core::state::ConnId;
-use covalence_core::{Core, Shared};
+use covalence_core::{Core, CoreError, Shared};
 use covalence_protocol::connection::{ConnCreate, ConnMode};
 use covalence_protocol::plugin::{Manifest, Permissions, PluginLoad};
 use covalence_protocol::{Object, Value};
@@ -166,6 +169,8 @@ pub struct App {
     store: Mutex<Store>,
     conns: RwLock<BTreeMap<ConnId, Connection>>,
     flows: RwLock<BTreeMap<FlowId, Flow>>,
+    /// Runs the flows in `flows`.
+    runtime: Runtime,
     /// Set at shutdown, so long-lived WebSocket sessions let go of the app.
     closing: tokio::sync::watch::Sender<bool>,
 }
@@ -201,13 +206,20 @@ impl App {
         // here (flow spec §8.4).
         let flows = load(&store, flow::ENTITY, |f: &Flow| f.id.clone())?;
 
-        let app = Arc::new(App {
-            core,
-            plugins,
-            store: Mutex::new(store),
-            conns: RwLock::new(conns),
-            flows: RwLock::new(flows),
-            closing: tokio::sync::watch::Sender::new(false),
+        let app = Arc::new_cyclic(|app: &Weak<App>| {
+            let runtime = Runtime::start(core.shared().clone(), Arc::new(AppActions(app.clone())));
+            for flow in flows.values() {
+                runtime.set_flow(flow.clone());
+            }
+            App {
+                core,
+                plugins,
+                store: Mutex::new(store),
+                conns: RwLock::new(conns),
+                flows: RwLock::new(flows),
+                runtime,
+                closing: tokio::sync::watch::Sender::new(false),
+            }
         });
         let registering = app.clone();
         tokio::spawn(async move { registering.register().await });
@@ -240,6 +252,10 @@ impl App {
         &self.core
     }
 
+    pub fn runtime(&self) -> &Runtime {
+        &self.runtime
+    }
+
     fn conns(&self) -> std::sync::RwLockReadGuard<'_, BTreeMap<ConnId, Connection>> {
         self.conns.read().unwrap_or_else(|e| e.into_inner())
     }
@@ -261,6 +277,7 @@ impl App {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .put_entity(flow::ENTITY, &flow.id, &body)?;
+        self.runtime.set_flow(flow.clone());
         self.flows
             .write()
             .unwrap_or_else(|e| e.into_inner())
@@ -274,6 +291,9 @@ impl App {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .delete_entity(flow::ENTITY, id)?;
+        if let Err(e) = self.runtime.remove_flow(id) {
+            tracing::error!(flow = %id, "cannot journal the end of a deleted flow's runs: {e}");
+        }
         Ok(self
             .flows
             .write()
@@ -297,6 +317,7 @@ impl App {
     /// handlers) to finish first, for up to a few seconds.
     pub async fn shutdown(self: Arc<Self>) {
         self.closing.send_replace(true);
+        self.runtime.shutdown().await;
         let mut app = self;
         for _ in 0..50 {
             match Arc::try_unwrap(app) {
@@ -306,6 +327,25 @@ impl App {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
         tracing::warn!("app still in use at shutdown; dropping the host");
+    }
+}
+
+/// Lets the flow runtime, which lives inside the app, request actions from
+/// the app's core without keeping the app alive.
+struct AppActions(Weak<App>);
+
+impl Actions for AppActions {
+    fn request_action(
+        &self,
+        req: ActionRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<ActionOutcome, CoreError>> + Send + '_>> {
+        let app = self.0.upgrade();
+        Box::pin(async move {
+            match app {
+                Some(app) => app.core.request_action(req).await,
+                None => Err(CoreError::UnknownConnection(req.conn)),
+            }
+        })
     }
 }
 

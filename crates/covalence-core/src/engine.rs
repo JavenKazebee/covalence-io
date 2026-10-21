@@ -5,6 +5,8 @@
 //! verdict and the result point their `cause` at the request, so `why` on the
 //! result reaches whatever caused the request.
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{RwLock, RwLockReadGuard};
 use std::time::Instant;
 
@@ -72,6 +74,24 @@ pub struct ActionOutcome {
     pub result_seq: Option<Seq>,
     /// What the host answered, if the action was dispatched.
     pub result: Option<Result<Option<Value>, ProtocolError>>,
+}
+
+/// Carries out action requests: the [`Core`], or a stand-in in tests. The
+/// flow runtime requests actions through this.
+pub trait Actions: Send + Sync + 'static {
+    fn request_action(
+        &self,
+        req: ActionRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<ActionOutcome, CoreError>> + Send + '_>>;
+}
+
+impl Actions for Core {
+    fn request_action(
+        &self,
+        req: ActionRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<ActionOutcome, CoreError>> + Send + '_>> {
+        Box::pin(Core::request_action(self, req))
+    }
 }
 
 pub struct Core {
