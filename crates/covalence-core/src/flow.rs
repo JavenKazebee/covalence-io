@@ -13,8 +13,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::state::ConnId;
 
+pub mod runtime;
 mod validate;
 
+pub use runtime::Runtime;
 pub use validate::{Code, Context, Problem, Report, derive_slug, validate};
 
 /// Entity type for flows in the store.

@@ -5,6 +5,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use covalence_core::flow::Flow;
+use covalence_core::flow::runtime::STATE_ROOT;
+use covalence_core::state::StatePath;
+use covalence_protocol::state::PathSegment;
 use covalence_server::{App, Config};
 
 fn root() -> PathBuf {
@@ -48,9 +51,23 @@ async fn flows_survive_a_restart() {
     assert_eq!(flows.len(), 2);
     assert_eq!(flows[&route_twice.id], route_twice);
     assert_eq!(flows[&follow.id], follow, "the update is what was kept");
+    // Loaded flows reach the runtime, which publishes their status.
+    let running = StatePath::new(
+        STATE_ROOT,
+        vec![
+            PathSegment::Key(route_twice.slug.clone()),
+            PathSegment::Key("running".into()),
+        ],
+    );
+    assert_eq!(app.core().shared().state.value(&running), Some(0u64.into()));
 
     assert_eq!(app.delete_flow(&follow.id).unwrap(), Some(follow.clone()));
     assert_eq!(app.delete_flow(&follow.id).unwrap(), None);
+    assert!(
+        app.runtime()
+            .fire_api(&follow.id, covalence_core::journal::Origin::system())
+            .is_err()
+    );
     app.shutdown().await;
 
     let app = start(data.path());

@@ -2,7 +2,7 @@
 //!
 //! Entries get a gap-free `seq` under one lock, are written to SQLite (when a
 //! store is attached) before they become visible, and are kept in an in-memory
-//! ring for fast reads. Only the kinds Milestone 1 needs exist so far.
+//! ring for fast reads. Only the kinds Milestones 1 and 3 need exist so far.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
 use crate::clock;
+use crate::flow::{Concurrency, FlowId};
 use crate::state::{ConnId, Quality, Source, StatePath};
 
 pub type Seq = u64;
@@ -112,6 +113,14 @@ pub enum Record {
     ConnStatus(ConnStatusRecord),
     #[serde(rename = "log")]
     Log(LogRecord),
+    #[serde(rename = "trigger.matched")]
+    TriggerMatched(TriggerMatchedRecord),
+    #[serde(rename = "run.started")]
+    RunStarted(RunStartedRecord),
+    #[serde(rename = "run.step")]
+    RunStep(RunStepRecord),
+    #[serde(rename = "run.finished")]
+    RunFinished(RunFinishedRecord),
 }
 
 impl Record {
@@ -126,6 +135,10 @@ impl Record {
             Record::ActionResult(_) => "action.result",
             Record::ConnStatus(_) => "conn.status",
             Record::Log(_) => "log",
+            Record::TriggerMatched(_) => "trigger.matched",
+            Record::RunStarted(_) => "run.started",
+            Record::RunStep(_) => "run.step",
+            Record::RunFinished(_) => "run.finished",
         }
     }
 }
@@ -220,6 +233,99 @@ pub struct LogRecord {
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fields: Option<Object>,
+}
+
+/// `trigger.matched`: a flow's trigger fired (flow spec §8.5).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TriggerMatchedRecord {
+    pub flow: FlowId,
+    /// The trigger's index in the flow's `triggers`.
+    pub trigger: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocked: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<BlockReason>,
+}
+
+/// Why a matched trigger started no run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum BlockReason {
+    /// `ignore` concurrency, with a run already active.
+    Ignore,
+    /// `queue` concurrency, with the queue full.
+    QueueFull,
+    /// The trigger descends from a run of the same flow (flow spec §8.6).
+    Loop,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RunStartedRecord {
+    pub flow: FlowId,
+    pub run: String,
+    pub mode: Concurrency,
+    pub inputs: Object,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RunStepRecord {
+    pub run: String,
+    pub step: String,
+    pub status: StepStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<StepDetail>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StepStatus {
+    Started,
+    Done,
+    Failed,
+    Skipped,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StepDetail {
+    /// Step IDs from the body down to this step (flow spec §5.1).
+    pub position: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<RunError>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RunFinishedRecord {
+    pub run: String,
+    pub status: RunStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<RunError>,
+}
+
+/// How a run ended. `aborted` is for failover, which M3 doesn't do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RunStatus {
+    Ok,
+    Failed,
+    Cancelled,
+}
+
+/// Why a step or a run failed. Action errors keep their protocol code
+/// (`action_failed`, `invalid_params`); the runtime adds `timeout`,
+/// `cancelled`, `suppressed` and `unavailable` (flow spec §8.3).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RunError {
+    pub code: String,
+    pub message: String,
+}
+
+impl RunError {
+    pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
+        RunError {
+            code: code.into(),
+            message: message.into(),
+        }
+    }
 }
 
 /// An entry before it gets its `seq`, `term` and timestamps.

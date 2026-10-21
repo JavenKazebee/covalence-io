@@ -32,15 +32,16 @@ The first automation. A flow is a trigger plus a flat list of `action` and `wait
 - [x] Flows stored in the `entities` table, loaded at startup (`App::put_flow`, `delete_flow`, `flows`).
 
 ### Phase 2: Flow runtime (Rust)
-- [ ] A run is a tokio task with a run ID (ULID), a cancellation token and a position.
-- [ ] Step execution: `action` goes through the existing output gate with `cause` → its `run.step` entry; `wait` sleeps on the core clock and wakes on cancel.
-- [ ] Per-step `timeout` and `onError`; `steps.<id>` results kept on the run, ready for expressions later.
-- [ ] Journal kinds `trigger.matched`, `run.started`, `run.step`, `run.finished`.
-- [ ] Concurrency modes per flow. Cancellation is cooperative at step boundaries and during waits. An action already in flight finishes; `action.cancel` is out of scope.
-- [ ] Trigger matcher for `event` triggers: a plugin `event` entry from a matching connection and event name starts a run, with `cause` → that entry.
-- [ ] Loop guard (flow spec §8.6) and the queue limit of 16.
-- [ ] `flow.<slug>.running` and `flow.<slug>.lastRun.{status, startedAt, durationMs, error?}` in the state tree.
-- [ ] Unit tests on a paused clock: ordering, cancel during wait, every concurrency mode, failure and `onError: continue`.
+- [x] A run is a tokio task with a run ID (ULID), a cancellation token and a position (`covalence_core::flow::runtime`).
+- [x] Step execution: `action` goes through the existing output gate (via the new `Actions` trait) with `cause` → its `run.step` entry; `wait` sleeps on the tokio clock and wakes on cancel.
+- [x] Per-step `timeout` and `onError`. Keeping `steps.<id>` results moves to the expressions milestone, the first thing that reads them.
+- [x] Journal kinds `trigger.matched`, `run.started`, `run.step`, `run.finished`.
+- [x] Concurrency modes per flow. Cancellation is cooperative at step boundaries and during waits. An action already in flight finishes; `action.cancel` is out of scope.
+- [x] Trigger matcher for `event` triggers: a plugin `event` entry from a matching connection and event name starts a run, with `cause` → that entry.
+- [x] Loop guard (flow spec §8.6) and the queue limit of 16.
+- [x] `flow.<slug>.running` and `flow.<slug>.lastRun.{status, startedAt, durationMs, error?}` in the state tree, stored under the root key `flow` where a connection uses its ID. The server doesn't show the `flow` root over HTTP or the WebSocket yet (Phase 3).
+- [x] Tests on a paused clock: ordering, cancel during wait and during an action, every concurrency mode, failure and `onError: continue`, timeouts, the loop guard, event triggers and `why` (`crates/covalence-core/tests/flow_runtime.rs`).
+- [x] The server starts the runtime with the stored flows and keeps it in step with `put_flow` and `delete_flow`.
 
 ### Phase 3: HTTP API (Rust)
 - [ ] The endpoints in [flow spec](../specs/flows.md) §9, added to the API table in `covalence-server`'s `lib.rs`.
