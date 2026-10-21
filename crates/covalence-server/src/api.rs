@@ -37,17 +37,18 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/journal", get(journal))
         .route("/journal/{seq}/why", get(why))
         .route("/ws", get(crate::ws::upgrade))
+        .merge(crate::flows::routes())
         .with_state(app)
 }
 
-struct ApiError(StatusCode, String);
+pub(crate) struct ApiError(StatusCode, String);
 
 impl ApiError {
-    fn new(status: StatusCode, message: impl Into<String>) -> Self {
+    pub(crate) fn new(status: StatusCode, message: impl Into<String>) -> Self {
         ApiError(status, message.into())
     }
 
-    fn internal(e: impl std::fmt::Display) -> Self {
+    pub(crate) fn internal(e: impl std::fmt::Display) -> Self {
         ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
     }
 }
@@ -58,7 +59,7 @@ impl IntoResponse for ApiError {
     }
 }
 
-type ApiResult<T> = Result<T, ApiError>;
+pub(crate) type ApiResult<T> = Result<T, ApiError>;
 
 async fn health(State(app): State<Arc<App>>) -> Json<JsonValue> {
     let status = app.core.host().status().borrow().clone();
@@ -226,19 +227,22 @@ async fn state(
     State(app): State<Arc<App>>,
     Query(query): Query<StateQuery>,
 ) -> ApiResult<Json<Vec<StateLeaf>>> {
-    let conns = app.conns().clone();
+    let state_roots = app.state_roots();
     let roots: Vec<(String, StatePath)> = match query.path {
-        None => conns
-            .values()
-            .map(|c| (c.alias.clone(), StatePath::root(c.id.clone())))
+        None => state_roots
+            .iter()
+            .map(|(key, alias)| (alias.clone(), StatePath::root(key.clone())))
             .collect(),
         Some(text) => {
             let (alias, path) = text_path::parse(&text)
                 .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, e.to_string()))?;
-            let conn = conns.values().find(|c| c.alias == alias).ok_or_else(|| {
-                ApiError::new(StatusCode::NOT_FOUND, format!("no connection {alias:?}"))
-            })?;
-            vec![(alias, StatePath::new(conn.id.clone(), path))]
+            let (key, _) = state_roots
+                .iter()
+                .find(|(_, a)| **a == alias)
+                .ok_or_else(|| {
+                    ApiError::new(StatusCode::NOT_FOUND, format!("no connection {alias:?}"))
+                })?;
+            vec![(alias, StatePath::new(key.clone(), path))]
         }
     };
     let leaves = app.core.shared().state.read(|tree| {

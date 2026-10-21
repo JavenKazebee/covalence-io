@@ -1,6 +1,6 @@
 //! Headless Covalence IO server: the core, its plugin host, and an HTTP API.
 //!
-//! Milestone 1 API (JSON):
+//! API (JSON). Flows and runs are in flow spec §9.
 //!
 //! | Method and path              | Does                                                     |
 //! |------------------------------|----------------------------------------------------------|
@@ -8,15 +8,24 @@
 //! | `GET /plugins`               | Configured plugins and their manifests, once loaded      |
 //! | `GET /connections`           | Connections                                              |
 //! | `POST /connections`          | Creates a connection: `{plugin, alias, config, mode?}`   |
-//! | `GET /state?path=vh.outputs` | Leaves at or below a text path (all state without one)   |
+//! | `GET /state?path=vh.outputs` | Leaves at or below a text path (all state without one); `flow.*` included |
 //! | `POST /actions`              | Requests an action: `{action: "vh.route", params}`       |
 //! | `GET /journal?from&limit`    | Journal entries, oldest first                            |
 //! | `GET /journal/{seq}/why`     | The cause chain from an entry back to its root           |
 //! | `GET /ws`                    | Live state, journal and host status (see `ws`)           |
+//! | `GET /flows`                 | Flows                                                    |
+//! | `POST /flows`                | Creates a flow: `201 {flow, warnings}` or `422 {errors, warnings}` |
+//! | `GET /flows/{id}`            | One flow                                                 |
+//! | `PUT /flows/{id}`            | Replaces a flow; same answers as `POST /flows`           |
+//! | `DELETE /flows/{id}`         | Deletes a flow and cancels its runs                      |
+//! | `POST /flows/{id}/run`       | Fires the `api` trigger: `{matched, status, run?, reason?}` |
+//! | `GET /runs?flow`             | Active, queued and recent runs, newest first             |
+//! | `GET /runs/{run}`            | One run                                                  |
+//! | `POST /runs/{run}/cancel`    | Cancels a run: `202 {run, status}`                       |
 //!
 //! Any other path is the built web UI, when there is one (see `ui`).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -24,6 +33,7 @@ use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::time::Duration;
 
 use covalence_core::engine::{ActionOutcome, ActionRequest, Actions};
+use covalence_core::flow::runtime::STATE_ROOT;
 use covalence_core::flow::{self, Flow, FlowId, Runtime};
 use covalence_core::host::{HostConfig, HostPhase};
 use covalence_core::journal::{DEFAULT_RING_CAPACITY, Journal};
@@ -31,11 +41,13 @@ use covalence_core::state::ConnId;
 use covalence_core::{Core, CoreError, Shared};
 use covalence_protocol::connection::{ConnCreate, ConnMode};
 use covalence_protocol::plugin::{Manifest, Permissions, PluginLoad};
+use covalence_protocol::state::PathSegment;
 use covalence_protocol::{Object, Value};
 use covalence_store::Store;
 use serde::{Deserialize, Serialize};
 
 mod api;
+mod flows;
 mod ui;
 mod ws;
 
@@ -171,6 +183,8 @@ pub struct App {
     flows: RwLock<BTreeMap<FlowId, Flow>>,
     /// Runs the flows in `flows`.
     runtime: Runtime,
+    /// Held while a flow is checked and stored, so slugs stay unique.
+    saving: Mutex<()>,
     /// Set at shutdown, so long-lived WebSocket sessions let go of the app.
     closing: tokio::sync::watch::Sender<bool>,
 }
@@ -218,6 +232,7 @@ impl App {
                 conns: RwLock::new(conns),
                 flows: RwLock::new(flows),
                 runtime,
+                saving: Mutex::new(()),
                 closing: tokio::sync::watch::Sender::new(false),
             }
         });
@@ -262,6 +277,90 @@ impl App {
 
     fn conn_by_alias(&self, alias: &str) -> Option<Connection> {
         self.conns().values().find(|c| c.alias == alias).cloned()
+    }
+
+    /// Every state root the API shows, by its key in the state tree: each
+    /// connection's ID under its alias, and the core's `flow` root.
+    pub(crate) fn state_roots(&self) -> BTreeMap<ConnId, String> {
+        let mut roots: BTreeMap<ConnId, String> = self
+            .conns()
+            .iter()
+            .map(|(id, c)| (id.clone(), c.alias.clone()))
+            .collect();
+        roots.insert(STATE_ROOT.into(), STATE_ROOT.into());
+        roots
+    }
+
+    /// Parses, checks and stores a flow from the API (flow spec §8.4). `id`
+    /// is the flow being replaced, or `None` to create one.
+    pub async fn save_flow(&self, json: &serde_json::Value, id: Option<&str>) -> SaveResult {
+        let mut flow = Flow::parse(json).map_err(|errors| SaveError::Invalid {
+            errors,
+            warnings: Vec::new(),
+        })?;
+        match id {
+            None => flow.id = ulid::Ulid::generate().to_string(),
+            Some(id)
+                if !self
+                    .flows
+                    .read()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .contains_key(id) =>
+            {
+                return Err(SaveError::NotFound);
+            }
+            Some(id) if !flow.id.is_empty() && flow.id != id => {
+                return Err(SaveError::Invalid {
+                    errors: vec![flow::Problem {
+                        path: vec![PathSegment::Key("id".into())],
+                        code: flow::Code::Invalid,
+                        message: format!("id {:?} doesn't match the URL's {id:?}", flow.id),
+                    }],
+                    warnings: Vec::new(),
+                });
+            }
+            Some(id) => flow.id = id.to_owned(),
+        }
+
+        // Manifests first: fetching them waits on the plugin host.
+        let conns = self.conns().clone();
+        let mut manifests: BTreeMap<String, Option<Manifest>> = BTreeMap::new();
+        for conn in conns.values() {
+            if !manifests.contains_key(&conn.plugin) {
+                let manifest = self.manifest(&conn.plugin).await;
+                manifests.insert(conn.plugin.clone(), manifest);
+            }
+        }
+        let by_conn: BTreeMap<ConnId, Option<&Manifest>> = conns
+            .values()
+            .map(|c| (c.id.clone(), manifests[&c.plugin].as_ref()))
+            .collect();
+
+        let _saving = self.saving.lock().unwrap_or_else(|e| e.into_inner());
+        let taken: BTreeSet<String> = self
+            .flows()
+            .values()
+            .filter(|f| f.id != flow.id)
+            .map(|f| f.slug.clone())
+            .collect();
+        if flow.slug.is_empty() {
+            flow.slug = flow::derive_slug(&flow.name, &taken);
+        }
+        let report = flow::validate(
+            &flow,
+            &flow::Context {
+                conns: &by_conn,
+                taken_slugs: &taken,
+            },
+        );
+        if !report.is_ok() {
+            return Err(SaveError::Invalid {
+                errors: report.errors,
+                warnings: report.warnings,
+            });
+        }
+        self.put_flow(flow.clone()).map_err(SaveError::Store)?;
+        Ok((flow, report.warnings))
     }
 
     /// Every flow, by ID.
@@ -328,6 +427,21 @@ impl App {
         }
         tracing::warn!("app still in use at shutdown; dropping the host");
     }
+}
+
+pub type SaveResult = Result<(Flow, Vec<flow::Problem>), SaveError>;
+
+#[derive(Debug, thiserror::Error)]
+pub enum SaveError {
+    #[error("the flow has problems")]
+    Invalid {
+        errors: Vec<flow::Problem>,
+        warnings: Vec<flow::Problem>,
+    },
+    #[error("no such flow")]
+    NotFound,
+    #[error(transparent)]
+    Store(covalence_store::StoreError),
 }
 
 /// Lets the flow runtime, which lives inside the app, request actions from
