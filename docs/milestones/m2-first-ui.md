@@ -1,6 +1,6 @@
 # Milestone 2: First UI slice
 
-- **Status:** In progress
+- **Status:** Done
 - **Started:** 2026-10-18
 
 Put a face on M1. The core serves a Vue 3 UI ([ADR 0005](../adr/0005-web-ui-vue-tauri-shell.md)) that creates connections, shows live state, runs actions and walks the journal. Live values arrive over a WebSocket that subscribes only to the paths on screen.
@@ -12,7 +12,7 @@ Put a face on M1. The core serves a Vue 3 UI ([ADR 0005](../adr/0005-web-ui-vue-
 - [x] The State tab shows `vh.outputs[*].source` updating live as routes change, with no reload, and shows `stale` while the plugin host is down.
 - [x] An action form generated from the manifest's action params runs `vh.route`, and the result appears in the journal view.
 - [x] Clicking a journal entry shows its `why` chain.
-- [ ] A browser smoke test of the above runs in CI against a real server in simulate mode. (Passes locally; waiting on a GitHub Actions run.)
+- [x] A browser smoke test of the above runs in CI against a real server in simulate mode.
 
 ## Phases
 
