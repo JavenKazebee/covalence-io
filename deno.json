@@ -1,4 +1,7 @@
 {
+  "exclude": [
+    "packages/ui/"
+  ],
   "workspace": [
     "./packages/protocol",
     "./packages/sdk",
