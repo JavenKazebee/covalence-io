@@ -1,0 +1,36 @@
+{
+  "id": "01JC0000000000000000000002",
+  "name": "Follow vh on vh2",
+  "slug": "followVh",
+  "enabled": true,
+  "triggers": [
+    {
+      "kind": "event",
+      "source": { "conn": "01JBZ7P0D3F5G7H9J1K3L5M7N9" },
+      "event": "routeChanged"
+    },
+    { "kind": "api" }
+  ],
+  "concurrency": "queue",
+  "failover": "abort",
+  "body": [
+    {
+      "id": "settle",
+      "kind": "wait",
+      "name": "Let the cut land",
+      "for": "250ms"
+    },
+    {
+      "id": "follow",
+      "kind": "action",
+      "enabled": true,
+      "timeout": "2s",
+      "onError": "continue",
+      "target": { "conn": "01JBZ7P0D3F5G7H9J1K3L5M7NA" },
+      "action": "route",
+      "params": { "output": 1, "input": 2 }
+    },
+    { "id": "skipped", "kind": "wait", "enabled": false, "for": "1m30s" }
+  ],
+  "editor": { "view": "button", "colour": "#d33" }
+}

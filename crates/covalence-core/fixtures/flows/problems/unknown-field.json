@@ -1,0 +1,11 @@
+{
+  "flow": {
+    "name": "Typo",
+    "enabled": true,
+    "triggers": [{ "kind": "api" }],
+    "concurency": "parallel",
+    "body": []
+  },
+  "errors": [{ "path": ["concurency"], "code": "invalid" }],
+  "warnings": []
+}

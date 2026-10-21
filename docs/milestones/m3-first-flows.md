@@ -25,11 +25,11 @@ The first automation. A flow is a trigger plus a flat list of `action` and `wait
 - [x] Self-triggering: a run-time loop guard blocks a trigger that descends from a run of the same flow, plus a save-time warning ([flow spec](../specs/flows.md) §8.6). Live device echoes without a `cause` stay a known gap.
 
 ### Phase 1: Flow model and storage (Rust)
-- [ ] `Flow`, `Trigger`, `Step` types with serde, matching the spec's YAML field names.
-- [ ] Validation per flow spec §8.4, returning `{path, code, message}` errors and warnings.
-- [ ] Fixtures in `crates/covalence-core/fixtures/flows/`, valid and invalid.
-- [ ] `Origin::Flow` gets an optional `step`.
-- [ ] Flows stored in the `entities` table, loaded at startup.
+- [x] `Flow`, `Trigger`, `Step` types with serde in `covalence_core::flow`, matching the spec's field names. `Flow::parse` reports unsupported spec features with their path.
+- [x] Validation per flow spec §8.4, returning `{path, code, message}` errors and warnings. Action params are checked by `covalence_core::schema`, a port of the SDK's validator.
+- [x] Fixtures in `crates/covalence-core/fixtures/flows/`, valid ones and `problems/` with their expected errors and warnings.
+- [x] `Origin::Flow` gets an optional `step`.
+- [x] Flows stored in the `entities` table, loaded at startup (`App::put_flow`, `delete_flow`, `flows`).
 
 ### Phase 2: Flow runtime (Rust)
 - [ ] A run is a tokio task with a run ID (ULID), a cancellation token and a position.

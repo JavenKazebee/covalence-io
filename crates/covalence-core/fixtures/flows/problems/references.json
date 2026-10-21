@@ -1,0 +1,46 @@
+{
+  "flow": {
+    "name": " ",
+    "slug": "Bad slug",
+    "enabled": true,
+    "triggers": [
+      {
+        "kind": "event",
+        "source": { "conn": "01JBZ7P0D3F5G7H9J1K3L5M7N9" },
+        "event": "routeChange"
+      },
+      { "kind": "event", "source": { "conn": "nope" }, "event": "routeChanged" }
+    ],
+    "concurrency": "restart",
+    "body": [
+      {
+        "id": "route1",
+        "kind": "action",
+        "target": { "conn": "01JBZ7P0D3F5G7H9J1K3L5M7NA" },
+        "action": "rout",
+        "params": {}
+      },
+      {
+        "id": "route1",
+        "kind": "action",
+        "target": { "conn": "01JBZ7P0D3F5G7H9J1K3L5M7NA" },
+        "action": "route",
+        "params": { "output": -1, "x": true }
+      },
+      { "id": "Wait", "kind": "wait", "for": "1s" }
+    ]
+  },
+  "errors": [
+    { "path": ["name"], "code": "invalid" },
+    { "path": ["slug"], "code": "badSlug" },
+    { "path": ["triggers", 0, "event"], "code": "unknownEvent" },
+    { "path": ["triggers", 1, "source", "conn"], "code": "unknownConnection" },
+    { "path": ["body", 0, "action"], "code": "unknownAction" },
+    { "path": ["body", 1, "id"], "code": "duplicateId" },
+    { "path": ["body", 1, "params", "input"], "code": "badParams" },
+    { "path": ["body", 1, "params", "output"], "code": "badParams" },
+    { "path": ["body", 1, "params", "x"], "code": "badParams" },
+    { "path": ["body", 2, "id"], "code": "badId" }
+  ],
+  "warnings": []
+}
