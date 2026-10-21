@@ -250,11 +250,7 @@ impl Session {
     }
 
     fn aliases(&self) -> BTreeMap<ConnId, String> {
-        self.app
-            .conns()
-            .iter()
-            .map(|(id, c)| (id.clone(), c.alias.clone()))
-            .collect()
+        self.app.state_roots()
     }
 }
 
