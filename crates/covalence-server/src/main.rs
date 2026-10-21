@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use clap::Parser;
-use covalence_server::{App, Config, PluginSpec, router};
+use covalence_server::{App, Config, DEFAULT_UI_DIR, PluginSpec, router, with_ui};
 
 #[derive(Parser)]
 #[command(version, about = "Covalence IO headless server")]
@@ -25,6 +25,13 @@ struct Args {
     /// The deno executable.
     #[arg(long, default_value = "deno")]
     deno: PathBuf,
+    /// The built web UI to serve at `/`. Defaults to packages/ui/dist under
+    /// the root, when it has been built.
+    #[arg(long)]
+    ui: Option<PathBuf>,
+    /// Serve the API only.
+    #[arg(long, conflicts_with = "ui")]
+    no_ui: bool,
 }
 
 #[tokio::main]
@@ -37,6 +44,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let args = Args::parse();
+    // An explicit --ui must exist; the default is skipped when it hasn't been
+    // built. Checked before the plugin host starts.
+    let ui = match (&args.ui, args.no_ui) {
+        (_, true) => None,
+        (Some(dir), false) if !dir.join("index.html").is_file() => {
+            return Err(format!(
+                "{} has no index.html: build the UI with `pnpm --filter ui build`",
+                dir.display()
+            )
+            .into());
+        }
+        (Some(dir), false) => Some(dir.clone()),
+        (None, false) => {
+            let dir = args.root.join(DEFAULT_UI_DIR);
+            if dir.join("index.html").is_file() {
+                Some(dir)
+            } else {
+                tracing::info!(
+                    "no UI at {}: serving the API only (build it with `pnpm --filter ui build`)",
+                    dir.display()
+                );
+                None
+            }
+        }
+    };
     let plugins = if args.plugins.is_empty() {
         Config::default_plugins()
     } else {
@@ -49,6 +81,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         deno: args.deno,
     })?;
 
+    let mut routes = router(app.clone());
+    if let Some(dir) = &ui {
+        routes = with_ui(routes, dir).map_err(|e| e.to_string())?;
+        tracing::info!("serving the UI from {}", dir.display());
+    }
+
     let listener = tokio::net::TcpListener::bind(args.listen).await?;
     tracing::info!(
         "covalence-server {} (protocol {}) listening on http://{}",
@@ -56,7 +94,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         covalence_core::PROTOCOL_VERSION,
         listener.local_addr()?
     );
-    axum::serve(listener, router(app.clone()))
+    axum::serve(listener, routes)
         .with_graceful_shutdown(async {
             stop_signal().await;
             tracing::info!("shutting down");
