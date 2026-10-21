@@ -2,5 +2,11 @@
   "name": "covalence-io",
   "private": true,
   "packageManager": "pnpm@10.16.1",
-  "engines": { "node": ">=22" }
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev": "concurrently -k -n server,ui -c blue,green \"cargo run -p covalence-server\" \"pnpm --filter ui dev\""
+  },
+  "devDependencies": {
+    "concurrently": "10.0.6"
+  }
 }
