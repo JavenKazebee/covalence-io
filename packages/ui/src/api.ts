@@ -1,5 +1,6 @@
 // The HTTP API, as listed in crates/covalence-server/src/lib.rs.
 
+import type { FireResult, Flow, Problem, RunInfo, Saved } from "./flows/model";
 import type { HostStatus, JournalEntry } from "./live/protocol";
 
 /** A JSON Schema, as plugin manifests write them. Only what the forms read is typed. */
@@ -32,12 +33,19 @@ export interface ManifestCollection {
   item: Record<string, JsonSchema>;
 }
 
+export interface ManifestEvent {
+  id: string;
+  name: string;
+  payload: JsonSchema;
+}
+
 export interface Manifest {
   id: string;
   name: string;
   version: string;
   config: { version: number; schema: JsonSchema };
   actions: ManifestAction[];
+  events?: ManifestEvent[];
   state: Record<string, JsonSchema | ManifestCollection>;
 }
 
@@ -85,17 +93,28 @@ export interface Health {
   journal: { lastSeq: number; term: number };
 }
 
-/** A non-2xx answer. `message` is the server's `error` field when it sent one. */
+/**
+ * A non-2xx answer. `message` is the server's `error` field when it sent one;
+ * `body` is the whole JSON answer, e.g. a flow's `422 {errors, warnings}`.
+ */
 export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    readonly body: unknown = null,
   ) {
     super(message);
   }
+
+  /** The validation problems of a `422`, if this is one. */
+  get problems(): { errors: Problem[]; warnings: Problem[] } | null {
+    if (this.status !== 422) return null;
+    const b = this.body as { errors?: Problem[]; warnings?: Problem[] } | null;
+    return { errors: b?.errors ?? [], warnings: b?.warnings ?? [] };
+  }
 }
 
-async function call<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
+async function call<T>(method: "GET" | "POST" | "PUT" | "DELETE", path: string, body?: unknown): Promise<T> {
   const response = await fetch(path, {
     method,
     headers: body === undefined ? undefined : { "content-type": "application/json" },
@@ -105,7 +124,7 @@ async function call<T>(method: "GET" | "POST", path: string, body?: unknown): Pr
   const json: unknown = text === "" ? null : JSON.parse(text);
   if (!response.ok) {
     const error = (json as { error?: unknown } | null)?.error;
-    throw new ApiError(response.status, typeof error === "string" ? error : `${method} ${path}: ${response.status}`);
+    throw new ApiError(response.status, typeof error === "string" ? error : `${method} ${path}: ${response.status}`, json);
   }
   return json as T;
 }
@@ -120,4 +139,12 @@ export const api = {
   journal: (from: number, limit: number) =>
     call<JournalEntry[]>("GET", `/journal?from=${from}&limit=${limit}`),
   why: (seq: number) => call<JournalEntry[]>("GET", `/journal/${seq}/why`),
+  flows: () => call<Flow[]>("GET", "/flows"),
+  createFlow: (flow: Flow) => call<Saved>("POST", "/flows", flow),
+  updateFlow: (flow: Flow) => call<Saved>("PUT", `/flows/${encodeURIComponent(flow.id)}`, flow),
+  deleteFlow: (id: string) => call<null>("DELETE", `/flows/${encodeURIComponent(id)}`),
+  runFlow: (id: string) => call<FireResult>("POST", `/flows/${encodeURIComponent(id)}/run`, {}),
+  runs: (flow: string) => call<RunInfo[]>("GET", `/runs?flow=${encodeURIComponent(flow)}`),
+  cancelRun: (run: string) =>
+    call<{ run: string; status: RunInfo["status"] }>("POST", `/runs/${encodeURIComponent(run)}/cancel`),
 };

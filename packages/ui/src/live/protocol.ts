@@ -26,7 +26,8 @@ export type Origin =
   | { user: string; client: string }
   | { conn: string }
   | { surface: string; orbital?: string }
-  | { flow: string; run: string; step: string }
+  /** `step` only on step-level entries (flow spec §8.5). */
+  | { flow: string; run: string; step?: string }
   | { core: string };
 
 /** A runtime journal entry (§2.1). `data` depends on `kind` (§2.2). */

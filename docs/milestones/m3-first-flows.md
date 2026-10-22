@@ -12,8 +12,8 @@ The first automation. A flow is a trigger plus a flat list of `action` and `wait
 - [x] A flow with an `event` trigger on `vh` `routeChanged` that routes `vh2` runs whenever `vh` changes. `GET /journal/{seq}/why` on its `vh2` `action.result` walks back through `run.step` → `run.started` → `trigger.matched` → `event` → `vh`'s `action.requested`.
 - [x] All four concurrency modes behave as the spec says: `parallel` starts a second run, `queue` runs it afterwards, `restart` cancels the active run first, and `ignore` journals `trigger.matched` with `blocked: true`.
 - [x] `POST /runs/{run}/cancel` stops a run during a wait, which journals `run.finished cancelled`. A failing action fails the run with the error, unless the step has `onError: continue`.
-- [ ] `flow.<slug>.running` and `flow.<slug>.lastRun.*` update in the state tree and show live in the UI.
-- [ ] The UI has a Flows tab that lists, creates and edits a flow (trigger, concurrency, steps with manifest-driven action forms), runs and cancels it, and shows live run status. The journal's `why` drawer shows run and step entries readably.
+- [x] `flow.<slug>.running` and `flow.<slug>.lastRun.*` update in the state tree and show live in the UI.
+- [x] The UI has a Flows tab that lists, creates and edits a flow (trigger, concurrency, steps with manifest-driven action forms), runs and cancels it, and shows live run status. The journal's `why` drawer shows run and step entries readably.
 - [ ] A Rust end-to-end test and a browser smoke test cover the above in CI, with no hardware.
 
 ## Phases
@@ -50,10 +50,11 @@ The first automation. A flow is a trigger plus a flat list of `action` and `wait
 - [x] End-to-end test for every "Done when" item that the API can reach (`crates/covalence-server/tests/flows_api.rs`). The `Server` helper moved to `tests/common/`.
 
 ### Phase 4: UI
-- [ ] Flows tab: list with enabled toggle, running count and last run status.
-- [ ] Flow editor: name, trigger (API or event, with the event picked from the connection's manifest), concurrency, and a reorderable list of steps. Action steps reuse `SchemaForm` for parameters; wait steps take a duration.
-- [ ] Run and cancel buttons, live run status from `flow.*` state.
-- [ ] Journal summaries and the `why` drawer understand `trigger.matched` and `run.*` entries.
+- [x] Flows tab: list with enabled toggle, running count and last run status (`src/views/FlowsView.vue`).
+- [x] Flow editor: name, trigger (API or event, with the event picked from the connection's manifest), concurrency, and a reorderable list of steps. Action steps reuse `SchemaForm` for parameters; wait steps take a duration. Server problems show next to the field their path names (`src/components/FlowEditor.vue`, `StepEditor.vue`).
+- [x] Run and cancel buttons, live run status from `flow.*` state. The runs table refetches `GET /runs` on the flow's journal entries, so the current step is highlighted as it moves (`src/components/FlowRuns.vue`).
+- [x] Journal summaries and the `why` drawer understand `trigger.matched` and `run.*` entries, name flows, and link to them.
+- [x] Flow types in `src/flows/model.ts`, tested against the shared fixtures in `crates/covalence-core/fixtures/flows/`: every valid fixture round-trips through the editor unchanged.
 
 ### Phase 5: Acceptance
 - [ ] Browser smoke test: create the two-step flow, run it, watch the route change and the run finish, open `why` on the action; cancel a run mid-wait.

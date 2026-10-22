@@ -34,6 +34,13 @@ watch(
   { immediate: true },
 );
 
+/** The flow an entry belongs to: from its origin, or `trigger.matched` and `run.started` data. */
+function flowOf(entry: JournalEntry): string | undefined {
+  if ("flow" in entry.origin) return entry.origin.flow;
+  const flow = (entry.data as { flow?: unknown } | null)?.flow;
+  return typeof flow === "string" ? flow : undefined;
+}
+
 function time(ts: string): string {
   const d = new Date(ts);
   return Number.isNaN(d.getTime()) ? ts : d.toLocaleTimeString(undefined, { hour12: false });
@@ -82,6 +89,10 @@ function time(ts: string): string {
             <a :href="hrefOf({ tab: 'journal', seq: entry.seq })">#{{ entry.seq }}</a>
             <code>{{ entry.kind }}</code>
             <span class="muted">{{ time(entry.ts) }} · {{ describeOrigin(entry.origin, ctx) }}</span>
+            <a
+              v-if="flowOf(entry)"
+              :href="hrefOf({ tab: 'flows', flow: flowOf(entry) })"
+            >Open flow</a>
           </div>
           <div>{{ describe(entry, ctx) }}</div>
           <details :open="i === 0">

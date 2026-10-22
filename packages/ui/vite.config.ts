@@ -5,7 +5,7 @@ import { defineConfig } from "vitest/config";
 const server = "http://127.0.0.1:7680";
 
 // The HTTP API, as listed in crates/covalence-server/src/lib.rs.
-const api = ["/health", "/plugins", "/connections", "/state", "/actions", "/journal"];
+const api = ["/health", "/plugins", "/connections", "/state", "/actions", "/journal", "/flows", "/runs"];
 
 export default defineConfig({
   plugins: [vue()],

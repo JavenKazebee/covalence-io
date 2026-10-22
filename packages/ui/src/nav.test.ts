@@ -12,6 +12,9 @@ describe("hash routes", () => {
       { tab: "state" },
       { tab: "state", path: 'vh.outputs["SDI 4"]' },
       { tab: "actions" },
+      { tab: "flows" },
+      { tab: "flows", flow: "01JC0000000000000000000001" },
+      { tab: "flows", flow: "new" },
       { tab: "journal" },
       { tab: "journal", seq: 42 },
     ] as const) {

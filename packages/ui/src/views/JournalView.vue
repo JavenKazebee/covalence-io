@@ -5,9 +5,11 @@ import { describe, describeOrigin, toneOf, type SummaryContext } from "../journa
 import { KEEP, useJournal } from "../journal/useJournal";
 import { hrefOf, navigate } from "../nav";
 import { useCatalogStore } from "../stores/catalog";
+import { useFlowsStore } from "../stores/flows";
 
 defineProps<{ seq?: number }>();
 const catalog = useCatalogStore();
+const flows = useFlowsStore();
 const { entries, error, loading } = useJournal();
 
 const filter = ref("");
@@ -27,6 +29,7 @@ const calls = computed(() => {
 const ctx: SummaryContext = {
   alias: (id) => catalog.alias(id),
   callName: (call) => calls.value.get(call),
+  flowName: (id) => flows.name(id),
 };
 
 const rows = computed(() => {

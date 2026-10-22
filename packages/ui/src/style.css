@@ -259,3 +259,16 @@ button:disabled {
   gap: 0.75rem;
   align-items: center;
 }
+
+.problems {
+  margin: 0.5rem 0 0;
+  padding-left: 1.2rem;
+}
+
+.problems .error {
+  color: var(--bad);
+}
+
+.problems .warn {
+  color: var(--warn);
+}

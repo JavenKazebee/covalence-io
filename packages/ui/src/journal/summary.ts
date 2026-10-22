@@ -8,6 +8,8 @@ export interface SummaryContext {
   alias(connId: string): string;
   /** `vh.route` for an action call ID, when its `action.requested` entry is known. */
   callName?(call: string): string | undefined;
+  /** A flow's name from its ID. */
+  flowName?(flow: string): string;
 }
 
 type Data = Record<string, unknown>;
@@ -18,6 +20,14 @@ interface IdPath {
 }
 
 const json = (value: unknown, max = 80) => clip(JSON.stringify(value) ?? "", max);
+
+/** Run IDs are ULIDs: the tail tells runs of one flow apart. */
+const shortRun = (run: unknown) => `run …${String(run ?? "").slice(-6)}`;
+
+function errorText(error: unknown): string {
+  const e = error as { code?: string; message?: string } | undefined;
+  return `${e?.code ?? "error"}${e?.message ? `: ${e.message}` : ""}`;
+}
 
 function clip(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
@@ -31,7 +41,10 @@ export function describeOrigin(origin: Origin, ctx: SummaryContext): string {
   if ("user" in origin) return `${origin.user} (${origin.client})`;
   if ("conn" in origin) return ctx.alias(origin.conn);
   if ("surface" in origin) return `surface ${origin.surface}`;
-  if ("flow" in origin) return `flow ${origin.flow}`;
+  if ("flow" in origin) {
+    const name = ctx.flowName?.(origin.flow) ?? origin.flow;
+    return origin.step === undefined ? `flow ${name}` : `flow ${name} › ${origin.step}`;
+  }
   return `core ${origin.core}`;
 }
 
@@ -41,6 +54,7 @@ export function describe(entry: JournalEntry, ctx: SummaryContext): string {
     const id = String(d.call ?? "");
     return ctx.callName?.(id) ?? `call …${id.slice(-6)}`;
   };
+  const flow = (id: unknown) => ctx.flowName?.(String(id)) ?? String(id);
   switch (entry.kind) {
     case "log":
       return `[${String(d.level ?? "info")}] ${String(d.message ?? "")}`;
@@ -72,6 +86,20 @@ export function describe(entry: JournalEntry, ctx: SummaryContext): string {
       const error = d.error as { code?: string; message?: string } | undefined;
       return `${call()} failed${took}: ${error?.code ?? "error"}${error?.message ? `: ${error.message}` : ""}`;
     }
+    // Flow runs (flow spec §8.5).
+    case "trigger.matched": {
+      const matched = `${flow(d.flow)}: trigger ${Number(d.trigger ?? 0) + 1} matched`;
+      return d.blocked === true ? `${matched}, blocked (${String(d.reason ?? "?")})` : matched;
+    }
+    case "run.started":
+      return `${flow(d.flow)}: ${shortRun(d.run)} started (${String(d.mode)})`;
+    case "run.step": {
+      const detail = d.detail as { error?: unknown } | undefined;
+      const failed = d.status === "failed" ? `: ${errorText(detail?.error)}` : "";
+      return `${shortRun(d.run)} step ${String(d.step)} ${String(d.status)}${failed}`;
+    }
+    case "run.finished":
+      return `${shortRun(d.run)} ${String(d.status)}${d.error === undefined ? "" : `: ${errorText(d.error)}`}`;
     default:
       return json(entry.data);
   }
@@ -91,6 +119,12 @@ export function toneOf(entry: JournalEntry): "good" | "warn" | "bad" | "muted" {
       return d.quality === "good" ? "good" : "warn";
     case "conn.status":
       return d.status === "ok" ? "good" : d.status === "error" ? "bad" : "warn";
+    case "trigger.matched":
+      return d.blocked === true ? "warn" : "muted";
+    case "run.step":
+      return d.status === "failed" ? "bad" : "muted";
+    case "run.finished":
+      return d.status === "ok" ? "good" : d.status === "failed" ? "bad" : "warn";
     default:
       return "muted";
   }
