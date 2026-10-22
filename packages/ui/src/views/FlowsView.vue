@@ -8,11 +8,13 @@ import { useLiveState } from "../live/useLiveState";
 import { hrefOf } from "../nav";
 import { useCatalogStore } from "../stores/catalog";
 import { useFlowsStore } from "../stores/flows";
+import { useSurfacesStore } from "../stores/surfaces";
 
 defineProps<{ flow?: string }>();
 
 const catalog = useCatalogStore();
 const flows = useFlowsStore();
+const surfaces = useSurfacesStore();
 const { leaves } = useLiveState("flow");
 const statuses = computed(() => flowStatuses(leaves.value));
 const rows = computed(() => flows.flows.map((f) => ({ f, running: statuses.value.get(f.slug)?.running ?? 0, last: statuses.value.get(f.slug)?.lastRun ?? null })));
@@ -124,7 +126,7 @@ function time(ms: number | undefined): string {
             </div>
           </td>
           <td class="muted">
-            {{ f.triggers.length === 0 ? "None" : f.triggers.map((t) => describeTrigger(t, catalog.alias)).join(", ") }}
+            {{ f.triggers.length === 0 ? "None" : f.triggers.map((t) => describeTrigger(t, catalog.alias, surfaces.pageName)).join(", ") }}
           </td>
           <td>
             <span

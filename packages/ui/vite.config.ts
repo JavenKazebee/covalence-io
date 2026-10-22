@@ -5,7 +5,20 @@ import { defineConfig } from "vitest/config";
 const server = "http://127.0.0.1:7680";
 
 // The HTTP API, as listed in crates/covalence-server/src/lib.rs.
-const api = ["/health", "/plugins", "/connections", "/state", "/actions", "/journal", "/flows", "/runs", "/expressions"];
+const api = [
+  "/health",
+  "/plugins",
+  "/connections",
+  "/state",
+  "/actions",
+  "/journal",
+  "/flows",
+  "/runs",
+  "/expressions",
+  "/surfaces",
+  "/pages",
+  "/control-bindings",
+];
 
 export default defineConfig({
   plugins: [vue()],
@@ -13,6 +26,8 @@ export default defineConfig({
     proxy: {
       ...Object.fromEntries(api.map((path) => [path, server])),
       "/ws": { target: server, ws: true },
+      // The web surface's socket (surfaces spec §4). `/surfaces` is above.
+      "^/surface/": { target: server, ws: true },
     },
   },
   test: {

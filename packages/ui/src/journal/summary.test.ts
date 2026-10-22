@@ -6,10 +6,14 @@ const CONN = "01M5G0BR216VZXJ28P323QT90B";
 const CALL = "01M5G0BXZ5X3WHGEVZW8PV0WQS";
 const FLOW = "01JC0000000000000000000001";
 const RUN = "01JC00000000000000000RUN042";
+const SURFACE = "01JC0000000000000000000201";
+const PAGE = "01JBZ7P0D3F5G7H9J1K3L5M7PA";
 const ctx: SummaryContext = {
   alias: (id) => (id === CONN ? "vh" : id),
   callName: (call) => (call === CALL ? "vh.route" : undefined),
   flowName: (id) => (id === FLOW ? "Route twice" : id),
+  surfaceName: (id) => (id === SURFACE ? "FOH deck" : id),
+  pageName: (id) => (id === PAGE ? "Cameras" : id),
 };
 
 function entry(kind: string, data: unknown): JournalEntry {
@@ -90,5 +94,14 @@ group("journal summaries", () => {
     expect(describeOrigin({ user: "api", client: "http" }, ctx)).toBe("api (http)");
     expect(describeOrigin({ conn: CONN }, ctx)).toBe("vh");
     expect(describeOrigin({ core: "system" }, ctx)).toBe("core system");
+  });
+
+  it("names surface input by surface, control and page", () => {
+    expect(describe(entry("input.raw", { surface: SURFACE, control: "k3", kind: "down", deviceTs: 12.5 }), ctx)).toBe("FOH deck k3 down");
+    expect(describe(entry("input.gesture", { surface: SURFACE, page: PAGE, control: "k3", gesture: "press" }), ctx)).toBe(
+      "FOH deck k3 press on Cameras",
+    );
+    expect(describe(entry("input.gesture", { surface: SURFACE, control: "k0", gesture: "hold", delta: 2 }), ctx)).toBe("FOH deck k0 hold ×2");
+    expect(describeOrigin({ surface: SURFACE }, ctx)).toBe("surface FOH deck");
   });
 });

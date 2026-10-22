@@ -40,3 +40,12 @@ whose types mirror `covalence_core::flow` by hand; `src/flows/model.test.ts`
 checks them against the shared fixtures in `crates/covalence-core/fixtures/flows/`
 (ADR 0020). Run status is live state under `flow`; the runs table follows the
 journal tail for the flow's `trigger.matched` and `run.*` entries.
+
+Surfaces (`#/surfaces`) and their pages are in `src/surfaces/` and
+`src/bindings/`, mirroring `covalence_core::surface` and `binding` by hand;
+`src/bindings/model.test.ts` checks them against the shared fixtures in
+`crates/covalence-core/fixtures/bindings/`. A surface's screen is a virtual
+Stream Deck (`src/surfaces/deck.ts`) attached to the core over
+`/surface/{id}` while it's open (surfaces spec §4). The page editor previews
+keys through `POST /control-bindings/preview`, so they're drawn by the core,
+and previews them again when the state they read changes.

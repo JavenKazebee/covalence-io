@@ -10,25 +10,29 @@ import ConnectionsView from "./views/ConnectionsView.vue";
 import FlowsView from "./views/FlowsView.vue";
 import JournalView from "./views/JournalView.vue";
 import StateView from "./views/StateView.vue";
+import SurfacesView from "./views/SurfacesView.vue";
+import { useSurfacesStore } from "./stores/surfaces";
 import { useLiveClient } from "./live/useLiveState";
 
 const route = useRoute();
 const live = useLiveStore();
 const catalog = useCatalogStore();
 const flows = useFlowsStore();
+const surfaces = useSurfacesStore();
 
 const titles: Record<Tab, string> = {
   connections: "Connections",
   state: "State",
   actions: "Actions",
+  surfaces: "Surfaces",
   flows: "Flows",
   journal: "Journal",
 };
 
 // The header shows host status from the start, before any screen subscribes.
 useLiveClient();
-// Flow names are for the journal too, not just the Flows tab.
-onMounted(() => void Promise.all([catalog.refresh(), flows.refresh()]));
+// Flow, surface and page names are for the journal too, not just their tabs.
+onMounted(() => void Promise.all([catalog.refresh(), flows.refresh(), surfaces.refresh()]));
 // Manifests appear once the host has loaded the plugins.
 watch(
   () => live.host?.phase === "ready" && live.host.generation,
@@ -58,6 +62,12 @@ watch(
       :path="route.path"
     />
     <ActionsView v-else-if="route.tab === 'actions'" />
+    <SurfacesView
+      v-else-if="route.tab === 'surfaces'"
+      :surface="route.surface"
+      :page="route.page"
+      :control="route.control"
+    />
     <FlowsView
       v-else-if="route.tab === 'flows'"
       :flow="route.flow"

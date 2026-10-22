@@ -6,10 +6,12 @@ import { KEEP, useJournal } from "../journal/useJournal";
 import { hrefOf, navigate } from "../nav";
 import { useCatalogStore } from "../stores/catalog";
 import { useFlowsStore } from "../stores/flows";
+import { useSurfacesStore } from "../stores/surfaces";
 
 defineProps<{ seq?: number }>();
 const catalog = useCatalogStore();
 const flows = useFlowsStore();
+const surfaces = useSurfacesStore();
 const { entries, error, loading } = useJournal();
 
 const filter = ref("");
@@ -30,6 +32,8 @@ const ctx: SummaryContext = {
   alias: (id) => catalog.alias(id),
   callName: (call) => calls.value.get(call),
   flowName: (id) => flows.name(id),
+  surfaceName: (id) => surfaces.surfaceName(id),
+  pageName: (id) => surfaces.pageName(id),
 };
 
 const rows = computed(() => {

@@ -10,11 +10,12 @@ describe("text paths", () => {
 
   it("splits what it formats", () => {
     for (const segments of [["outputs", 3, "source"], ["outputs", 'say "hi"', "name"], ["model"], []]) {
-      expect(splitPath(formatPath("vh", segments))).toEqual({ root: "vh", segments });
+      const text = formatPath("vh", segments);
+      expect(splitPath(text)).toEqual({ root: "vh", segments, end: text.length });
     }
   });
 
   it("stops at anything it can't read", () => {
-    expect(splitPath("vh.outputs[x].source")).toEqual({ root: "vh", segments: ["outputs"] });
+    expect(splitPath("vh.outputs[x].source")).toEqual({ root: "vh", segments: ["outputs"], end: 10 });
   });
 });

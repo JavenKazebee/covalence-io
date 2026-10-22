@@ -67,11 +67,13 @@ Covalence gets its first control surface. A virtual Stream Deck in the UI ([ADR 
 - The preview uses its own QuickJS with the binding worker's 10 ms limit, so an `expr` that's too slow for a key fails in the preview too.
 
 ### Phase 4: UI
-- [ ] The Surfaces tab, with the virtual Stream Deck: shows the core's images and sends key down and up with timestamps.
-- [ ] A page editor: the key grid, select a key, edit its binding per property with a kind picker, using `ExprInput` and its preview for `expr` and showing the compiled expression for the others (one-way conversion to `expr`).
-- [ ] "When pressed" on a key creates or opens a Button-view flow with its `gesture` trigger.
-- [ ] Flow editor support for `gesture` triggers, and journal summaries for `input.raw` and `input.gesture`.
-- [ ] TS types and the editor round-trip every page and binding fixture.
+- [x] The Surfaces tab (`#/surfaces`): surfaces and pages, a "New virtual deck" and a "New page". A surface's screen (`#/surfaces/<id>`) is its virtual Stream Deck (`VirtualDeck`, `surfaces/deck.ts`), attached over `/surface/{id}` while the screen is open: it shows the core's images and sends key down and up with `performance.now()`, from the mouse or Space and Enter. It reattaches after a dropped connection, but not after `attached elsewhere` or a 1008, so two tabs don't fight over one surface. The page it shows is picked there, through `POST /surfaces/{id}/page`.
+- [x] A page editor (`#/surfaces/pages/<id>/<control>`): the key grid drawn by the core through the preview endpoint, then per property a kind picker and its form. Refs are typed as text paths (`vh.outputs[1].source`) and stored by connection ID; a template is text with `{path|format}` placeholders. `expr` uses `ExprInput`; the other kinds show the expression they compile to, and "Edit as expression" converts, with "Back" only while the source is untouched. The key's preview, and every key in the grid, are previewed again when state they read changes (`bindings/usePreviews.ts` subscribes to their `reads`). Evaluation errors from `/control-bindings/problems` show under their property.
+- [x] "When pressed" on a key opens the flow with that key's `press` trigger, or a new Button-view flow with it filled in.
+- [x] Flow editor support for `gesture` triggers ("Add key trigger": page, key and gesture), and journal summaries for `input.raw` and `input.gesture`, with surfaces and pages by name.
+- [x] TS types for surfaces, pages and bindings (`surfaces/model.ts`, `bindings/model.ts`). `bindings/model.test.ts` round-trips every binding fixture through the editor, and every ref, template and condition value through its text form; `flows/model.test.ts` already round-trips `gesture.json`.
+- There are no page fixtures to round-trip: pages are three fields, covered by the Rust API tests.
+- The editor's previews are of saved bindings, plus the selected key's draft. A surface showing the page gets the same images, since the preview is drawn by the binding worker's own code.
 
 ### Phase 5: Acceptance
 - [ ] The Rust end-to-end tests run in the existing `cargo test` CI job.

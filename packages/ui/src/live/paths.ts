@@ -39,9 +39,10 @@ export function formatPath(root: string, segments: readonly Segment[]): string {
 
 /**
  * Splits a text path into its root and segments. Paths come from the server,
- * so this trusts them: anything it can't read ends the path.
+ * so this trusts them: anything it can't read ends the path, and `end` is
+ * where that happened (`text.length` when all of it was read).
  */
-export function splitPath(text: string): { root: string; segments: Segment[] } {
+export function splitPath(text: string): { root: string; segments: Segment[]; end: number } {
   const ident = /^[A-Za-z_][A-Za-z0-9_]*/;
   const rootMatch = ident.exec(text);
   const root = rootMatch?.[0] ?? "";
@@ -63,5 +64,5 @@ export function splitPath(text: string): { root: string; segments: Segment[] } {
       break;
     }
   }
-  return { root, segments };
+  return { root, segments, end: at };
 }

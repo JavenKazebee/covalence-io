@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import { api } from "../api";
-import type { Flow, Saved } from "../flows/model";
+import type { Flow, FlowDraft, Saved } from "../flows/model";
 
 /**
  * Flows over HTTP. They aren't on the WebSocket, so this refreshes after its
@@ -11,6 +11,8 @@ export const useFlowsStore = defineStore("flows", () => {
   const flows = ref<Flow[]>([]);
   const loaded = ref(false);
   const error = ref<string | null>(null);
+  /** A draft for the next new flow to start from, e.g. a key's "When pressed". Taken once. */
+  const prefill = ref<FlowDraft | null>(null);
 
   async function refresh() {
     try {
@@ -49,5 +51,5 @@ export const useFlowsStore = defineStore("flows", () => {
     return byId.value.get(id)?.name ?? id;
   }
 
-  return { flows, loaded, error, refresh, save, remove, get, name };
+  return { flows, loaded, error, prefill, refresh, save, remove, get, name };
 });

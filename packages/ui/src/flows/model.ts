@@ -4,6 +4,7 @@
 
 import type { JsonSchema, Manifest } from "../api";
 import { fieldsOf, parseValues, type Field } from "../forms/schema";
+import type { Gesture } from "../surfaces/model";
 
 export type Concurrency = "parallel" | "queue" | "restart" | "ignore";
 export const concurrencies: readonly Concurrency[] = ["parallel", "queue", "restart", "ignore"];
@@ -17,7 +18,9 @@ export const edges: readonly Edge[] = ["rising", "falling", "change"];
 export type Trigger =
   | { kind: "api" }
   | { kind: "event"; source: { conn: string }; event: string; filter?: Expr }
-  | { kind: "state"; when: Expr; edge: Edge };
+  | { kind: "state"; when: Expr; edge: Edge }
+  /** A control on a page, on any surface showing it (surfaces spec §3.1). */
+  | { kind: "gesture"; control: { page: string; control: string }; gesture: Gesture };
 
 /** A value that is an expression: `{expr: "..."}` (flow spec §8.3). */
 export interface ExprValue {
@@ -230,6 +233,16 @@ let nextKey = 1;
 
 /** A deep copy of plain JSON, which flows are. Unlike `structuredClone`, it takes Vue's reactive proxies. */
 const copyJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+
+/** Whether a trigger fires on this gesture of this control. */
+export function firesOn(trigger: Trigger, page: string, control: string, gesture: Gesture): boolean {
+  return (
+    trigger.kind === "gesture" &&
+    trigger.control.page === page &&
+    trigger.control.control === control &&
+    trigger.gesture === gesture
+  );
+}
 
 export function newFlowDraft(): FlowDraft {
   return {
@@ -483,8 +496,14 @@ export interface LastRun {
   error?: RunError;
 }
 
-export function describeTrigger(trigger: Trigger, alias: (conn: string) => string): string {
+export function describeTrigger(
+  trigger: Trigger,
+  alias: (conn: string) => string,
+  pageName: (page: string) => string = (page) => page,
+): string {
   switch (trigger.kind) {
+    case "gesture":
+      return `${pageName(trigger.control.page)} ${trigger.control.control} ${trigger.gesture}`;
     case "api":
       return "API / Run button";
     case "event":

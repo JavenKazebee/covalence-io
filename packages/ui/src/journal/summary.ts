@@ -10,6 +10,10 @@ export interface SummaryContext {
   callName?(call: string): string | undefined;
   /** A flow's name from its ID. */
   flowName?(flow: string): string;
+  /** A surface's name from its ID. */
+  surfaceName?(surface: string): string;
+  /** A page's name from its ID. */
+  pageName?(page: string): string;
 }
 
 type Data = Record<string, unknown>;
@@ -40,7 +44,7 @@ function textPath(p: IdPath | undefined, ctx: SummaryContext): string {
 export function describeOrigin(origin: Origin, ctx: SummaryContext): string {
   if ("user" in origin) return `${origin.user} (${origin.client})`;
   if ("conn" in origin) return ctx.alias(origin.conn);
-  if ("surface" in origin) return `surface ${origin.surface}`;
+  if ("surface" in origin) return `surface ${ctx.surfaceName?.(origin.surface) ?? origin.surface}`;
   if ("flow" in origin) {
     const name = ctx.flowName?.(origin.flow) ?? origin.flow;
     return origin.step === undefined ? `flow ${name}` : `flow ${name} › ${origin.step}`;
@@ -55,6 +59,7 @@ export function describe(entry: JournalEntry, ctx: SummaryContext): string {
     return ctx.callName?.(id) ?? `call …${id.slice(-6)}`;
   };
   const flow = (id: unknown) => ctx.flowName?.(String(id)) ?? String(id);
+  const surface = (id: unknown) => ctx.surfaceName?.(String(id)) ?? String(id);
   switch (entry.kind) {
     case "log":
       return `[${String(d.level ?? "info")}] ${String(d.message ?? "")}`;
@@ -112,6 +117,16 @@ export function describe(entry: JournalEntry, ctx: SummaryContext): string {
     }
     case "run.finished":
       return `${shortRun(d.run)} ${String(d.status)}${d.error === undefined ? "" : `: ${errorText(d.error)}`}`;
+    // Surface input (surfaces spec §3).
+    case "input.raw": {
+      const value = typeof d.value === "number" ? ` ${d.value}` : "";
+      return `${surface(d.surface)} ${String(d.control)} ${String(d.kind)}${value}`;
+    }
+    case "input.gesture": {
+      const page = d.page === undefined ? "" : ` on ${ctx.pageName?.(String(d.page)) ?? String(d.page)}`;
+      const delta = typeof d.delta === "number" ? ` ×${d.delta}` : "";
+      return `${surface(d.surface)} ${String(d.control)} ${String(d.gesture)}${delta}${page}`;
+    }
     default:
       return json(entry.data);
   }

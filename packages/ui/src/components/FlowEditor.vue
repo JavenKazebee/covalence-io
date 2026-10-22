@@ -22,6 +22,8 @@ import type { FlowStatus } from "../flows/status";
 import { hrefOf, navigate } from "../nav";
 import { useCatalogStore } from "../stores/catalog";
 import { useFlowsStore } from "../stores/flows";
+import { useSurfacesStore } from "../stores/surfaces";
+import { controlsOf, gestureHelp, gestures } from "../surfaces/model";
 import ExprInput from "./ExprInput.vue";
 import FlowRuns from "./FlowRuns.vue";
 import StepList from "./StepList.vue";
@@ -35,6 +37,7 @@ const props = defineProps<{ id: string; status: FlowStatus | undefined }>();
 
 const catalog = useCatalogStore();
 const flows = useFlowsStore();
+const surfaces = useSurfacesStore();
 
 const schemaOf = paramsSchemaFrom((connId) => {
   const conn = catalog.connections.find((c) => c.id === connId);
@@ -64,7 +67,11 @@ watch(
     }
     localErrors.value = new Map();
     saveError.value = null;
-    if (isNew.value) draft.value = newFlowDraft();
+    if (isNew.value) {
+      // A key's "When pressed" leaves a draft to start from.
+      draft.value = flows.prefill ?? newFlowDraft();
+      flows.prefill = null;
+    }
     else draft.value = stored.value === undefined ? null : toDraft(stored.value, schemaOf);
   },
   { immediate: true },
@@ -105,8 +112,13 @@ function eventsOf(connId: string) {
   return conn === undefined ? [] : (catalog.manifest(conn.plugin)?.events ?? []);
 }
 
-function addTrigger(kind: "api" | "event" | "state") {
+function addTrigger(kind: "api" | "event" | "state" | "gesture") {
   if (draft.value === null) return;
+  if (kind === "gesture") {
+    const page = surfaces.pages[0]?.id ?? "";
+    draft.value.triggers.push({ kind: "gesture", control: { page, control: "k0" }, gesture: "press" });
+    return;
+  }
   if (kind === "api") {
     draft.value.triggers.push({ kind: "api" });
     return;
@@ -124,6 +136,13 @@ const edgeHelp: Record<Edge, string> = {
   falling: "When it becomes false",
   change: "Whenever its value changes",
 };
+
+/** The keys of a trigger's page, keeping the one it names if the page has shrunk or gone. */
+function keysOf(pageId: string, current: string): string[] {
+  const page = surfaces.page(pageId);
+  const keys = page === undefined ? [] : controlsOf(page.layout);
+  return keys.includes(current) ? keys : [current, ...keys];
+}
 
 /** A sample event trigger for previewing a filter: the payload isn't known until it fires. */
 const sampleEvent = (conn: string, event: string) => ({ source: { conn }, event, payload: {} });
@@ -275,6 +294,62 @@ async function remove() {
           <template v-if="trigger.kind === 'api'">
             <span><strong>API</strong> <span class="muted">· the Run button and <code>POST /flows/{id}/run</code></span></span>
           </template>
+          <template v-else-if="trigger.kind === 'gesture'">
+            <strong>Key</strong>
+            <select
+              v-model="trigger.control.page"
+              :aria-label="`Trigger ${i + 1} page`"
+            >
+              <option
+                v-if="!surfaces.page(trigger.control.page)"
+                :value="trigger.control.page"
+              >
+                {{ trigger.control.page || "Pick a page" }}
+              </option>
+              <option
+                v-for="p in surfaces.pages"
+                :key="p.id"
+                :value="p.id"
+              >
+                {{ p.name }}
+              </option>
+            </select>
+            <select
+              v-model="trigger.control.control"
+              :aria-label="`Trigger ${i + 1} key`"
+            >
+              <option
+                v-for="k in keysOf(trigger.control.page, trigger.control.control)"
+                :key="k"
+                :value="k"
+              >
+                {{ k }}
+              </option>
+            </select>
+            <select
+              v-model="trigger.gesture"
+              :aria-label="`Trigger ${i + 1} gesture`"
+            >
+              <option
+                v-if="!(gestures as readonly string[]).includes(trigger.gesture)"
+                :value="trigger.gesture"
+              >
+                {{ trigger.gesture }}
+              </option>
+              <option
+                v-for="g in gestures"
+                :key="g"
+                :value="g"
+              >
+                {{ gestureHelp[g] }}
+              </option>
+            </select>
+            <a
+              v-if="surfaces.page(trigger.control.page)"
+              class="muted"
+              :href="hrefOf({ tab: 'surfaces', page: trigger.control.page, control: trigger.control.control })"
+            >Open the page</a>
+          </template>
           <template v-else-if="trigger.kind === 'state'">
             <strong>State</strong>
             <ExprInput
@@ -420,6 +495,15 @@ async function remove() {
           @click="addTrigger('state')"
         >
           Add state trigger
+        </button>
+        <button
+          type="button"
+          class="secondary"
+          :disabled="surfaces.pages.length === 0"
+          :title="surfaces.pages.length === 0 ? 'Make a page in Surfaces first' : ''"
+          @click="addTrigger('gesture')"
+        >
+          Add key trigger
         </button>
       </div>
       <ul

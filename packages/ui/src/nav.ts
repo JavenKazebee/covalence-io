@@ -1,6 +1,6 @@
 import { readonly, ref } from "vue";
 
-export const tabs = ["connections", "state", "actions", "flows", "journal"] as const;
+export const tabs = ["connections", "state", "actions", "surfaces", "flows", "journal"] as const;
 export type Tab = (typeof tabs)[number];
 
 export interface Route {
@@ -11,6 +11,12 @@ export interface Route {
   seq?: number;
   /** `#/flows/<id>`: the flow being edited, or `new`. */
   flow?: string;
+  /** `#/surfaces/<id>`: the surface whose deck is open. */
+  surface?: string;
+  /** `#/surfaces/pages/<id>`: the page being edited. */
+  page?: string;
+  /** `#/surfaces/pages/<id>/k3`: the key selected on it. */
+  control?: string;
 }
 
 /**
@@ -26,6 +32,12 @@ export function parseHash(hash: string): Route {
   if (tab === "state" && rest !== "") return { tab, path: rest };
   if (tab === "journal" && /^[1-9]\d*$/.test(rest)) return { tab, seq: Number(rest) };
   if (tab === "flows" && rest !== "") return { tab, flow: rest };
+  if (tab === "surfaces" && rest !== "") {
+    // Surface IDs are ULIDs, so never `pages`.
+    const [first, page, control] = rest.split("/");
+    if (first !== "pages") return { tab, surface: rest };
+    if (page) return control ? { tab, page, control } : { tab, page };
+  }
   return { tab };
 }
 
@@ -41,6 +53,11 @@ export function hrefOf(route: Route): string {
   if (route.tab === "state" && route.path) return `#/state/${encodeURIComponent(route.path)}`;
   if (route.tab === "journal" && route.seq !== undefined) return `#/journal/${route.seq}`;
   if (route.tab === "flows" && route.flow) return `#/flows/${encodeURIComponent(route.flow)}`;
+  if (route.tab === "surfaces" && route.page) {
+    const page = `#/surfaces/pages/${encodeURIComponent(route.page)}`;
+    return route.control ? `${page}/${encodeURIComponent(route.control)}` : page;
+  }
+  if (route.tab === "surfaces" && route.surface) return `#/surfaces/${encodeURIComponent(route.surface)}`;
   return `#/${route.tab}`;
 }
 
