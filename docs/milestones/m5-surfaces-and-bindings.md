@@ -1,13 +1,14 @@
 # Milestone 5: Surfaces and bindings
 
-- **Status:** Planned
+- **Status:** In progress
+- **Started:** 2026-10-22
 
 Covalence gets its first control surface. A virtual Stream Deck in the UI ([ADR 0012](../adr/0012-simulated-devices.md)) attaches to the core over the surface protocol ([plugin protocol §8](../specs/plugin-protocol.md)), the same way a hardware deck or an Orbital will later ([ADR 0010](../adr/0010-orbital-remote-nodes.md)). Pressing a key fires a flow through a `gesture` trigger. Keys show live state through display bindings ([bindings spec](../specs/bindings.md) §1–§4), evaluated in the core with the M4 expression engine and rendered by the core as key images. Hardware surfaces, value mappings and page parameters stay out.
 
 ## Done when
 
-- [ ] A virtual Stream Deck (15 keys) appears in the Surfaces tab, attached to the core through `surface.attach`, and shows up as `surface.<id>.connected` in state. Closing the tab detaches it.
-- [ ] A page assigned to that surface shows its bound keys. Changing `surface.<id>.page` switches pages, and the new page is fully evaluated before it's drawn.
+- [ ] A virtual Stream Deck (15 keys) appears in the Surfaces tab, attached to the core through `surface.attach`, and shows up as `surface.<slug>.connected` in state. Closing the tab detaches it.
+- [ ] A page assigned to that surface shows its bound keys. Switching pages through the API updates `surface.<slug>.page` and the keys, and the new page is fully evaluated before it's drawn.
 - [ ] A flow with a `gesture` trigger `{control: {page, control: k0}, gesture: press}` routes `vh` when the key is pressed. `why` on its action walks back through `trigger.matched` and `input.gesture` to the `input.raw` entry. `double`, `long` and `hold` are recognised from the host's `ts`, so a double-press stays one gesture however the events arrive.
 - [ ] Each binding kind works on a key: `value` (`vh.outputs[1].source` as the label), `template` (`Out 1: {vh.outputs[1].source}`), `rules` (red when source is 3, else grey), `map` (a number to a list of colours) and `expr`. Each re-renders within one scheduler turn of the state it reads changing, and not when unrelated state changes.
 - [ ] A binding that throws or returns `undefined` falls back to its `fallback`, then the control's default, and reports the error in the editor and the log (rate-limited) without stopping other bindings. A binding that reads a `stale` value is dimmed.
@@ -19,16 +20,17 @@ Covalence gets its first control surface. A virtual Stream Deck in the UI ([ADR 
 ## Phases
 
 ### Phase 0: Decisions and docs
-- [ ] **Entity shapes.** `surface`, `page` and `control_binding` aren't specified yet beyond the bindings spec. Write them down: what a page is (a grid of control bindings for one layout, or any layout?), how a page is assigned to a surface, and whether a surface entity exists before the device first attaches.
-- [ ] **How the web surface connects.** A browser can't speak the plugin host's transport. Either the UI's WebSocket carries `surface.*` messages to the core, or it goes through the plugin host. ADR 0010 says browser surfaces are remote surfaces over the same protocol; decide where that protocol ends.
-- [ ] **Rendering.** The core renders key images (plugin protocol §8). Choose the stack (`tiny-skia` and a text shaper such as `cosmic-text`, say), the fonts it ships, and the default key look. The web surface receives the same images as hardware would, so what it shows is what a deck would show.
-- [ ] **Gesture timing.** Double-press window, long-press threshold and hold-repeat rate, as core settings with per-control overrides later. Decide whether a `press` waits for the double-press window (it shouldn't, by the 5 ms budget, so a double also fires two presses unless a flow listens for `double` only).
-- [ ] **Binding evaluation cost.** M4 measured ~265 µs per evaluation in a fresh context, 190 µs of it the prelude. A 32-key page that changes at once is ~8 ms of that budget. Decide between the bytecode prelude (~95 µs, needs `unsafe`), a frozen reused context (needs a lockdown of every built-in), or compiling the four structured kinds to Rust without QuickJS. Also decide where bindings evaluate, since M4 left evaluations sharing one engine on the async workers (Phase 2 known gap).
-- [ ] **Stale and missing.** How a stale key is marked, and what a control's default look is.
-- [ ] Flow spec gains `gesture` in the implemented subset (§8). Bindings spec gets its open question 1 answered ("visible" means shown on any surface) and a status note on what M5 implements.
+- [x] **Entity shapes** ([surfaces spec §1](../specs/surfaces.md), [ADR 0022](../adr/0022-surfaces-pages-and-the-web-surface.md)). `surface` and `page` are entities with slugs, beside `control_binding`. A surface entity exists before its device attaches. Pages address buttons as `k0`, `k1` … in row-major order, and in M5 a page fits only a surface with the same layout.
+- [x] **The current page is state,** `surface.<slug>.page`: `startPage` on attach, then `POST /surfaces/{id}/page`, journaled. Flows can't switch pages in M5; core-provided actions are an open question (surfaces spec §6).
+- [x] **The web surface** connects to its own WebSocket, `GET /surface/{id}`, carrying plugin protocol §8 notifications as JSON, with images as base64 PNG. The core's surface module doesn't know its transport, so the plugin host and Orbitals can attach surfaces the same way later (surfaces spec §4).
+- [x] **Rendering** ([ADR 0023](../adr/0023-key-rendering-and-binding-evaluation.md)): `tiny-skia` and `cosmic-text`, Inter embedded, PNG only. Black key, white label, wrapped to three lines and shrunk to fit. The virtual deck declares 144 × 144 keys.
+- [x] **Gesture timing** (surfaces spec §3): `press` on `down` straight away; `double` as well as `press`, within 300 ms of the previous `up`; `long` at 500 ms; `hold` from 500 ms, every 150 ms. Timing from the host's `ts`, with a core timer for `long` and `hold`.
+- [x] **Binding evaluation cost** (ADR 0023). The bytecode prelude is out, since the workspace denies `unsafe`, and so is a frozen context. Instead `value`, `template`, `rules` and `map` are evaluated natively in Rust, tested against their compiled expressions, and `expr` bindings run on a dedicated binding thread with a 10 ms limit.
+- [x] **Stale and missing** (ADR 0023): a stale key is drawn at half brightness with a corner marker; an unbound key is blank.
+- [x] [Flow spec](../specs/flows.md) §8 lists `gesture` triggers as **(M5)**. [Bindings spec](../specs/bindings.md) has a status note, the new evaluation rule in §3, and open question 1 answered. New [surfaces spec](../specs/surfaces.md).
 
 ### Phase 1: Surfaces in the core (Rust)
-- [ ] A `covalence_core::surface` module: attached surfaces and their `ControlDef`s, `surface.<id>.connected` and `.page` state, and `input.raw` journaling.
+- [ ] A `covalence_core::surface` module: attached surfaces and their `ControlDef`s, `surface.<slug>.connected` and `.page` state, and `input.raw` journaling.
 - [ ] The gesture recogniser: `input.raw` → `input.gesture` with `cause`, using the host's `ts`. Unit tests for every gesture, including out-of-order and late events.
 - [ ] `gesture` triggers in the flow model and runtime, with validation that the control exists on the page.
 - [ ] The renderer: a control's resolved look (label, text colour, background) → an image at its native size and format. Snapshot tests.
@@ -39,7 +41,7 @@ Covalence gets its first control surface. A virtual Stream Deck in the UI ([ADR 
 - [ ] The five binding kinds, with `value`, `template`, `rules` and `map` compiled to expressions as the spec says. Literal values checked against each property's type; `expr` results checked at run time.
 - [ ] The binding scheduler: read sets per binding, re-evaluated once per scheduler turn when touched, only for visible pages; fallbacks and rate-limited errors; stale dimming.
 - [ ] Diffing resolved looks, so only changed controls are drawn.
-- [ ] The evaluation speedup chosen in Phase 0, and the benchmark against the 16 ms budget.
+- [ ] Native evaluation of `value`, `template`, `rules` and `map`, tested against their compiled expressions; `expr` bindings on the binding thread; the benchmark against the 16 ms budget.
 
 ### Phase 3: HTTP API and the surface transport
 - [ ] Endpoints for surfaces, pages and control bindings, through the same save and validation path as flows.

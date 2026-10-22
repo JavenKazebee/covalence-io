@@ -8,13 +8,14 @@
 - [M2: First UI slice](milestones/m2-first-ui.md) (done)
 - [M3: First flows](milestones/m3-first-flows.md) (done)
 - [M4: Expressions](milestones/m4-expressions.md) (done)
-- [M5: Surfaces and bindings](milestones/m5-surfaces-and-bindings.md) (planned)
+- [M5: Surfaces and bindings](milestones/m5-surfaces-and-bindings.md) (in progress)
 
 ## Specs (drafts)
 - [State model and event log](specs/state-and-event-log.md)
 - [Plugin protocol](specs/plugin-protocol.md)
 - [Flows](specs/flows.md)
 - [Bindings](specs/bindings.md)
+- [Surfaces and pages](specs/surfaces.md)
 
 ## Architecture decision records
 
@@ -41,5 +42,7 @@
 | [0019](adr/0019-dynamic-action-targets-and-interfaces.md) | Dynamic action targets and plugin interfaces | Proposed |
 | [0020](adr/0020-project-entity-types-in-the-core.md) | Project entity types live in the core, as serde types | Accepted |
 | [0021](adr/0021-expressions-as-sandboxed-snippets.md) | Expressions are sandboxed snippets; what code can do depends on where it runs | Accepted |
+| [0022](adr/0022-surfaces-pages-and-the-web-surface.md) | Surfaces and pages are core entities; the web surface speaks the surface protocol | Accepted |
+| [0023](adr/0023-key-rendering-and-binding-evaluation.md) | Keys are rendered in the core; structured bindings are evaluated without QuickJS | Accepted |
 
 Each record covers its context, the decision, its consequences and the alternatives considered. Don't edit an accepted record to change its decision; write a new one that supersedes it.

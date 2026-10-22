@@ -244,6 +244,7 @@ Keys appear in a fixed order. Fields that are always expressions (`when`, `until
 This section is what the core accepts today.
 - [Milestone 3](../milestones/m3-first-flows.md) implemented the Button-view shape (§6) without expressions.
 - [Milestone 4](../milestones/m4-expressions.md) adds expressions (§8.7), `state` triggers, `event` filters, flow conditions, and the `branch`, `waitUntil` and `set` steps. Rules that M4 adds or changes are marked **(M4)**.
+- [Milestone 5](../milestones/m5-surfaces-and-bindings.md) adds `gesture` triggers, marked **(M5)**. Planned, not yet implemented.
 
 **Anything outside this section is rejected on save with an error, never stored and ignored.** Types live in `covalence_core::flow` ([ADR 0020](../adr/0020-project-entity-types-in-the-core.md)).
 
@@ -255,7 +256,7 @@ This section is what the core accepts today.
 | `name` | Required, non-empty |
 | `slug` | Optional on create: derived from `name` (camelCase, ASCII, deduplicated with a number). Must match `[a-z][A-Za-z0-9_]*` and be unique |
 | `enabled` | Required |
-| `triggers` | `api`, `event` and **(M4)** `state` (§8.2). May be empty, with a warning: the flow can't start |
+| `triggers` | `api`, `event`, **(M4)** `state` and **(M5)** `gesture` (§8.2). May be empty, with a warning: the flow can't start |
 | `conditions` | **(M4)** Optional list of expressions. All must be truthy when a trigger matches, or no run starts (§8.2) |
 | `inputs`, `outputs` | Must be absent |
 | `concurrency` | Required. All four modes |
@@ -270,6 +271,7 @@ This section is what the core accepts today.
 | `api` | none | `{args: {}}` | Fired by `POST /flows/{id}/run` (§9). A flow without one can't be run from the API or the UI's Run button |
 | `event` | `source: {conn}`, `event`, **(M4)** `filter?: Expr` | `{source, event, payload}` | `event` must be in the plugin manifest's `events`. No `{plugin}` or `{interface}` sources |
 | `state` **(M4)** | `when: Expr`, `edge: rising \| falling \| change` | `{value, previous}` | See below |
+| `gesture` **(M5)** | `control: {page, control}`, `gesture: press \| release \| double \| long \| hold` | `{surface, page, control, gesture, delta?}` | Matches on any surface showing the page. Gestures and their timing are in the [surfaces spec §3](surfaces.md). `trigger.matched` has `cause` → the `input.gesture` entry |
 
 - `trigger.matched` names the trigger by its index in `triggers`.
 - **(M4) Matching order.** When a trigger fires:
@@ -336,6 +338,7 @@ Errors block the save; warnings don't. There are no drafts yet.
   - literal parameters that fail the action's schema
   - a bad literal duration
   - **(M4)** an expression that doesn't compile, a malformed `set` path, a `branch` with no arms
+  - **(M5)** a `gesture` trigger on a page that doesn't exist, or a control outside its layout (`unknownControl`)
 - **Warnings:**
   - no triggers
   - an `event` trigger on a connection the flow also acts on (see §8.6)

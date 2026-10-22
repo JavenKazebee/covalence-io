@@ -1,6 +1,6 @@
 # Spec: Bindings
 
-- **Status:** Draft v0.1
+- **Status:** Draft v0.1. [M5](../milestones/m5-surfaces-and-bindings.md) implements display bindings (§1–§4) for `label`, `textColor` and `background`; value mappings, page parameters and presets come later.
 - **Related:** [ADR 0018](../adr/0018-flows-as-step-trees.md), [ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md), [ADR 0004](../adr/0004-javascript-expressions-and-scripts.md), [state and event log](state-and-event-log.md), [plugin protocol §8](plugin-protocol.md), [flows](flows.md)
 
 Bindings are Covalence's **dataflow**. Flows do things in order; bindings keep something continuously in step with state. Every binding is evaluated as a JS expression ([ADR 0004](../adr/0004-javascript-expressions-and-scripts.md)), but users only write code when they choose to.
@@ -9,7 +9,7 @@ There are two directions:
 - **Display bindings** (§1–§4): state → how a control looks.
 - **Value mappings** (§5): a continuous control (fader, encoder) → an action parameter, with optional feedback.
 
-Discrete inputs such as button presses are not bindings. They're `gesture` triggers on flows.
+Discrete inputs such as button presses are not bindings. They're `gesture` triggers on flows. Surfaces, pages and gestures are in the [surfaces spec](surfaces.md).
 
 Shapes use TypeScript notation for readability. The real source of truth will be the schema in `protocol/`.
 
@@ -73,7 +73,7 @@ type Format = "auto" | "mmss" | "hhmmss" | "percent" | "fixed1" | "fixed2" | "up
 
 ## 3. Evaluation
 
-- **Bindings are evaluated in the core** with QuickJS, the same engine as flows.
+- **Bindings are evaluated in the core.** `expr` bindings use QuickJS, the same engine as flows, on a thread of their own. `value`, `template`, `rules` and `map` are evaluated natively, with the same results as their compiled expressions ([ADR 0023](../adr/0023-key-rendering-and-binding-evaluation.md)). `expr` bindings have a 10 ms time limit.
 - **Dependencies are tracked at run time** ([ADR 0021](../adr/0021-expressions-as-sandboxed-snippets.md)). Each evaluation records the paths it reads, and the binding re-evaluates when any of them change. A binding that reads `vars.selectedCam` moves to the new camera's paths as soon as the variable changes.
 - **Once per scheduler turn,** after patches are coalesced, so a binding never shows a half-applied turn.
 - **Only bindings on visible pages are evaluated.** A page that comes into view is evaluated in full before it's drawn.
@@ -136,7 +136,7 @@ Manifest `presets` ([plugin protocol §4](plugin-protocol.md#4-manifest)) can in
 
 ## 8. Open questions
 
-1. Should bindings on hidden pages keep evaluating when the page is shown on another surface or a web panel? (Probably: "visible" means visible anywhere.)
+1. ~~Should bindings on hidden pages keep evaluating when the page is shown on another surface or a web panel?~~ Decided for M5: "visible" means shown on any attached surface, and a page's bindings are evaluated once for all of them.
 2. Should the `rules` kind allow combining conditions with AND/OR, or should more complex logic go to `expr`?
 3. Is a visual editor for value mappings (curves, ranges) needed for v1, or are the form fields enough?
 4. Should value mappings support two-way, such as an encoder that changes a value and also shows it, as one entity rather than a mapping plus a feedback binding? The `feedback` field covers the common case.
