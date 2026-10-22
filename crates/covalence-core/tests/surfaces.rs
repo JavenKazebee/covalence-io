@@ -154,12 +154,13 @@ async fn send(link: &Link, control: &str, kind: InputKind, ts: f64) {
         .unwrap();
 }
 
-/// Lets the surface's task and the flow runtime catch up.
-async fn settle() {
+/// Lets the surface's task, the flow runtime and the binding worker catch up.
+async fn settle(surfaces: &Surfaces) {
     for _ in 0..20 {
         tokio::task::yield_now().await;
     }
     tokio::time::sleep(Duration::from_millis(1)).await;
+    surfaces.flush().await;
 }
 
 fn take_draws(link: &mut Link) -> Vec<Draw> {
@@ -189,6 +190,7 @@ async fn attaching_publishes_state_and_draws_every_key() {
     );
     assert!(matches!(patch.record, Record::StatePatch(_)));
 
+    w.surfaces.flush().await;
     let draws = take_draws(&mut link);
     assert_eq!(draws.len(), 15);
     assert_eq!(draws[0].control, "k0");
@@ -224,7 +226,7 @@ async fn a_press_journals_raw_input_then_the_gesture() {
     let link = w.surfaces.attach(DECK, deck()).unwrap();
     send(&link, "k3", InputKind::Down, 1000.0).await;
     send(&link, "k3", InputKind::Up, 1060.0).await;
-    settle().await;
+    settle(&w.surfaces).await;
 
     let all = entries(&w.shared);
     let raw: Vec<(Seq, InputRawRecord)> = all
@@ -251,10 +253,10 @@ async fn holding_a_key_fires_long_and_hold_from_the_timer() {
     let w = world();
     let link = w.surfaces.attach(DECK, deck()).unwrap();
     send(&link, "k0", InputKind::Down, 0.0).await;
-    settle().await;
+    settle(&w.surfaces).await;
     let down = gestures(&w.shared)[0].2;
     tokio::time::sleep(Duration::from_millis(700)).await;
-    settle().await;
+    settle(&w.surfaces).await;
     assert_eq!(
         names(&w.shared),
         ["k0:press", "k0:long", "k0:hold1", "k0:hold2"]
@@ -269,7 +271,7 @@ async fn input_from_an_unknown_control_is_ignored() {
     let w = world();
     let link = w.surfaces.attach(DECK, deck()).unwrap();
     send(&link, "k99", InputKind::Down, 0.0).await;
-    settle().await;
+    settle(&w.surfaces).await;
     assert!(
         !entries(&w.shared)
             .iter()
@@ -282,9 +284,9 @@ async fn detaching_disconnects_and_releases_held_keys() {
     let w = world();
     let link = w.surfaces.attach(DECK, deck()).unwrap();
     send(&link, "k2", InputKind::Down, 0.0).await;
-    settle().await;
+    settle(&w.surfaces).await;
     drop(link);
-    settle().await;
+    settle(&w.surfaces).await;
 
     assert!(!w.surfaces.is_attached(DECK));
     assert_eq!(state(&w.shared, "connected"), Some(false.into()));
@@ -307,26 +309,28 @@ async fn detaching_disconnects_and_releases_held_keys() {
 async fn a_second_attach_replaces_the_first() {
     let w = world();
     let mut first = w.surfaces.attach(DECK, deck()).unwrap();
+    w.surfaces.flush().await;
     take_draws(&mut first);
     let second = w.surfaces.attach(DECK, deck()).unwrap();
-    settle().await;
+    settle(&w.surfaces).await;
     assert!(
         first.draws.recv().await.is_none(),
         "the first link is closed"
     );
     // The first transport hanging up later doesn't detach the second.
     drop(first);
-    settle().await;
+    settle(&w.surfaces).await;
     assert_eq!(state(&w.shared, "connected"), Some(true.into()));
     send(&second, "k1", InputKind::Down, 0.0).await;
-    settle().await;
+    settle(&w.surfaces).await;
     assert_eq!(names(&w.shared), ["k1:press"]);
 }
 
 #[tokio::test(start_paused = true)]
-async fn showing_a_page_checks_its_layout_and_redraws() {
+async fn showing_a_page_checks_its_layout() {
     let w = world();
     let mut link = w.surfaces.attach(DECK, deck()).unwrap();
+    w.surfaces.flush().await;
     take_draws(&mut link);
     let user = Origin::User {
         user: "u1".into(),
@@ -336,7 +340,9 @@ async fn showing_a_page_checks_its_layout_and_redraws() {
     w.surfaces.show(DECK, Some(AUDIO), user.clone()).unwrap();
     assert_eq!(state(&w.shared, "page"), Some("audio".into()));
     assert_eq!(entries(&w.shared).last().unwrap().origin, user);
-    assert_eq!(take_draws(&mut link).len(), 15);
+    w.surfaces.flush().await;
+    // The audio page has no bindings either, so nothing looks different.
+    assert_eq!(take_draws(&mut link).len(), 0);
 
     assert!(matches!(
         w.surfaces.show(DECK, Some(WIDE), user.clone()),
@@ -353,7 +359,7 @@ async fn showing_a_page_checks_its_layout_and_redraws() {
 
     // Input with no page shown is journaled, but can't match a trigger.
     send(&link, "k0", InputKind::Down, 0.0).await;
-    settle().await;
+    settle(&w.surfaces).await;
     assert_eq!(gestures(&w.shared)[0].1.page, None);
 }
 
@@ -365,7 +371,7 @@ async fn reattaching_shows_the_page_it_showed_last() {
         .show(DECK, Some(AUDIO), Origin::system())
         .unwrap();
     drop(link);
-    settle().await;
+    settle(&w.surfaces).await;
     let _link = w.surfaces.attach(DECK, deck()).unwrap();
     assert_eq!(state(&w.shared, "page"), Some("audio".into()));
 }
@@ -436,7 +442,7 @@ async fn a_gesture_trigger_runs_its_flow_and_why_reaches_the_raw_input() {
     send(&link, "k3", InputKind::Down, 0.0).await;
     send(&link, "k3", InputKind::Up, 50.0).await;
     send(&link, "k4", InputKind::Down, 1000.0).await;
-    settle().await;
+    settle(&w.surfaces).await;
 
     let pressed = StatePath::new("vars", vec![PathSegment::Key("pressed".into())]);
     let value = w.shared.state.value(&pressed);
@@ -503,7 +509,7 @@ async fn a_gesture_trigger_only_matches_its_page() {
         send(&link, "k0", InputKind::Up, ts + 50.0).await;
         send(&link, "k0", InputKind::Down, ts + 150.0).await;
         send(&link, "k0", InputKind::Up, ts + 200.0).await;
-        settle().await;
+        settle(&w.surfaces).await;
         let expected = (page == AUDIO).then(|| Value::from(true));
         assert_eq!(w.shared.state.value(&doubled), expected, "on {page}");
     }

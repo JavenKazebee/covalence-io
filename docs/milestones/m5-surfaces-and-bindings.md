@@ -42,11 +42,21 @@ Covalence gets its first control surface. A virtual Stream Deck in the UI ([ADR 
 - `ControlDef` and `Attach` are Rust types in the core for now. They move into the protocol's TypeSpec when the plugin host carries surfaces.
 
 ### Phase 2: Bindings (Rust)
-- [ ] `page` and `control_binding` entity types and fixtures ([ADR 0020](../adr/0020-project-entity-types-in-the-core.md)), including problem fixtures for each validation error.
-- [ ] The five binding kinds, with `value`, `template`, `rules` and `map` compiled to expressions as the spec says. Literal values checked against each property's type; `expr` results checked at run time.
-- [ ] The binding scheduler: read sets per binding, re-evaluated once per scheduler turn when touched, only for visible pages; fallbacks and rate-limited errors; stale dimming.
-- [ ] Diffing resolved looks, so only changed controls are drawn.
-- [ ] Native evaluation of `value`, `template`, `rules` and `map`, tested against their compiled expressions; `expr` bindings on the binding thread; the benchmark against the 16 ms budget.
+- [x] `covalence_core::binding`: the `control_binding` entity (`ControlBinding`, `Prop`, `Binding`, `Ref` …), `parse` with `unsupported` for later properties and target refs, and `validate` (bindings spec §2.1). Shared fixtures in `fixtures/bindings/`, with problem fixtures for every error code.
+- [x] Native evaluation of `value`, `template`, `rules` and `map` (`Binding::evaluate`), and their compiled expressions (`Binding::to_expr`). `binding::js` reproduces the JavaScript rules they need: `String()`, `Number()`, `toFixed`, `Math.round`, `===` and relational comparison. `tests/bindings.rs` runs every fixture, every format, every condition and every map shape over a set of awkward values both ways and requires the same result, and that a native binding reads at least what its expression reads.
+- [x] The binding worker (`binding::worker`): its own thread, its own QuickJS with a 10 ms limit, one turn per batch of state changes, only pages some surface shows, a page evaluated in full when it comes into view. Fallbacks, then the control's default. Errors are kept per binding property (`Surfaces::binding_problems`, for the editor) and logged when they change. A stale read dims the key. Each surface is sent only the keys whose look differs from what it last got. `Surfaces` now draws through it: `set_binding`, `remove_binding`, `set_aliases` and `flush`.
+- [x] `tests/binding_worker.rs`: a bound key's first draw, redraws only on what it reads, fallbacks and reported errors that clear, stale dimming, hidden pages not evaluated, a dynamic read following `vars`, edits while shown, two surfaces on one page.
+- [x] **Benchmark** (`bench_a_full_page_of_expr_bindings`, ignored, run in release), two `expr` bindings per key, every key changing at once, on an Apple M3:
+
+  | Page | Median | Worst |
+  |---|---|---|
+  | 15 keys at 72 px | 8.4 ms | 10.8 ms |
+  | 15 keys at 144 px (the virtual deck) | 8.9 ms | 9.2 ms |
+  | 32 keys at 96 px | 18.4 ms | 20.2 ms |
+
+  M5's 15-key deck is inside the 16 ms budget. A 32-key page of `expr` bindings isn't: 64 evaluations at ~270 µs each are most of it. ADR 0023's binding thread pool is the fix when a 32-key surface arrives; structured bindings cost microseconds and don't need it.
+- PNG encoding moved from `tiny-skia`'s encoder to `png` with fast compression and RGB: a blank key went from 176 µs to 16 µs.
+- The worker draws on its own thread now, so drawing is asynchronous: `Surfaces::flush` waits for it, for tests and, from Phase 3, for the API.
 
 ### Phase 3: HTTP API and the surface transport
 - [ ] Endpoints for surfaces, pages and control bindings, through the same save and validation path as flows.

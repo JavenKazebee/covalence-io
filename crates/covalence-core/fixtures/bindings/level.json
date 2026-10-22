@@ -1,0 +1,22 @@
+{
+  "id": "01JC0000000000000000000104",
+  "page": "01JBZ7P0D3F5G7H9J1K3L5M7PA",
+  "control": "k3",
+  "props": {
+    "label": {
+      "kind": "map",
+      "path": { "conn": "01JBZ7P0D3F5G7H9J1K3L5M7N9", "path": ["level"] },
+      "from": [0, 1],
+      "to": [-60, 10],
+      "curve": "log"
+    },
+    "background": {
+      "kind": "rules",
+      "rules": [
+        { "when": { "path": { "conn": "01JBZ7P0D3F5G7H9J1K3L5M7N9", "path": ["level"] }, "op": ">=", "value": 0.9 }, "value": "#e02020" },
+        { "when": { "path": { "root": "vars", "path": ["muted"] }, "op": "truthy" }, "value": "#555" }
+      ],
+      "else": "#000000"
+    }
+  }
+}

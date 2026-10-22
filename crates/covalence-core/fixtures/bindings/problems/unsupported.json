@@ -1,0 +1,17 @@
+{
+  "binding": {
+    "page": "01JBZ7P0D3F5G7H9J1K3L5M7PA",
+    "control": "k7",
+    "props": {
+      "icon": { "kind": "expr", "source": "\"mic\"" },
+      "label": {
+        "kind": "value",
+        "path": { "target": { "conn": "01JBZ7P0D3F5G7H9J1K3L5M7N9" }, "path": ["name"] }
+      }
+    }
+  },
+  "errors": [
+    { "path": ["props", "icon"], "code": "unsupported" },
+    { "path": ["props", "label", "path"], "code": "unsupported" }
+  ]
+}

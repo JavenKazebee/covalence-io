@@ -6,6 +6,10 @@
 //! one with its controls, feeds it [`Input`] and sends on the [`Draw`]s it
 //! gets back.
 //!
+//! What a surface shows is drawn by the binding worker
+//! ([`crate::binding::worker`]), which evaluates the bindings of the page it
+//! shows.
+//!
 //! Each attached surface has a task that journals its raw input as
 //! `input.raw`, turns it into gestures ([`gesture`]) and journals those as
 //! `input.gesture`, with `cause` → the raw input that completed them. Flows
@@ -32,8 +36,9 @@ use crate::{Shared, clock};
 pub mod gesture;
 pub mod render;
 
+use crate::binding::ControlBinding;
+use crate::binding::worker::{Bindings, Problems};
 use gesture::{Detected, Recogniser, Timing};
-use render::{Look, Renderer};
 
 /// Entity types in the store.
 pub const SURFACE_ENTITY: &str = "surface";
@@ -223,7 +228,7 @@ struct Inner {
     shared: Shared,
     timing: Timing,
     book: Mutex<Book>,
-    renderer: Mutex<Renderer>,
+    bindings: Bindings,
     sessions: AtomicU64,
 }
 
@@ -249,10 +254,10 @@ impl Surfaces {
     pub fn new(shared: Shared, timing: Timing) -> Self {
         Surfaces {
             inner: Arc::new(Inner {
+                bindings: Bindings::start(shared.state.clone()),
                 shared,
                 timing,
                 book: Mutex::new(Book::default()),
-                renderer: Mutex::new(Renderer::default()),
                 sessions: AtomicU64::new(0),
             }),
         }
@@ -283,6 +288,7 @@ impl Surfaces {
         };
         book.attached.remove(id);
         book.shown.remove(id);
+        inner.bindings.hide(id);
         let path = StatePath::new(STATE_ROOT, vec![key(&surface.slug)]);
         inner.patch(Origin::system(), None, vec![(path, None)])?;
         Ok(())
@@ -309,6 +315,7 @@ impl Surfaces {
                 book.shown.insert(surface.clone(), None);
             }
             inner.publish_page(&book, &surface, Origin::system())?;
+            inner.show_on(&book, &surface);
         }
         Ok(())
     }
@@ -327,6 +334,7 @@ impl Surfaces {
         for surface in showing {
             book.shown.insert(surface.clone(), None);
             inner.publish_page(&book, &surface, Origin::system())?;
+            inner.show_on(&book, &surface);
         }
         Ok(())
     }
@@ -343,6 +351,31 @@ impl Surfaces {
     /// The page a surface shows, or last showed while detached.
     pub fn shown(&self, surface: &str) -> Option<PageId> {
         self.inner.book().shown.get(surface).cloned().flatten()
+    }
+
+    /// Adds or replaces a control binding.
+    pub fn set_binding(&self, binding: ControlBinding) {
+        self.inner.bindings.set(binding);
+    }
+
+    pub fn remove_binding(&self, id: &str) {
+        self.inner.bindings.remove(id);
+    }
+
+    /// The connection aliases `expr` bindings read, by alias.
+    pub fn set_aliases(&self, aliases: BTreeMap<String, crate::state::ConnId>) {
+        self.inner.bindings.set_aliases(aliases);
+    }
+
+    /// The last error of each failing binding property.
+    pub fn binding_problems(&self) -> Problems {
+        self.inner.bindings.problems()
+    }
+
+    /// Returns once bindings have caught up with every change made before:
+    /// pages evaluated and drawn.
+    pub async fn flush(&self) {
+        self.inner.bindings.flush().await;
     }
 
     pub fn is_attached(&self, surface: &str) -> bool {
@@ -378,9 +411,7 @@ impl Surfaces {
         book.shown
             .insert(surface.to_owned(), page.map(str::to_owned));
         inner.publish_page(&book, surface, origin)?;
-        if let Some(attached) = book.attached.get(surface) {
-            inner.draw_all(attached);
-        }
+        inner.show_on(&book, surface);
         Ok(())
     }
 
@@ -417,7 +448,7 @@ impl Surfaces {
         );
         let ops = inner.surface_state(&book, surface);
         inner.patch(surface_origin(surface), None, ops)?;
-        inner.draw_all(&book.attached[surface]);
+        inner.show_on(&book, surface);
         drop(book);
 
         tokio::spawn(run(
@@ -608,28 +639,17 @@ impl Inner {
         self.patch(origin, None, vec![(Self::path(slug, "page"), Some(value))])
     }
 
-    /// Draws every control that shows an image. Until bindings arrive
-    /// (M5 Phase 2), every key is blank.
-    fn draw_all(&self, attached: &Attached) {
-        let mut renderer = self.renderer.lock().unwrap_or_else(|e| e.into_inner());
-        let look = Look::default();
-        for control in &attached.attach.controls {
-            let Some(image) = &control.image else {
-                continue;
-            };
-            match renderer.render(&look, image.w, image.h, &image.format, image.rotation) {
-                Ok(bytes) => {
-                    let draw = Draw {
-                        control: control.id.clone(),
-                        format: image.format.clone(),
-                        image: bytes,
-                    };
-                    if attached.draws.try_send(draw).is_err() {
-                        tracing::warn!(control = %control.id, "surface isn't taking images; dropped one");
-                    }
-                }
-                Err(e) => tracing::warn!(control = %control.id, "cannot draw: {e}"),
-            }
+    /// Tells the binding worker what an attached surface shows, so it
+    /// evaluates the page and draws it.
+    fn show_on(&self, book: &Book, surface: &str) {
+        if let Some(attached) = book.attached.get(surface) {
+            let page = book.shown.get(surface).cloned().flatten();
+            self.bindings.show(
+                surface,
+                page,
+                attached.attach.controls.clone(),
+                attached.draws.clone(),
+            );
         }
     }
 
@@ -724,6 +744,7 @@ impl Inner {
             return;
         }
         book.attached.remove(surface);
+        self.bindings.hide(surface);
         let page = book.shown.get(surface).cloned().flatten();
         let slug = book.surfaces[surface].slug.clone();
         drop(book);

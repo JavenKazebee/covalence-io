@@ -36,10 +36,14 @@ pub enum Code {
     BadPath,
     /// A `branch` without arms.
     NoArms,
-    /// A `gesture` trigger on a page that doesn't exist.
+    /// A `gesture` trigger or binding on a page that doesn't exist.
     UnknownPage,
-    /// A `gesture` trigger on a control outside its page's layout.
+    /// A `gesture` trigger or binding on a control outside its page's layout.
     UnknownControl,
+    /// A second binding for a control on the same page.
+    DuplicateControl,
+    /// A binding value that doesn't fit its property: a colour that isn't one.
+    BadValue,
     // Warnings.
     NoTriggers,
     /// An event trigger on a connection the flow also acts on (spec §8.6).
@@ -63,7 +67,7 @@ pub struct Problem {
 }
 
 impl Problem {
-    fn new(path: Path, code: Code, message: impl Into<String>) -> Self {
+    pub(crate) fn new(path: Path, code: Code, message: impl Into<String>) -> Self {
         Problem {
             path,
             code,

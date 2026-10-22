@@ -126,9 +126,7 @@ impl Renderer {
             dim(&mut pixmap);
             marker(&mut pixmap);
         }
-        pixmap
-            .encode_png()
-            .map_err(|e| RenderError::Encode(e.to_string()))
+        encode_png(&pixmap).map_err(|e| RenderError::Encode(e.to_string()))
     }
 
     /// Draws the label centred, at the largest size that fits in
@@ -197,6 +195,27 @@ impl Renderer {
             }
         }
     }
+}
+
+/// Encodes an opaque pixmap as RGB PNG, compressed for speed: an image goes
+/// out once, over a LAN, and the default level is most of a key's drawing
+/// time (ADR 0023).
+fn encode_png(pixmap: &Pixmap) -> Result<Vec<u8>, png::EncodingError> {
+    let rgb: Vec<u8> = pixmap
+        .pixels()
+        .iter()
+        .flat_map(|p| [p.red(), p.green(), p.blue()])
+        .collect();
+    let mut out = Vec::new();
+    let mut encoder = png::Encoder::new(&mut out, pixmap.width(), pixmap.height());
+    encoder.set_color(png::ColorType::Rgb);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder.set_compression(png::Compression::Fast);
+    encoder.set_filter(png::Filter::Sub);
+    let mut writer = encoder.write_header()?;
+    writer.write_image_data(&rgb)?;
+    writer.finish()?;
+    Ok(out)
 }
 
 /// Blends one glyph pixel over the opaque background.

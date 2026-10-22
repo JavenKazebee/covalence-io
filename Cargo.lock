@@ -318,6 +318,7 @@ dependencies = [
  "cosmic-text",
  "covalence-protocol",
  "covalence-store",
+ "png",
  "rmpv",
  "rquickjs",
  "serde",

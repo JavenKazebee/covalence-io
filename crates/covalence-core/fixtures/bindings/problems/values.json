@@ -1,0 +1,33 @@
+{
+  "binding": {
+    "page": "01JBZ7P0D3F5G7H9J1K3L5M7PA",
+    "control": "k5",
+    "props": {
+      "background": {
+        "kind": "rules",
+        "rules": [
+          { "when": { "path": { "root": "vars", "path": ["live"] }, "op": "truthy" }, "value": "red" }
+        ],
+        "else": 0
+      },
+      "label": {
+        "kind": "expr",
+        "source": "vars.name",
+        "fallback": { "text": "?" }
+      },
+      "textColor": {
+        "kind": "map",
+        "path": { "root": "vars", "path": ["level"] },
+        "from": [1, 1],
+        "to": [0, 255]
+      }
+    }
+  },
+  "errors": [
+    { "path": ["props", "background", "rules", 0, "value"], "code": "badValue" },
+    { "path": ["props", "background", "else"], "code": "badValue" },
+    { "path": ["props", "label", "fallback"], "code": "badValue" },
+    { "path": ["props", "textColor", "from"], "code": "badValue" },
+    { "path": ["props", "textColor", "to"], "code": "badValue" }
+  ]
+}

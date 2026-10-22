@@ -1,0 +1,26 @@
+{
+  "id": "01JC0000000000000000000101",
+  "page": "01JBZ7P0D3F5G7H9J1K3L5M7PA",
+  "control": "k0",
+  "props": {
+    "background": {
+      "kind": "rules",
+      "rules": [
+        {
+          "when": { "path": { "conn": "01JBZ7P0D3F5G7H9J1K3L5M7N9", "path": ["outputs", 1, "source"] }, "op": "==", "value": 3 },
+          "value": "#e02020"
+        },
+        {
+          "when": { "path": { "root": "vars", "path": ["preview"] }, "op": "==", "value": 3 },
+          "value": "#20a040"
+        }
+      ],
+      "else": "#333333"
+    },
+    "label": {
+      "kind": "template",
+      "parts": ["Out 1: ", { "path": { "conn": "01JBZ7P0D3F5G7H9J1K3L5M7N9", "path": ["outputs", 1, "source"] } }],
+      "fallback": "Out 1"
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "id": "01JC0000000000000000000102",
+  "page": "01JBZ7P0D3F5G7H9J1K3L5M7PA",
+  "control": "k1",
+  "props": {
+    "label": {
+      "kind": "value",
+      "path": { "conn": "01JBZ7P0D3F5G7H9J1K3L5M7N9", "path": ["timers", "countdown", "remaining"] },
+      "format": "mmss",
+      "fallback": "--:--"
+    },
+    "textColor": {
+      "kind": "map",
+      "path": { "conn": "01JBZ7P0D3F5G7H9J1K3L5M7N9", "path": ["timers", "countdown", "remaining"] },
+      "from": [0, 60],
+      "to": ["#ff3030", "#ffb020", "#ffffff"]
+    }
+  }
+}

@@ -66,6 +66,21 @@ type Format = "auto" | "mmss" | "hhmmss" | "percent" | "fixed1" | "fixed2" | "up
 | `map` | Scale a number, or pick from a list | fader 0–1 → −60…+10 dB; level 0–100 → `["green", "yellow", "red"]` |
 | `expr` | Anything else | `target(vars.selectedCam).tally.program ? "red" : "#333"` |
 
+### 2.1 What M5 implements
+
+The shapes above, with these rules, which the native evaluator and the compiled expression both follow (`covalence_core::binding`):
+
+- **Properties:** `label`, `textColor` and `background`. The others are `unsupported`, as are refs through a `target`.
+- **`Path`s are segment arrays** ([ADR 0017](../adr/0017-wire-paths-as-segment-arrays.md)): `["outputs", 1, "source"]`.
+- **`value`:** `undefined` stays `undefined`, so the fallback applies; anything else is formatted.
+- **Formats:** `auto` is `String(v)` (formatting by the schema's `kind` comes later). `mmss` and `hhmmss` are the standard library's. `percent` is `Math.round(Number(v) * 100)` followed by `%`, for values from 0 to 1. `fixed1` and `fixed2` are `Number(v).toFixed(n)`. `upper` is `String(v).toUpperCase()`.
+- **`template`:** if any value in it is `undefined`, the whole template is, and the fallback applies.
+- **`rules`:** `==` and `!=` are strict (`===`, `!==`). `>`, `>=`, `<` and `<=` follow JavaScript: strings compare as strings, anything else as numbers. A condition with no `value` compares with `undefined`.
+- **`map`:** only a number maps; anything else is `undefined`. `t = (v − from[0]) / (from[1] − from[0])`, clamped to 0–1 unless `clamp: false`. `log` is `log10(1 + 9t)`; `exp` is `(10^t − 1) / 9`. A range gives `to[0] + (to[1] − to[0]) · t`. A list gives `to[floor(t · length)]`, kept inside the list.
+- **Results:** a label takes text, or a number or boolean written as `String()` writes it. A colour takes `#rrggbb` or `#rgb`. Anything else is a type error: the fallback applies and the error is reported.
+- **Validation** (errors block saving): the page and control exist (`unknownPage`, `unknownControl`), no other binding has the control (`duplicateControl`), connections exist (`unknownConnection`), `expr` compiles (`exprSyntax`), and every literal fits its property (`badValue`): `rules` values and `else`, `map` lists, fallbacks, a `template` only on a label, a `map` range only on a label, and two different `from` numbers.
+- `showStale: false` isn't supported yet.
+
 - **Converting to `expr` is one-way.** The editor shows the compiled expression as the starting point. Going back is only offered if the expression hasn't been edited.
 - **`Ref` stores IDs,** so renaming an alias never breaks a binding. The editor shows the alias.
 

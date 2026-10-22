@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+pub mod binding;
 pub mod clock;
 pub mod engine;
 pub mod expr;
