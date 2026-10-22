@@ -7,7 +7,7 @@
 - [M1: Walking skeleton](milestones/m1-walking-skeleton.md) (done)
 - [M2: First UI slice](milestones/m2-first-ui.md) (done)
 - [M3: First flows](milestones/m3-first-flows.md) (done)
-- [M4: Expressions](milestones/m4-expressions.md) (planned)
+- [M4: Expressions](milestones/m4-expressions.md) (in progress)
 
 ## Specs (drafts)
 - [State model and event log](specs/state-and-event-log.md)
@@ -22,7 +22,7 @@
 | [0001](adr/0001-rust-core.md) | Core engine in Rust | Accepted |
 | [0002](adr/0002-protocol-first-plugins.md) | Plugins defined protocol-first | Accepted |
 | [0003](adr/0003-plugin-runtime-deno.md) | Plugins share one Deno runtime, with per-connection isolation | Accepted (spike deferred by 0015) |
-| [0004](adr/0004-javascript-expressions-and-scripts.md) | JS/TS for expressions and scripts (QuickJS in the core) | Accepted |
+| [0004](adr/0004-javascript-expressions-and-scripts.md) | JS/TS for expressions and scripts (QuickJS in the core) | Accepted (amended by 0021) |
 | [0005](adr/0005-web-ui-vue-tauri-shell.md) | Vue 3 web UI served by the core, with an optional Tauri shell | Accepted |
 | [0006](adr/0006-project-storage-and-versioning.md) | SQLite working store, text export, migrations | Accepted |
 | [0007](adr/0007-event-sourced-core.md) | Event-sourced core with a single output gate | Accepted |
@@ -39,5 +39,6 @@
 | [0018](adr/0018-flows-as-step-trees.md) | Flows are structured step trees; bindings are expressions | Accepted |
 | [0019](adr/0019-dynamic-action-targets-and-interfaces.md) | Dynamic action targets and plugin interfaces | Proposed |
 | [0020](adr/0020-project-entity-types-in-the-core.md) | Project entity types live in the core, as serde types | Accepted |
+| [0021](adr/0021-expressions-as-sandboxed-snippets.md) | Expressions are sandboxed snippets; what code can do depends on where it runs | Accepted |
 
 Each record covers its context, the decision, its consequences and the alternatives considered. Don't edit an accepted record to change its decision; write a new one that supersedes it.

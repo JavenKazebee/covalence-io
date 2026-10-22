@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-10-18
-- **Amended by:** [0019](0019-dynamic-action-targets-and-interfaces.md) (proposed): bindings and state triggers track dependencies at run time; `oxc` extraction becomes editor-only
+- **Amended by:** [0021](0021-expressions-as-sandboxed-snippets.md): expressions are sandboxed snippets with any syntax, dependencies are tracked at run time, and `oxc` leaves the core until script steps
 
 ## Context
 Expressions appear everywhere: labels, colours, conditions, triggers, action parameters. Users also need script steps for custom logic. Requirements:

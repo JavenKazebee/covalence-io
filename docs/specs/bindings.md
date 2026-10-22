@@ -74,7 +74,7 @@ type Format = "auto" | "mmss" | "hhmmss" | "percent" | "fixed1" | "fixed2" | "up
 ## 3. Evaluation
 
 - **Bindings are evaluated in the core** with QuickJS, the same engine as flows.
-- **Dependencies are tracked at run time** ([ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md)). Each evaluation records the paths it reads, and the binding re-evaluates when any of them change. A binding that reads `var.selectedCam` moves to the new camera's paths as soon as the variable changes.
+- **Dependencies are tracked at run time** ([ADR 0021](../adr/0021-expressions-as-sandboxed-snippets.md)). Each evaluation records the paths it reads, and the binding re-evaluates when any of them change. A binding that reads `var.selectedCam` moves to the new camera's paths as soon as the variable changes.
 - **Once per scheduler turn,** after patches are coalesced, so a binding never shows a half-applied turn.
 - **Only bindings on visible pages are evaluated.** A page that comes into view is evaluated in full before it's drawn.
 - **Missing values read as `undefined`** ([ADR 0004](../adr/0004-javascript-expressions-and-scripts.md)). If the result is `undefined` or the evaluation throws, the property uses `fallback`, then the control's default. Errors are reported in the editor and the log, rate-limited, and never stop other bindings.

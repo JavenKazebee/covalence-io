@@ -2,7 +2,7 @@
 
 - **Status:** Proposed
 - **Date:** 2026-10-18
-- **Amends:** [0004](0004-javascript-expressions-and-scripts.md) (how expression dependencies are found; the language and engine stand)
+- **Amends:** [0004](0004-javascript-expressions-and-scripts.md). Its dependency-tracking section was accepted separately, as part of [0021](0021-expressions-as-sandboxed-snippets.md)
 - **Specs:** [flows](../specs/flows.md), [bindings](../specs/bindings.md), [plugin protocol](../specs/plugin-protocol.md)
 
 ## Context
@@ -53,7 +53,7 @@
 - **Optional members.** Interfaces may mark members as optional (for example `camera.ptz@1` `focus`). `target(t).supports("focus")` lets bindings and conditions adapt.
 - **Plugins can extend an interface** with their own actions, but those are only reachable with a plugin-constrained target, not an interface one.
 
-### Dependency tracking (amends ADR 0004)
+### Dependency tracking (amends ADR 0004; accepted in ADR 0021)
 - **Bindings and state triggers track their dependencies at run time.** Every evaluation records the state paths it actually reads, through the state proxy and through `target()`. The core subscribes to that read set and re-evaluates when any path in it changes. After each evaluation the read set is replaced, so a binding that follows `var.selectedCam` moves to the new camera's paths as soon as the variable changes.
 - **Re-evaluation happens once per scheduler turn,** after patches are coalesced ([state spec](../specs/state-and-event-log.md)). An expression never sees a half-applied turn.
 - **`oxc` static extraction stays, but for the editor only:** validation, autocomplete, "where is this used?", and warnings for paths that don't exist. It's no longer the source of truth for reactivity.
