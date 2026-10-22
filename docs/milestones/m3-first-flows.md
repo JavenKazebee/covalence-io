@@ -1,6 +1,6 @@
 # Milestone 3: First flows
 
-- **Status:** In progress
+- **Status:** Done
 - **Started:** 2026-10-21
 
 The first automation. A flow is a trigger plus a flat list of `action` and `wait` steps, which is the Button-view shape from the [flow spec](../specs/flows.md) §6. A flow can be started from the API or the UI, or by a plugin event. Every run is journaled step by step, so `why` walks from a device action back through the run to whatever started it. QuickJS stays out: parameters are literal values and triggers have no filters or conditions.
