@@ -1,6 +1,6 @@
 # Milestone 4: Expressions
 
-- **Status:** In progress (Phase 0)
+- **Status:** In progress (Phase 0 done)
 - **Started:** 2026-10-21
 
 Flows start reading data. QuickJS arrives in the core ([ADR 0004](../adr/0004-javascript-expressions-and-scripts.md)), and expressions can appear in action parameters, wait durations, trigger filters and the new steps. A flow can react to a state value changing, not just to a plugin event. It can see what earlier steps returned, branch on it, wait for a condition, and set run-local and user variables. Expressions can use any JavaScript syntax but can't change anything ([ADR 0021](../adr/0021-expressions-as-sandboxed-snippets.md)). Script steps, which can act, stay out, as do loops and the other blocks.
@@ -30,7 +30,7 @@ Flows start reading data. QuickJS arrives in the core ([ADR 0004](../adr/0004-ja
 - [x] **Determinism.** No time or randomness in expressions, so nothing needs a `nondet` entry yet. Time is read from `sys.time.now` state. The standard library from ADR 0004 (`mmss`, `clamp`, `round` …) is in.
 - [x] **`var` without declarations.** `set` can write any `var.<name>` with any value. The `variable` entity, its schema and persistence across restarts wait for a variables milestone, so `var` values are lost on restart until then.
 - [x] **Trigger and condition journaling.** A false `filter` journals nothing, since it runs on every event. A false flow `condition` journals `trigger.matched` with `blocked: true, reason: condition`. A `state` trigger's first evaluation sets its baseline and never fires.
-- [ ] Update the [flow spec](../specs/flows.md) §8 from "the M3 subset" to the implemented subset, with the M4 additions: `{expr}` params, `wait.for` as an expression, `state` triggers, `event` filters, `conditions`, `branch`, `waitUntil`, `set`, `steps.<id>` and `local`. Add the endpoint for live preview to §9.
+- [x] [Flow spec](../specs/flows.md) §8 is now "the implemented subset", with the M4 additions marked: `{expr}` params, `wait.for` as an expression, `state` triggers, `event` filters, `conditions`, `branch`, `waitUntil`, `set`, `steps.<id>` and `local`, the matching order, and a new §8.7 on expressions. §9 has `POST /expressions/evaluate`.
 
 ### Phase 1: Expression engine (Rust)
 - [ ] `rquickjs` on QuickJS-ng in `covalence_core::expr`: compile as an expression, else as a function body; evaluate with a scope; return a `Value` or an error with its source position.
@@ -54,7 +54,7 @@ Flows start reading data. QuickJS arrives in the core ([ADR 0004](../adr/0004-ja
 
 ### Phase 3: HTTP API
 - [ ] The flow endpoints accept and return the new shapes; validation problems keep `{path, code, message}`, with expression errors pointing into the source.
-- [ ] `POST /expressions/evaluate {source, flow?}`: evaluates against live state for the editor's preview and returns `{value}` or `{error}`. It never writes and never runs actions.
+- [ ] `POST /expressions/evaluate {source, trigger?}`: evaluates against live state for the editor's preview and returns `{value?, error?, reads}` (flow spec §9). It never writes, runs actions or journals.
 - [ ] End-to-end tests for every "Done when" item the API can reach, in `crates/covalence-server/tests/`.
 
 ### Phase 4: UI
