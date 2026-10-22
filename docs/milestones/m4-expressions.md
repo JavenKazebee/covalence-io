@@ -1,6 +1,6 @@
 # Milestone 4: Expressions
 
-- **Status:** In progress (Phases 0–3 done)
+- **Status:** In progress (Phases 0–4 done)
 - **Started:** 2026-10-21
 
 Flows start reading data. QuickJS arrives in the core ([ADR 0004](../adr/0004-javascript-expressions-and-scripts.md)), and expressions can appear in action parameters, wait durations, trigger filters and the new steps. A flow can react to a state value changing, not just to a plugin event. It can see what earlier steps returned, branch on it, wait for a condition, and set run-local and user variables. Expressions can use any JavaScript syntax but can't change anything ([ADR 0021](../adr/0021-expressions-as-sandboxed-snippets.md)). Script steps, which can act, stay out, as do loops and the other blocks.
@@ -15,7 +15,7 @@ Flows start reading data. QuickJS arrives in the core ([ADR 0004](../adr/0004-ja
 - [x] `set` writes `local.<name>` (visible to later steps in the same run, gone after it) and `vars.<name>` (a `state.patch` in the journal with `cause` → its `run.step`, visible to bindings and other flows).
 - [x] A multi-line expression with a `const` lookup table and a `return` works as an action parameter. An expression that writes (`vars.x = 1`), calls `Date.now()` or `Math.random()`, or returns a promise fails with a clear error, and nothing it touched changes.
 - [x] An expression that throws, loops forever or allocates too much fails its step (or, for a trigger, filter or condition, counts as false and is logged, rate-limited) within the evaluation limits, without stalling the core.
-- [ ] The flow editor edits all of the above: any parameter can switch between a literal and an expression, expressions show a live preview against current state, and `branch` arms nest their own step lists.
+- [x] The flow editor edits all of the above: any parameter can switch between a literal and an expression, expressions show a live preview against current state, and `branch` arms nest their own step lists.
 - [ ] A Rust end-to-end test covers the above in CI, with no hardware. A browser smoke test runs one expression flow through the UI.
 
 ## Phases
@@ -66,13 +66,14 @@ Flows start reading data. QuickJS arrives in the core ([ADR 0004](../adr/0004-ja
 - [x] End-to-end tests in `crates/covalence-server/tests/flows_api.rs` against the real host and two simulated Videohubs: the preview endpoint, expression params routing to a `set` variable, `invalidParams` before the request, a `state` trigger firing once per rising edge with `why` reaching its `state.patch`, and a filter that keeps a flow acting on its own trigger's connection from looping. Branches, `waitUntil`, cancellation and limits are covered in `crates/covalence-core/tests/flow_runtime.rs` and `expr/tests.rs`.
 
 ### Phase 4: UI
-- [ ] Expression input: CodeMirror 6 with JS highlighting, a one-line field that grows to several lines, inline errors from the server, and a debounced live preview from `POST /expressions/evaluate`.
-- [ ] Editor warnings for `steps.<id>` references to steps that don't exist or come later, found with CodeMirror's JavaScript syntax tree.
-- [ ] `SchemaForm` fields switch between literal and expression. `wait` takes a duration or an expression.
-- [ ] Triggers: a `state` trigger editor (`when`, `edge`), a `filter` on `event` triggers, and flow conditions.
-- [ ] Step editors for `branch` (arms with `when` and nested step lists, plus `else`), `waitUntil` and `set`. Reordering works within a list; moving steps between arms can wait.
-- [ ] The runs view highlights nested positions. The `why` drawer shows `state.patch` causes and `set` writes readably.
-- [ ] `src/flows/model.ts` gains the new types, tested against the shared fixtures: every valid fixture round-trips through the editor unchanged.
+- [x] Expression input (`src/components/ExprInput.vue`): CodeMirror 6 with JS highlighting, loaded on first use; a one-line field that grows as you type; the server's problems with their line and column; and a debounced live preview from `POST /expressions/evaluate`, with what it reads on hover. A preview that reads `trigger`, `local` or `steps` says they only exist in a run.
+- [x] Editor warnings for `steps.<id>` references to steps that don't exist or haven't finished, found with the `@lezer/javascript` syntax tree (`src/flows/expr.ts`).
+- [x] `SchemaForm` fields switch between a value and an expression (ƒx), carrying the value across. `wait` takes a duration or an expression the same way.
+- [x] Triggers: a `state` trigger editor (`when`, `edge`), an optional `filter` on `event` triggers with a sample trigger for its preview, and a Conditions section.
+- [x] Step editors for `branch` (arms with `when` and their own step lists, plus `else`), `waitUntil` and `set` (`local` or `vars`, a name, and a value). Steps reorder within their list (`src/components/StepList.vue`, recursive); moving steps between arms can wait.
+- [x] The runs view highlights every step on the active run's position, nested ones too. Journal summaries and the `why` drawer show nested positions (`decide › pause`), the arm a branch took, a condition that blocked a run, and `vars` writes.
+- [x] `src/flows/model.ts` gains the new types and nested drafts, tested against the shared fixtures: every valid fixture, `expressions.json` included, round-trips through the editor unchanged.
+- [x] Checked by hand in the browser against a real server and two simulated Videohubs: the fixture flow opens, saves unchanged, shows a broken condition's error under it with its position, runs through its `else` arm, and its `state` trigger fires from an outside route.
 
 ### Phase 5: Acceptance
 - [ ] The Rust end-to-end tests run in the existing `cargo test` CI job.

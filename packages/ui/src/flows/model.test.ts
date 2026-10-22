@@ -3,6 +3,7 @@ import type { JsonSchema } from "../api";
 import {
   freshStepId,
   fromDraft,
+  newFlowDraft,
   isDuration,
   paramProblems,
   problemsAt,
@@ -67,6 +68,35 @@ describe("flow model", () => {
     expect(problemsAt(shown, ["body", 1], [["body", 1, "params"]]).map((p) => p.code)).toEqual(["duplicateId"]);
     expect(paramProblems(shown, 1)).toEqual({ input: "badParams", output: "badParams", x: "badParams" });
     expect(problemsAt(shown, ["triggers", 1]).map((p) => p.code)).toEqual(["unknownConnection"]);
+  });
+
+  it("keeps expression params apart from literal ones", () => {
+    const flow = fixtures["../../../../crates/covalence-core/fixtures/flows/expressions.json"]!;
+    const draft = toDraft(flow, schemaOf);
+    const branch = draft.body[1]!;
+    const high = branch.arms[0]!.steps[0]!;
+    expect(high.exprs).toEqual({ input: "local.input" });
+    expect(high.values).toEqual({ output: "1", input: "" });
+    expect(branch.otherwise?.[0]?.forExpr).toBe("vars.pauseMs ?? 100");
+    // A required param given as an expression isn't missing.
+    high.values.output = "";
+    const result = fromDraft(draft, schemaOf);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.errors.get(high.key)).toEqual({ output: "Required" });
+  });
+
+  it("places problems under nested steps", () => {
+    const shown = [{ path: ["body", 1, "arms", 0, "steps", 0, "params", "input"], code: "exprSyntax", message: "bad", warning: false }];
+    expect(paramProblems(shown, ["body", 1, "arms", 0, "steps", 0])).toEqual({ input: "bad" });
+  });
+
+  it("leaves out an empty filter and no conditions", () => {
+    const draft = newFlowDraft();
+    draft.name = "f";
+    draft.triggers = [{ kind: "event", source: { conn: VH[0]! }, event: "routeChanged", filter: " " }];
+    const result = fromDraft(draft, schemaOf);
+    expect(result.ok && result.flow.triggers[0]).toEqual({ kind: "event", source: { conn: VH[0] }, event: "routeChanged" });
+    expect(result.ok && "conditions" in result.flow).toBe(false);
   });
 
   it("checks durations as the server does", () => {

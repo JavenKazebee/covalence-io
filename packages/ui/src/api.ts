@@ -1,6 +1,6 @@
 // The HTTP API, as listed in crates/covalence-server/src/lib.rs.
 
-import type { FireResult, Flow, Problem, RunInfo, Saved } from "./flows/model";
+import type { Evaluated, FireResult, Flow, Problem, RunInfo, Saved } from "./flows/model";
 import type { HostStatus, JournalEntry } from "./live/protocol";
 
 /** A JSON Schema, as plugin manifests write them. Only what the forms read is typed. */
@@ -147,4 +147,6 @@ export const api = {
   runs: (flow: string) => call<RunInfo[]>("GET", `/runs?flow=${encodeURIComponent(flow)}`),
   cancelRun: (run: string) =>
     call<{ run: string; status: RunInfo["status"] }>("POST", `/runs/${encodeURIComponent(run)}/cancel`),
+  evaluate: (source: string, trigger?: unknown) =>
+    call<Evaluated>("POST", "/expressions/evaluate", trigger === undefined ? { source } : { source, trigger }),
 };

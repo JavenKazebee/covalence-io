@@ -89,14 +89,26 @@ export function describe(entry: JournalEntry, ctx: SummaryContext): string {
     // Flow runs (flow spec §8.5).
     case "trigger.matched": {
       const matched = `${flow(d.flow)}: trigger ${Number(d.trigger ?? 0) + 1} matched`;
-      return d.blocked === true ? `${matched}, blocked (${String(d.reason ?? "?")})` : matched;
+      if (d.blocked !== true) return matched;
+      const why = d.reason === "condition" ? `condition ${Number(d.condition ?? 0) + 1} was false` : String(d.reason ?? "?");
+      return `${matched}, blocked (${why})`;
     }
     case "run.started":
       return `${flow(d.flow)}: ${shortRun(d.run)} started (${String(d.mode)})`;
     case "run.step": {
-      const detail = d.detail as { error?: unknown } | undefined;
+      const detail = d.detail as { position?: string[]; arm?: unknown; error?: unknown } | undefined;
       const failed = d.status === "failed" ? `: ${errorText(detail?.error)}` : "";
-      return `${shortRun(d.run)} step ${String(d.step)} ${String(d.status)}${failed}`;
+      // A step in a branch shows where it is: `pick › two`.
+      const where = detail?.position !== undefined && detail.position.length > 1 ? detail.position.join(" › ") : String(d.step);
+      const arm =
+        detail === undefined || !("arm" in detail)
+          ? ""
+          : detail.arm === null
+            ? " (no arm matched)"
+            : detail.arm === "else"
+              ? " (else)"
+              : ` (arm ${Number(detail.arm) + 1})`;
+      return `${shortRun(d.run)} step ${where} ${String(d.status)}${arm}${failed}`;
     }
     case "run.finished":
       return `${shortRun(d.run)} ${String(d.status)}${d.error === undefined ? "" : `: ${errorText(d.error)}`}`;

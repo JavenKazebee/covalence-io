@@ -2,10 +2,12 @@
 import type { Manifest } from "../api";
 import type { Field } from "../forms/schema";
 import ChoiceSelect from "./ChoiceSelect.vue";
+import ExprInput from "./ExprInput.vue";
 
 /**
  * Inputs for a flat JSON Schema object (`forms/schema.ts`). Values stay as
- * input text until `parseValues` turns them into JSON.
+ * input text until `parseValues` turns them into JSON. With `exprs`, each
+ * field can be given as an expression instead (flow spec §8.3).
  */
 const props = defineProps<{
   fields: Field[];
@@ -15,8 +17,13 @@ const props = defineProps<{
   manifest?: Manifest | null;
   /** Keeps input IDs unique when there are several forms. */
   idPrefix: string;
+  /** For expression fields: the steps finished before this one, and all of them. */
+  known?: ReadonlySet<string> | null;
+  all?: ReadonlySet<string>;
 }>();
 const values = defineModel<Record<string, string | boolean>>({ required: true });
+/** Fields given as expressions, by key; absent when the form doesn't offer them. */
+const exprs = defineModel<Record<string, string> | undefined>("exprs", { default: undefined });
 
 function labelField(from: string): string | undefined {
   const entry = props.manifest?.state[from];
@@ -24,6 +31,20 @@ function labelField(from: string): string | undefined {
 }
 
 const inputId = (field: Field) => `${props.idPrefix}-${field.key}`;
+const isExpr = (field: Field) => exprs.value !== undefined && field.key in exprs.value;
+
+/** Switches a field between its input and an expression, carrying the value across. */
+function toggle(field: Field) {
+  const map = exprs.value;
+  if (map === undefined) return;
+  if (field.key in map) {
+    delete map[field.key];
+    return;
+  }
+  const v = values.value[field.key];
+  map[field.key] =
+    v === undefined || v === "" ? "" : field.kind === "text" || field.kind === "enum" ? JSON.stringify(v) : String(v);
+}
 </script>
 
 <template>
@@ -32,15 +53,37 @@ const inputId = (field: Field) => `${props.idPrefix}-${field.key}`;
     :key="field.key"
     class="field"
   >
-    <label :for="inputId(field)">
-      {{ field.label }}<span
-        v-if="field.required"
-        class="required"
-        title="Required"
-      >*</span>
-    </label>
+    <div class="label-row">
+      <label :for="inputId(field)">
+        {{ field.label }}<span
+          v-if="field.required"
+          class="required"
+          title="Required"
+        >*</span>
+      </label>
+      <button
+        v-if="exprs !== undefined"
+        type="button"
+        class="secondary mode"
+        :class="{ on: isExpr(field) }"
+        :aria-pressed="isExpr(field)"
+        :aria-label="`${field.label} as an expression`"
+        :title="isExpr(field) ? 'Use a value' : 'Use an expression'"
+        @click="toggle(field)"
+      >
+        ƒx
+      </button>
+    </div>
+    <ExprInput
+      v-if="isExpr(field)"
+      v-model="exprs![field.key]!"
+      :label="`${field.label} expression`"
+      placeholder="vars.nextSource"
+      :known="known ?? null"
+      :all="all"
+    />
     <input
-      v-if="field.kind === 'boolean'"
+      v-else-if="field.kind === 'boolean'"
       :id="inputId(field)"
       v-model="values[field.key]"
       type="checkbox"
@@ -88,3 +131,23 @@ const inputId = (field: Field) => `${props.idPrefix}-${field.key}`;
     >{{ errors[field.key] }}</small>
   </div>
 </template>
+
+<style scoped>
+.label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+button.mode {
+  padding: 0 0.4rem;
+  font-size: 0.85em;
+  font-style: italic;
+}
+
+button.mode.on {
+  background: var(--accent);
+  color: #fff;
+}
+</style>

@@ -2,32 +2,34 @@
 import { computed, ref, watch } from "vue";
 import { ApiError } from "../api";
 import {
+  allSteps,
   concurrencies,
-  freshStepId,
+  edges,
   fromDraft,
   newFlowDraft,
-  newStepDraft,
-  paramProblems,
   paramsSchemaFrom,
   pathText,
   problemsAt,
   toDraft,
   type Concurrency,
+  type Edge,
   type FlowDraft,
+  type PathSegment,
   type ShownProblem,
-  type StepDraft,
+  type StepContext,
 } from "../flows/model";
 import type { FlowStatus } from "../flows/status";
 import { hrefOf, navigate } from "../nav";
 import { useCatalogStore } from "../stores/catalog";
 import { useFlowsStore } from "../stores/flows";
+import ExprInput from "./ExprInput.vue";
 import FlowRuns from "./FlowRuns.vue";
-import StepEditor from "./StepEditor.vue";
+import StepList from "./StepList.vue";
 
 /**
- * Creates or edits one flow (flow spec §8): name, triggers, concurrency and
- * a flat list of action and wait steps. The server validates on save and
- * its problems show next to the field they name.
+ * Creates or edits one flow (flow spec §8): name, triggers, conditions,
+ * concurrency and its steps, which `branch` steps nest. The server validates
+ * on save and its problems show next to the field they name.
  */
 const props = defineProps<{ id: string; status: FlowStatus | undefined }>();
 
@@ -47,7 +49,8 @@ const localErrors = ref(new Map<number, Record<string, string>>());
 const saving = ref(false);
 const saveError = ref<string | null>(null);
 const savedNote = ref<string | null>(null);
-const currentStep = ref<string | null>(null);
+/** The active run's position, for highlighting its steps. */
+const position = ref<string[]>([]);
 
 // Load once per flow: later refreshes of the list mustn't clobber edits.
 watch(
@@ -68,12 +71,23 @@ watch(
 );
 
 const at = (...prefix: (string | number)[]) => problemsAt(problems.value, prefix);
-const stepProblems = (i: number) => problemsAt(problems.value, ["body", i], [["body", i, "params"]]);
-const stepParamErrors = (step: StepDraft, i: number) => ({ ...paramProblems(problems.value, i), ...localErrors.value.get(step.key) });
-/** Problems no field below shows: anything outside name, slug, triggers and body. */
+/** Problems no field below shows: anything outside name, slug, triggers, conditions and body. */
 const otherProblems = computed(() =>
-  problems.value.filter((p) => !["name", "slug", "triggers", "body", "concurrency"].includes(String(p.path[0]))),
+  problems.value.filter(
+    (p) => !["name", "slug", "triggers", "conditions", "body", "concurrency"].includes(String(p.path[0])),
+  ),
 );
+
+const ctx = computed<StepContext>(() => {
+  const body = draft.value?.body ?? [];
+  return { body, all: new Set(allSteps(body).map((s) => s.id)), position: position.value };
+});
+const noSteps: ReadonlySet<string> = new Set();
+
+/** After steps move or go, the server's paths below `path` no longer line up. */
+function reshaped(path: PathSegment[]) {
+  problems.value = problems.value.filter((p) => !path.every((seg, i) => p.path[i] === seg));
+}
 
 const concurrencyHelp: Record<Concurrency, string> = {
   parallel: "Start another run alongside the active one",
@@ -91,15 +105,28 @@ function eventsOf(connId: string) {
   return conn === undefined ? [] : (catalog.manifest(conn.plugin)?.events ?? []);
 }
 
-function addTrigger(kind: "api" | "event") {
+function addTrigger(kind: "api" | "event" | "state") {
   if (draft.value === null) return;
   if (kind === "api") {
     draft.value.triggers.push({ kind: "api" });
     return;
   }
+  if (kind === "state") {
+    draft.value.triggers.push({ kind: "state", when: "", edge: "rising" });
+    return;
+  }
   const conn = catalog.connections[0]?.id ?? "";
   draft.value.triggers.push({ kind: "event", source: { conn }, event: eventsOf(conn)[0]?.id ?? "" });
 }
+
+const edgeHelp: Record<Edge, string> = {
+  rising: "When it becomes true",
+  falling: "When it becomes false",
+  change: "Whenever its value changes",
+};
+
+/** A sample event trigger for previewing a filter: the payload isn't known until it fires. */
+const sampleEvent = (conn: string, event: string) => ({ source: { conn }, event, payload: {} });
 
 function setEventConn(index: number, conn: string) {
   const trigger = draft.value?.triggers[index];
@@ -107,41 +134,6 @@ function setEventConn(index: number, conn: string) {
   trigger.source = { conn };
   const events = eventsOf(conn);
   if (!events.some((e) => e.id === trigger.event)) trigger.event = events[0]?.id ?? "";
-}
-
-// ---- Steps ----
-
-function addStep(kind: StepDraft["kind"]) {
-  const d = draft.value;
-  if (d === null) return;
-  const ids = d.body.map((s) => s.id);
-  if (kind === "wait") {
-    d.body.push(newStepDraft("wait", freshStepId("wait", ids)));
-    return;
-  }
-  // Start from the last action's target, the usual next step.
-  const last = [...d.body].reverse().find((s) => s.kind === "action");
-  const conn = last?.conn ?? catalog.connections[0]?.id ?? "";
-  const plugin = catalog.connections.find((c) => c.id === conn)?.plugin;
-  const action = last?.action ?? (plugin === undefined ? undefined : catalog.manifest(plugin)?.actions[0]?.id) ?? "";
-  const step = newStepDraft("action", freshStepId(action || "step", ids));
-  step.conn = conn;
-  step.action = action;
-  d.body.push(step);
-}
-
-function moveStep(index: number, by: -1 | 1) {
-  const body = draft.value?.body;
-  if (body === undefined) return;
-  const [step] = body.splice(index, 1);
-  if (step !== undefined) body.splice(index + by, 0, step);
-  // The server's paths name steps by index, so they no longer line up.
-  problems.value = problems.value.filter((p) => p.path[0] !== "body");
-}
-
-function removeStep(index: number) {
-  draft.value?.body.splice(index, 1);
-  problems.value = problems.value.filter((p) => p.path[0] !== "body");
 }
 
 // ---- Saving ----
@@ -283,6 +275,28 @@ async function remove() {
           <template v-if="trigger.kind === 'api'">
             <span><strong>API</strong> <span class="muted">· the Run button and <code>POST /flows/{id}/run</code></span></span>
           </template>
+          <template v-else-if="trigger.kind === 'state'">
+            <strong>State</strong>
+            <ExprInput
+              v-model="trigger.when"
+              :label="`Trigger ${i + 1} expression`"
+              placeholder="vh.outputs[1].source == 3"
+              :problems="at('triggers', i, 'when')"
+              :known="noSteps"
+            />
+            <select
+              v-model="trigger.edge"
+              :aria-label="`Trigger ${i + 1} edge`"
+            >
+              <option
+                v-for="e in edges"
+                :key="e"
+                :value="e"
+              >
+                {{ edgeHelp[e] }}
+              </option>
+            </select>
+          </template>
           <template v-else>
             <strong>Event</strong>
             <select
@@ -322,6 +336,37 @@ async function remove() {
                 {{ e.name === e.id ? e.id : `${e.name} (${e.id})` }}
               </option>
             </select>
+            <button
+              v-if="trigger.filter === undefined"
+              type="button"
+              class="secondary"
+              @click="trigger.filter = ''"
+            >
+              Add filter
+            </button>
+            <div
+              v-else
+              class="row filter"
+            >
+              <span class="muted">only if</span>
+              <ExprInput
+                v-model="trigger.filter"
+                :label="`Trigger ${i + 1} filter`"
+                placeholder="trigger.payload.output == 1"
+                :problems="at('triggers', i, 'filter')"
+                :known="noSteps"
+                :trigger="sampleEvent(trigger.source.conn, trigger.event)"
+              />
+              <button
+                type="button"
+                class="secondary icon"
+                :aria-label="`Remove trigger ${i + 1} filter`"
+                title="Remove filter"
+                @click="delete trigger.filter"
+              >
+                ×
+              </button>
+            </div>
           </template>
           <button
             type="button"
@@ -333,11 +378,11 @@ async function remove() {
             ×
           </button>
           <ul
-            v-if="at('triggers', i).length > 0"
+            v-if="at('triggers', i).some((p) => !['when', 'filter'].includes(String(p.path[2])))"
             class="problems"
           >
             <li
-              v-for="(p, j) in at('triggers', i)"
+              v-for="(p, j) in at('triggers', i).filter((p) => !['when', 'filter'].includes(String(p.path[2])))"
               :key="j"
               :class="p.warning ? 'warn' : 'error'"
             >
@@ -369,6 +414,13 @@ async function remove() {
         >
           Add event trigger
         </button>
+        <button
+          type="button"
+          class="secondary"
+          @click="addTrigger('state')"
+        >
+          Add state trigger
+        </button>
       </div>
       <ul
         v-if="problemsAt(problems, ['triggers']).some((p) => p.path.length === 1)"
@@ -385,48 +437,56 @@ async function remove() {
     </section>
 
     <section class="panel">
+      <h3>Conditions</h3>
+      <p class="muted">
+        When a trigger fires, the flow runs only if all of these are true.
+      </p>
+      <ul class="conditions">
+        <li
+          v-for="(_, i) in draft.conditions"
+          :key="i"
+          class="row"
+        >
+          <ExprInput
+            v-model="draft.conditions[i]!"
+            :label="`Condition ${i + 1}`"
+            placeholder="vars.armed"
+            :problems="at('conditions', i)"
+            :known="noSteps"
+          />
+          <button
+            type="button"
+            class="secondary icon"
+            :aria-label="`Remove condition ${i + 1}`"
+            title="Remove"
+            @click="draft.conditions.splice(i, 1); reshaped(['conditions'])"
+          >
+            ×
+          </button>
+        </li>
+      </ul>
+      <button
+        type="button"
+        class="secondary"
+        @click="draft.conditions.push('')"
+      >
+        Add condition
+      </button>
+    </section>
+
+    <section class="panel">
       <h3>Steps</h3>
       <p class="muted">
         Run in order, top to bottom.
       </p>
-      <ol class="steps">
-        <StepEditor
-          v-for="(step, i) in draft.body"
-          :key="step.key"
-          v-model="draft.body[i]!"
-          :index="i"
-          :count="draft.body.length"
-          :other-ids="draft.body.filter((s) => s !== step).map((s) => s.id)"
-          :problems="stepProblems(i)"
-          :param-errors="stepParamErrors(step, i)"
-          :current="currentStep !== null && currentStep === step.id"
-          @move="(by) => moveStep(i, by)"
-          @remove="removeStep(i)"
-        />
-      </ol>
-      <p
-        v-if="draft.body.length === 0"
-        class="muted"
-      >
-        No steps yet.
-      </p>
-      <div class="row">
-        <button
-          type="button"
-          class="secondary"
-          :disabled="catalog.connections.length === 0"
-          @click="addStep('action')"
-        >
-          Add action
-        </button>
-        <button
-          type="button"
-          class="secondary"
-          @click="addStep('wait')"
-        >
-          Add wait
-        </button>
-      </div>
+      <StepList
+        v-model="draft.body"
+        :path="['body']"
+        :problems="problems"
+        :local-errors="localErrors"
+        :ctx="ctx"
+        @reshape="reshaped"
+      />
       <ul
         v-if="problemsAt(problems, ['body']).some((p) => p.path.length === 1)"
         class="problems"
@@ -487,13 +547,13 @@ async function remove() {
     v-if="stored !== undefined"
     :flow="stored"
     :status="status"
-    @position="(id) => (currentStep = id)"
+    @position="(p) => (position = p)"
   />
 </template>
 
 <style scoped>
 .triggers,
-.steps {
+.conditions {
   list-style: none;
   padding: 0;
   margin: 0 0 0.75rem;
@@ -504,6 +564,17 @@ async function remove() {
 .triggers > li {
   padding: 0.4rem 0;
   border-bottom: 1px solid var(--border);
+}
+
+/* Under the trigger's own row, after its remove button. */
+.triggers .filter {
+  flex-basis: 100%;
+  order: 1;
+  gap: 0.5rem;
+}
+
+.triggers .problems {
+  order: 2;
 }
 
 .triggers .problems {

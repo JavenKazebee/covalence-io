@@ -12,7 +12,7 @@ import { hrefOf } from "../nav";
  * current step stays live (flow spec §9).
  */
 const props = defineProps<{ flow: Flow; status: FlowStatus | undefined }>();
-const emit = defineEmits<{ position: [stepId: string | null] }>();
+const emit = defineEmits<{ position: [position: string[]] }>();
 
 const runs = ref<RunInfo[]>([]);
 const error = ref<string | null>(null);
@@ -51,7 +51,7 @@ watch(
   runs,
   (list) => {
     const running = list.find((r) => r.status === "running");
-    emit("position", running?.position?.[0] ?? null);
+    emit("position", running?.position ?? []);
   },
 );
 

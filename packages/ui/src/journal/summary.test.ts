@@ -68,6 +68,19 @@ group("journal summaries", () => {
     expect(describe(failed, ctx)).toBe("run …RUN042 step wait1 failed: cancelled: run cancelled");
     expect(toneOf(failed)).toBe("bad");
     expect(describe(entry("run.finished", { run: RUN, status: "ok" }), ctx)).toBe("run …RUN042 ok");
+  });
+
+  it("describes conditions, branches and variables", () => {
+    const blocked = entry("trigger.matched", { flow: FLOW, trigger: 0, blocked: true, reason: "condition", condition: 1 });
+    expect(describe(blocked, ctx)).toBe("Route twice: trigger 1 matched, blocked (condition 2 was false)");
+    const nested = { run: RUN, step: "two", status: "done", detail: { position: ["pick", "two"] } };
+    expect(describe(entry("run.step", nested), ctx)).toBe("run …RUN042 step pick › two done");
+    for (const [arm, text] of [[1, " (arm 2)"], ["else", " (else)"], [null, " (no arm matched)"]] as const) {
+      const done = { run: RUN, step: "pick", status: "done", detail: { position: ["pick"], arm } };
+      expect(describe(entry("run.step", done), ctx)).toBe(`run …RUN042 step pick done${text}`);
+    }
+    const set = entry("state.patch", { ops: [{ path: { conn: "vars", path: ["lastPick"] }, value: "high" }] });
+    expect(describe(set, ctx)).toBe('vars.lastPick = "high"');
     expect(toneOf(entry("run.finished", { run: RUN, status: "cancelled" }))).toBe("warn");
   });
 
