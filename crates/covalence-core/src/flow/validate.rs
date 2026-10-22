@@ -244,7 +244,7 @@ fn array(value: Option<&Value>) -> impl Iterator<Item = (usize, &Value)> {
 }
 
 /// `[a-z][A-Za-z0-9_]*`, for step IDs and slugs.
-fn is_identifier(s: &str) -> bool {
+pub fn is_identifier(s: &str) -> bool {
     let mut chars = s.chars();
     matches!(chars.next(), Some(c) if c.is_ascii_lowercase())
         && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
@@ -542,6 +542,12 @@ impl<'a> Validation<'a> {
 /// letter, with a number added if another flow has it.
 /// `"Recall shot (cam 2)"` → `recallShotCam2`.
 pub fn derive_slug(name: &str, taken: &BTreeSet<String>) -> String {
+    derive_slug_for("flow", name, taken)
+}
+
+/// [`derive_slug`] for any entity: `prefix` starts a slug whose name
+/// doesn't start with a letter.
+pub fn derive_slug_for(prefix: &str, name: &str, taken: &BTreeSet<String>) -> String {
     let mut base = String::new();
     for word in name
         .split(|c: char| !c.is_ascii_alphanumeric())
@@ -563,7 +569,7 @@ pub fn derive_slug(name: &str, taken: &BTreeSet<String>) -> String {
         base.extend(chars);
     }
     if !base.starts_with(|c: char| c.is_ascii_lowercase()) {
-        base.insert_str(0, "flow");
+        base.insert_str(0, prefix);
     }
     if !taken.contains(&base) {
         return base;
@@ -593,6 +599,7 @@ mod tests {
         }
         let taken: BTreeSet<String> = ["preService".into(), "preService2".into()].into();
         assert_eq!(derive_slug("Pre service", &taken), "preService3");
+        assert_eq!(derive_slug_for("page", "2nd floor", &none), "page2ndFloor");
     }
 
     #[test]

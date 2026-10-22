@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use axum::http::{Method, StatusCode};
-use covalence_server::{App, Config, router};
+use covalence_server::{App, Config};
 use serde_json::json;
 
 mod common;
@@ -241,11 +241,7 @@ async fn connections_survive_a_server_restart() {
     };
 
     let app = App::start(config.clone()).unwrap();
-    let first = Server {
-        router: router(app.clone()),
-        app,
-        _data: tempfile::tempdir().unwrap(),
-    };
+    let first = Server::with_app(app);
     let body =
         json!({ "plugin": "io.covalence.videohub", "alias": "vh", "config": { "host": "h" } });
     assert_eq!(
@@ -258,11 +254,7 @@ async fn connections_survive_a_server_restart() {
     first.stop().await;
 
     let app = App::start(config).unwrap();
-    let second = Server {
-        router: router(app.clone()),
-        app,
-        _data: tempfile::tempdir().unwrap(),
-    };
+    let second = Server::with_app(app);
     let conns = second.get("/connections").await;
     assert_eq!(conns.as_array().unwrap().len(), 1);
     assert_eq!(conns[0]["alias"], "vh");

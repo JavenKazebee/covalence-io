@@ -98,8 +98,9 @@ The browser's virtual deck is a surface like any other ([ADR 0022](../adr/0022-s
 { "method": "surface.draw",   "params": { "surface": "<slug>", "control": "k3", "format": "png", "image": "<base64>" } }
 ```
 
-- **One surface per socket.** The socket's `{id}` must name an existing surface entity, and `attach` must use its slug, or the core closes the socket with an error.
-- **A second attach for the same surface replaces the first,** whose socket is closed. Two browser tabs can't drive one surface.
+- **One surface per socket.** The socket's `{id}` must name an existing surface entity, or the upgrade is refused with `404`. The first message must be `surface.attach` within 10 s, and it and every `surface.input` must use the surface's slug.
+- **Errors close the socket** with code 1008 (policy) and the reason as the close frame's text: a message that isn't a notification, an attach the core refuses (`cannot attach: …`), another surface's slug, or a method other than `surface.input` and `surface.detach` after the attach.
+- **A second attach for the same surface replaces the first,** whose socket is closed with 1000 and `attached elsewhere`. Two browser tabs can't drive one surface. Deleting the surface closes it with 1000 and `surface deleted`; shutting down, with 1001.
 - **`ts`** is the browser's `performance.now()` in milliseconds.
 - **Images are base64 PNG** at the size the attach declared for each control. The virtual deck declares 144 × 144 so keys stay sharp on high-density screens.
 - **The socket closing is a detach.**
@@ -108,13 +109,20 @@ The browser's virtual deck is a surface like any other ([ADR 0022](../adr/0022-s
 
 ## 5. HTTP API
 
+Surfaces, pages and control bindings have the same routes and answers as flows (flow spec §9): `POST` creates and assigns the ID, `PUT /{id}` replaces, each answers `{surface | page | binding, warnings}` or `422 {errors, warnings}`, and a missing slug is derived from the name.
+
 | Method | Path | |
 |---|---|---|
 | `GET` | `/surfaces`, `/pages`, `/control-bindings?page=<id>` | List |
-| `PUT` | `/surfaces/{id}`, `/pages/{id}`, `/control-bindings/{id}` | Create or replace, validated like flows |
-| `DELETE` | same | Deleting a page deletes its bindings. A flow whose `gesture` trigger names it gets a validation error |
-| `POST` | `/surfaces/{id}/page` `{page: <id> \| null}` | Shows a page. Journaled as a `state.patch` on `surface.<slug>.page`, origin the user. Fails with `layoutMismatch` if the layouts differ |
+| `POST` | `/surfaces`, `/pages`, `/control-bindings` | Create, validated like flows |
+| `GET`, `PUT`, `DELETE` | `/surfaces/{id}`, `/pages/{id}`, `/control-bindings/{id}` | Read, replace, delete. Deleting a surface detaches it and deletes its state. Deleting a page deletes its bindings and clears it as any surface's `startPage`; a flow whose `gesture` trigger names it gets `unknownPage` when it's next saved |
+| `POST` | `/surfaces/{id}/page` `{page: <id> \| null}` | Shows a page and answers `{surface, page}` once the surface has been sent its keys. Journaled as a `state.patch` on `surface.<slug>.page`, origin the user. `422 {error, code: "unknownPage"}`, or `409 {error, code: "layoutMismatch"}` if the layouts differ |
+| `GET` | `/control-bindings/problems` | `[{binding, prop, message}]`: each binding property that failed when last evaluated (bindings §3) |
+| `POST` | `/control-bindings/preview` `{binding, size?}` | The editor's preview (bindings §2.2) |
 | `GET` | `/surface/{id}` | The web surface WebSocket (§4) |
+
+- **Validation.** A surface needs a `name`, a `model` and a slug no other surface has (`badSlug`, `duplicateSlug`); its `startPage` must exist (`unknownPage`). A page needs a `name`, a unique slug, and a layout of 1 to 32 columns and rows that still holds every control bound on it (`unknownControl` at `layout`). Bindings are validated as in bindings §2.1.
+- **Edits answer once drawn.** Saving or deleting a page or binding, and replacing a surface, answer after surfaces showing the change have been sent their keys.
 
 - **(M5)** Flows can't switch pages yet. That needs an action on the core itself, which waits for a design of core-provided actions.
 

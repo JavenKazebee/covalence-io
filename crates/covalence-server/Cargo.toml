@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 axum = { version = "0.8", features = ["ws"] }
+base64 = "0.22.1"
 clap = { version = "4.6.7", features = ["derive"] }
 covalence-core.workspace = true
 covalence-protocol.workspace = true

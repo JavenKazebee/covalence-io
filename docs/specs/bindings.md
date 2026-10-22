@@ -78,6 +78,22 @@ The shapes above, with these rules, which the native evaluator and the compiled 
 - **`rules`:** `==` and `!=` are strict (`===`, `!==`). `>`, `>=`, `<` and `<=` follow JavaScript: strings compare as strings, anything else as numbers. A condition with no `value` compares with `undefined`.
 - **`map`:** only a number maps; anything else is `undefined`. `t = (v − from[0]) / (from[1] − from[0])`, clamped to 0–1 unless `clamp: false`. `log` is `log10(1 + 9t)`; `exp` is `(10^t − 1) / 9`. A range gives `to[0] + (to[1] − to[0]) · t`. A list gives `to[floor(t · length)]`, kept inside the list.
 - **Results:** a label takes text, or a number or boolean written as `String()` writes it. A colour takes `#rrggbb` or `#rgb`. Anything else is a type error: the fallback applies and the error is reported.
+
+### 2.2 The editor's preview (M5)
+
+`POST /control-bindings/preview` takes `{binding, size?}`, a control binding saved or not, and evaluates it once against live state exactly as the binding worker would (§3), with the same 10 ms limit for `expr`. It never writes or journals.
+
+```ts
+{
+  look: { label: string; textColor: string; background: string; stale: boolean };
+  props: { [prop]: { value?: string; error?: string; expr?: string; reads: string[] } };
+  image: string;    // base64 PNG, size × size (default 144), drawn by the key renderer
+}
+```
+
+- `value` is what the property shows: its result, or its fallback. `error` is why the result wasn't used. `expr` is the compiled expression (§2), with connections by alias. `reads` are text paths.
+- The image is byte for byte what a surface showing the binding would be sent, so the editor shows the real key rather than an imitation.
+- A binding that doesn't parse is `422 {errors}`, as on save. Validation (unknown pages, duplicate controls) is left to saving.
 - **Validation** (errors block saving): the page and control exist (`unknownPage`, `unknownControl`), no other binding has the control (`duplicateControl`), connections exist (`unknownConnection`), `expr` compiles (`exprSyntax`), and every literal fits its property (`badValue`): `rules` values and `else`, `map` lists, fallbacks, a `template` only on a label, a `map` range only on a label, and two different `from` numbers.
 - `showStale: false` isn't supported yet.
 

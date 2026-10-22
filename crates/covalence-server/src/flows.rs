@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use covalence_core::expr;
@@ -14,8 +14,8 @@ use covalence_core::journal::Origin;
 use serde::Deserialize;
 use serde_json::{Value as JsonValue, json};
 
-use crate::api::{ApiError, ApiResult};
-use crate::{App, SaveError, SaveResult};
+use crate::App;
+use crate::api::{ApiError, ApiResult, saved};
 
 pub(crate) fn routes() -> Router<Arc<App>> {
     Router::new()
@@ -40,7 +40,11 @@ async fn read(State(app): State<Arc<App>>, Path(id): Path<String>) -> ApiResult<
 }
 
 async fn create(State(app): State<Arc<App>>, Json(body): Json<JsonValue>) -> Response {
-    saved(app.save_flow(&body, None).await, StatusCode::CREATED)
+    saved(
+        app.save_flow(&body, None).await,
+        "flow",
+        StatusCode::CREATED,
+    )
 }
 
 async fn replace(
@@ -48,25 +52,11 @@ async fn replace(
     Path(id): Path<String>,
     Json(body): Json<JsonValue>,
 ) -> Response {
-    saved(app.save_flow(&body, Some(&id)).await, StatusCode::OK)
-}
-
-/// `{flow, warnings}`, or `422 {errors, warnings}`.
-fn saved(result: SaveResult, status: StatusCode) -> Response {
-    match result {
-        Ok((flow, warnings)) => {
-            (status, Json(json!({ "flow": flow, "warnings": warnings }))).into_response()
-        }
-        Err(SaveError::Invalid { errors, warnings }) => (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            Json(json!({ "errors": errors, "warnings": warnings })),
-        )
-            .into_response(),
-        Err(SaveError::NotFound) => {
-            ApiError::new(StatusCode::NOT_FOUND, "no such flow").into_response()
-        }
-        Err(SaveError::Store(e)) => ApiError::internal(e).into_response(),
-    }
+    saved(
+        app.save_flow(&body, Some(&id)).await,
+        "flow",
+        StatusCode::OK,
+    )
 }
 
 async fn remove(State(app): State<Arc<App>>, Path(id): Path<String>) -> ApiResult<StatusCode> {

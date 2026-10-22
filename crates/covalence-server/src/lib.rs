@@ -24,6 +24,23 @@
 //! | `POST /runs/{run}/cancel`    | Cancels a run: `202 {run, status}`                       |
 //! | `POST /expressions/evaluate` | Previews an expression: `{source, trigger?}` → `{value?, error?, reads}` |
 //!
+//! Surfaces, pages and control bindings are in surfaces spec §5 and
+//! bindings spec §4. Each entity type has the flows' five routes, with
+//! `{surface | page | binding, warnings}` in place of `{flow, warnings}`.
+//!
+//! | Method and path                     | Does                                              |
+//! |-------------------------------------|---------------------------------------------------|
+//! | `GET, POST /surfaces`               | Surfaces                                          |
+//! | `GET, PUT, DELETE /surfaces/{id}`   | One surface. Deleting it detaches it              |
+//! | `POST /surfaces/{id}/page`          | Shows a page: `{page: id \| null}`, once it's drawn |
+//! | `GET /surface/{id}`                 | The web surface's WebSocket (see `web_surface`)    |
+//! | `GET, POST /pages`                  | Pages                                             |
+//! | `GET, PUT, DELETE /pages/{id}`      | One page. Deleting it deletes its bindings        |
+//! | `GET, POST /control-bindings?page`  | Control bindings, of one page with `page`         |
+//! | `GET, PUT, DELETE /control-bindings/{id}` | One binding                                 |
+//! | `GET /control-bindings/problems`    | Each failing binding property's last error        |
+//! | `POST /control-bindings/preview`    | `{binding, size?}` → `{look, props, image}`, the key as it would be drawn |
+//!
 //! Any other path is the built web UI, when there is one (see `ui`).
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -33,13 +50,17 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::time::Duration;
 
+use covalence_core::binding::{self, ControlBinding};
 use covalence_core::engine::{ActionOutcome, ActionRequest, Actions};
 use covalence_core::expr::{self, QuickJs};
 use covalence_core::flow::runtime::{STATE_ROOT, VARS_ROOT};
 use covalence_core::flow::{self, Flow, FlowId, Runtime};
 use covalence_core::host::{HostConfig, HostPhase};
-use covalence_core::journal::{DEFAULT_RING_CAPACITY, Journal};
+use covalence_core::journal::{DEFAULT_RING_CAPACITY, Journal, JournalError};
 use covalence_core::state::ConnId;
+use covalence_core::surface::gesture::Timing;
+use covalence_core::surface::render::Renderer;
+use covalence_core::surface::{self, Page, PageId, Surface, SurfaceId, Surfaces};
 use covalence_core::{Core, CoreError, Shared};
 use covalence_protocol::connection::{ConnCreate, ConnMode};
 use covalence_protocol::plugin::{Manifest, Permissions, PluginLoad};
@@ -50,7 +71,9 @@ use serde::{Deserialize, Serialize};
 
 mod api;
 mod flows;
+mod surfaces;
 mod ui;
+mod web_surface;
 mod ws;
 
 pub use api::router;
@@ -138,7 +161,7 @@ pub enum StartError {
     #[error(transparent)]
     Store(#[from] covalence_store::StoreError),
     #[error(transparent)]
-    Journal(#[from] covalence_core::journal::JournalError),
+    Journal(#[from] JournalError),
     #[error("stored {kind} {id} is unreadable: {source}")]
     Entity {
         kind: &'static str,
@@ -187,7 +210,16 @@ pub struct App {
     runtime: Runtime,
     /// Compiles and evaluates expressions, for the runtime and validation.
     evaluator: Arc<QuickJs>,
-    /// Held while a flow is checked and stored, so slugs stay unique.
+    surface_entities: RwLock<BTreeMap<SurfaceId, Surface>>,
+    pages: RwLock<BTreeMap<PageId, Page>>,
+    bindings: RwLock<BTreeMap<String, ControlBinding>>,
+    /// Attaches surfaces and draws the bindings of the pages they show.
+    surfaces: Surfaces,
+    /// Evaluates `expr` bindings for previews, with the binding worker's limit.
+    binding_evaluator: QuickJs,
+    /// Draws previews.
+    renderer: Mutex<Renderer>,
+    /// Held while an entity is checked and stored, so slugs stay unique.
     saving: Mutex<()>,
     /// Set at shutdown, so long-lived WebSocket sessions let go of the app.
     closing: tokio::sync::watch::Sender<bool>,
@@ -223,6 +255,20 @@ impl App {
         // Flows were validated when they were saved; they aren't checked again
         // here (flow spec §8.4).
         let flows = load(&store, flow::ENTITY, |f: &Flow| f.id.clone())?;
+        let surface_entities = load(&store, surface::SURFACE_ENTITY, |s: &Surface| s.id.clone())?;
+        let pages = load(&store, surface::PAGE_ENTITY, |p: &Page| p.id.clone())?;
+        let bindings = load(&store, binding::ENTITY, |b: &ControlBinding| b.id.clone())?;
+        let surfaces = Surfaces::new(core.shared().clone(), Timing::default());
+        surfaces.set_aliases(alias_map(&conns));
+        for page in pages.values() {
+            surfaces.set_page(page.clone())?;
+        }
+        for surface in surface_entities.values() {
+            surfaces.set_surface(surface.clone())?;
+        }
+        for binding in bindings.values() {
+            surfaces.set_binding(binding.clone());
+        }
 
         let evaluator = Arc::new(QuickJs::default());
         let app = Arc::new_cyclic(|app: &Weak<App>| {
@@ -243,6 +289,15 @@ impl App {
                 flows: RwLock::new(flows),
                 runtime,
                 evaluator,
+                surface_entities: RwLock::new(surface_entities),
+                pages: RwLock::new(pages),
+                bindings: RwLock::new(bindings),
+                surfaces,
+                binding_evaluator: QuickJs::new(expr::Limits {
+                    time: binding::worker::EXPR_TIME,
+                    ..expr::Limits::default()
+                }),
+                renderer: Mutex::new(Renderer::default()),
                 saving: Mutex::new(()),
                 closing: tokio::sync::watch::Sender::new(false),
             }
@@ -297,7 +352,9 @@ impl App {
 
     /// Tells the runtime the current aliases, after a connection changes.
     pub(crate) fn sync_aliases(&self) {
-        self.runtime.set_aliases(alias_map(&self.conns()));
+        let aliases = alias_map(&self.conns());
+        self.surfaces.set_aliases(aliases.clone());
+        self.runtime.set_aliases(aliases);
     }
 
     fn conn_by_alias(&self, alias: &str) -> Option<Connection> {
@@ -305,7 +362,8 @@ impl App {
     }
 
     /// Every state root the API shows, by its key in the state tree: each
-    /// connection's ID under its alias, and the core's `flow` and `vars` roots.
+    /// connection's ID under its alias, and the core's `flow`, `vars` and
+    /// `surface` roots.
     pub(crate) fn state_roots(&self) -> BTreeMap<ConnId, String> {
         let mut roots: BTreeMap<ConnId, String> = self
             .conns()
@@ -314,40 +372,16 @@ impl App {
             .collect();
         roots.insert(STATE_ROOT.into(), STATE_ROOT.into());
         roots.insert(VARS_ROOT.into(), VARS_ROOT.into());
+        roots.insert(surface::STATE_ROOT.into(), surface::STATE_ROOT.into());
         roots
     }
 
     /// Parses, checks and stores a flow from the API (flow spec §8.4). `id`
     /// is the flow being replaced, or `None` to create one.
     pub async fn save_flow(&self, json: &serde_json::Value, id: Option<&str>) -> SaveResult {
-        let mut flow = Flow::parse(json).map_err(|errors| SaveError::Invalid {
-            errors,
-            warnings: Vec::new(),
-        })?;
-        match id {
-            None => flow.id = ulid::Ulid::generate().to_string(),
-            Some(id)
-                if !self
-                    .flows
-                    .read()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .contains_key(id) =>
-            {
-                return Err(SaveError::NotFound);
-            }
-            Some(id) if !flow.id.is_empty() && flow.id != id => {
-                return Err(SaveError::Invalid {
-                    errors: vec![flow::Problem {
-                        path: vec![PathSegment::Key("id".into())],
-                        code: flow::Code::Invalid,
-                        message: format!("id {:?} doesn't match the URL's {id:?}", flow.id),
-                        at: None,
-                    }],
-                    warnings: Vec::new(),
-                });
-            }
-            Some(id) => flow.id = id.to_owned(),
-        }
+        let mut flow = Flow::parse(json).map_err(SaveError::invalid)?;
+        let exists = |id: &str| read(&self.flows).contains_key(id);
+        assign_id(&mut flow.id, id, exists)?;
 
         // Manifests first: fetching them waits on the plugin host.
         let conns = self.conns().clone();
@@ -373,9 +407,7 @@ impl App {
         if flow.slug.is_empty() {
             flow.slug = flow::derive_slug(&flow.name, &taken);
         }
-        // Pages can't be saved until M5 Phase 3, so no `gesture` trigger
-        // validates yet.
-        let pages = BTreeMap::new();
+        let pages = self.surfaces.layouts();
         let report = flow::validate(
             &flow,
             &flow::Context {
@@ -391,45 +423,54 @@ impl App {
                 warnings: report.warnings,
             });
         }
-        self.put_flow(flow.clone()).map_err(SaveError::Store)?;
+        self.put_flow(flow.clone())?;
         Ok((flow, report.warnings))
     }
 
     /// Every flow, by ID.
     pub fn flows(&self) -> BTreeMap<FlowId, Flow> {
-        self.flows.read().unwrap_or_else(|e| e.into_inner()).clone()
+        read(&self.flows).clone()
     }
 
     /// Stores a flow, replacing any with the same ID. The caller has
     /// validated it.
     pub fn put_flow(&self, flow: Flow) -> Result<(), covalence_store::StoreError> {
-        let body = serde_json::to_string(&flow).expect("flows encode as JSON");
-        self.store
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .put_entity(flow::ENTITY, &flow.id, &body)?;
+        self.put_entity(flow::ENTITY, &flow.id, &flow)?;
         self.runtime.set_flow(flow.clone());
-        self.flows
-            .write()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(flow.id.clone(), flow);
+        write(&self.flows).insert(flow.id.clone(), flow);
         Ok(())
     }
 
     /// Removes a flow, returning it if there was one.
     pub fn delete_flow(&self, id: &str) -> Result<Option<Flow>, covalence_store::StoreError> {
-        self.store
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .delete_entity(flow::ENTITY, id)?;
+        self.delete_entity(flow::ENTITY, id)?;
         if let Err(e) = self.runtime.remove_flow(id) {
             tracing::error!(flow = %id, "cannot journal the end of a deleted flow's runs: {e}");
         }
-        Ok(self
-            .flows
-            .write()
+        Ok(write(&self.flows).remove(id))
+    }
+
+    /// Stores an entity as JSON, replacing any with the same ID.
+    fn put_entity<T: Serialize>(
+        &self,
+        kind: &str,
+        id: &str,
+        entity: &T,
+    ) -> Result<(), covalence_store::StoreError> {
+        let body = serde_json::to_string(entity).expect("entities encode as JSON");
+        self.store
+            .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .remove(id))
+            .put_entity(kind, id, &body)?;
+        Ok(())
+    }
+
+    fn delete_entity(&self, kind: &str, id: &str) -> Result<(), covalence_store::StoreError> {
+        self.store
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .delete_entity(kind, id)?;
+        Ok(())
     }
 
     /// Waits until the plugin host is up, so manifests are available.
@@ -461,19 +502,62 @@ impl App {
     }
 }
 
-pub type SaveResult = Result<(Flow, Vec<flow::Problem>), SaveError>;
+/// A saved entity and its warnings.
+pub type SaveResult<T = Flow> = Result<(T, Vec<flow::Problem>), SaveError>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SaveError {
-    #[error("the flow has problems")]
+    #[error("it has problems")]
     Invalid {
         errors: Vec<flow::Problem>,
         warnings: Vec<flow::Problem>,
     },
-    #[error("no such flow")]
+    #[error("it doesn't exist")]
     NotFound,
     #[error(transparent)]
-    Store(covalence_store::StoreError),
+    Store(#[from] covalence_store::StoreError),
+    #[error(transparent)]
+    Journal(#[from] JournalError),
+}
+
+impl SaveError {
+    fn invalid(errors: Vec<flow::Problem>) -> Self {
+        SaveError::Invalid {
+            errors,
+            warnings: Vec::new(),
+        }
+    }
+}
+
+/// Gives an entity from the API its ID: a new one, or `id`'s from the URL,
+/// which must exist and which the body may repeat but not contradict.
+fn assign_id(
+    entity_id: &mut String,
+    id: Option<&str>,
+    exists: impl Fn(&str) -> bool,
+) -> Result<(), SaveError> {
+    match id {
+        None => *entity_id = ulid::Ulid::generate().to_string(),
+        Some(id) if !exists(id) => return Err(SaveError::NotFound),
+        Some(id) if !entity_id.is_empty() && entity_id != id => {
+            return Err(SaveError::invalid(vec![flow::Problem {
+                path: vec![PathSegment::Key("id".into())],
+                code: flow::Code::Invalid,
+                message: format!("id {entity_id:?} doesn't match the URL's {id:?}"),
+                at: None,
+            }]));
+        }
+        Some(id) => *entity_id = id.to_owned(),
+    }
+    Ok(())
+}
+
+fn read<T>(lock: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+    lock.read().unwrap_or_else(|e| e.into_inner())
+}
+
+fn write<T>(lock: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
+    lock.write().unwrap_or_else(|e| e.into_inner())
 }
 
 /// Lets the flow runtime, which lives inside the app, request actions from

@@ -19,7 +19,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
 
 use crate::{
-    App, CONNECTION, Connection, apply_defaults, is_valid_alias, json_to_value, resolve_permissions,
+    App, CONNECTION, Connection, SaveError, SaveResult, apply_defaults, is_valid_alias,
+    json_to_value, resolve_permissions,
 };
 
 /// How long `POST /connections` waits for the plugin host to come up.
@@ -38,6 +39,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/journal/{seq}/why", get(why))
         .route("/ws", get(crate::ws::upgrade))
         .merge(crate::flows::routes())
+        .merge(crate::surfaces::routes())
         .with_state(app)
 }
 
@@ -60,6 +62,29 @@ impl IntoResponse for ApiError {
 }
 
 pub(crate) type ApiResult<T> = Result<T, ApiError>;
+
+/// `{<kind>: entity, warnings}`, or `422 {errors, warnings}`.
+pub(crate) fn saved<T: Serialize>(
+    result: SaveResult<T>,
+    kind: &str,
+    status: StatusCode,
+) -> Response {
+    match result {
+        Ok((entity, warnings)) => {
+            (status, Json(json!({ kind: entity, "warnings": warnings }))).into_response()
+        }
+        Err(SaveError::Invalid { errors, warnings }) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "errors": errors, "warnings": warnings })),
+        )
+            .into_response(),
+        Err(SaveError::NotFound) => {
+            ApiError::new(StatusCode::NOT_FOUND, format!("no such {kind}")).into_response()
+        }
+        Err(SaveError::Store(e)) => ApiError::internal(e).into_response(),
+        Err(SaveError::Journal(e)) => ApiError::internal(e).into_response(),
+    }
+}
 
 async fn health(State(app): State<Arc<App>>) -> Json<JsonValue> {
     let status = app.core.host().status().borrow().clone();

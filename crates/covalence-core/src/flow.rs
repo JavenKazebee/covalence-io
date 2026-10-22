@@ -20,7 +20,8 @@ mod validate;
 
 pub use runtime::Runtime;
 pub use validate::{
-    Code, Context, Problem, Report, SetTarget, derive_slug, parse_set_path, validate,
+    Code, Context, Problem, Report, SetTarget, derive_slug, derive_slug_for, is_identifier,
+    parse_set_path, validate,
 };
 
 /// Entity type for flows in the store.

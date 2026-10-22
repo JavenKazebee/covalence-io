@@ -59,10 +59,12 @@ Covalence gets its first control surface. A virtual Stream Deck in the UI ([ADR 
 - The worker draws on its own thread now, so drawing is asynchronous: `Surfaces::flush` waits for it, for tests and, from Phase 3, for the API.
 
 ### Phase 3: HTTP API and the surface transport
-- [ ] Endpoints for surfaces, pages and control bindings, through the same save and validation path as flows.
-- [ ] The web surface transport chosen in Phase 0.
-- [ ] `POST /expressions/evaluate` previews bindings too, or a binding-specific preview that returns the resolved look and rendered image.
-- [ ] End-to-end tests in `crates/covalence-server/tests/` with a simulated surface and two simulated Videohubs: a press routes, a binding redraws, `why` reaches `input.raw`.
+- [x] Endpoints for surfaces, pages and control bindings ([surfaces spec §5](../specs/surfaces.md)), through the same save path as flows: `POST` creates, `PUT` replaces, `{entity, warnings}` or `422 {errors, warnings}`, slugs from names. `surface::validate_surface` and `validate_page` in the core; a page can't shrink past a bound control. Deleting a page deletes its bindings and clears it as a start page. `POST /surfaces/{id}/page` answers once the keys are sent. Flows now validate `gesture` triggers against saved pages. `surface.*` state is in `GET /state` and `/ws`.
+- [x] The web surface, `GET /surface/{id}` (`web_surface`): attach first, then input in and draws out as JSON with base64 PNG. Errors close the socket with 1008 and a reason; a newer attach or deleting the surface closes it with 1000 (surfaces spec §4).
+- [x] A binding-specific preview, `POST /control-bindings/preview` (bindings spec §2.2): each property's value, error, compiled expression and reads, the resolved look, and the key image, evaluated by the worker's own code (`binding::worker::preview`) and drawn by the same renderer, so it matches what a surface is sent byte for byte. `GET /control-bindings/problems` lists failing binding properties for the editor.
+- [x] `crates/covalence-server/tests/surfaces_api.rs`: validation and storage, a restart, previews, the attach rules, and end to end with a WebSocket deck and two simulated Videohubs: every key drawn on attach as previewed, a press on `k1` routes `vh`, `k0` redraws to the new source and `why` reaches `input.raw`, a change on `vh2` redraws only `k2`, an edited binding redraws, a page switch blanks the bound keys, and closing the socket detaches.
+- The spec's `PUT` that creates was dropped for the flows' `POST` and `PUT`, so the UI has one way to save every entity.
+- The preview uses its own QuickJS with the binding worker's 10 ms limit, so an `expr` that's too slow for a key fails in the preview too.
 
 ### Phase 4: UI
 - [ ] The Surfaces tab, with the virtual Stream Deck: shows the core's images and sends key down and up with timestamps.

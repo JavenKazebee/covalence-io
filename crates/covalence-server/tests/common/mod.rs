@@ -19,6 +19,8 @@ pub struct Server {
     pub app: Arc<App>,
     pub router: Router,
     pub _data: tempfile::TempDir,
+    /// Listeners started by `listen`, stopped by `stop`.
+    serving: std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>,
 }
 
 impl Server {
@@ -35,7 +37,29 @@ impl Server {
             router: router(app.clone()),
             app,
             _data: data,
+            serving: Default::default(),
         }
+    }
+
+    /// A server around an app started elsewhere, which owns its data.
+    pub fn with_app(app: Arc<App>) -> Self {
+        Server {
+            router: router(app.clone()),
+            app,
+            _data: tempfile::tempdir().unwrap(),
+            serving: Default::default(),
+        }
+    }
+
+    /// Serves the router on a local port, for WebSocket clients. Returns
+    /// `host:port`.
+    pub async fn listen(&self) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let routes = self.router.clone();
+        let task = tokio::spawn(async move { axum::serve(listener, routes).await.unwrap() });
+        self.serving.lock().unwrap().push(task);
+        addr
     }
 
     pub async fn call(
@@ -94,6 +118,11 @@ impl Server {
     }
 
     pub async fn stop(self) {
+        let serving = std::mem::take(&mut *self.serving.lock().unwrap());
+        for task in serving {
+            task.abort();
+            let _ = task.await;
+        }
         drop(self.router);
         self.app.shutdown().await;
     }

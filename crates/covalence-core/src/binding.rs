@@ -602,7 +602,7 @@ impl ControlBinding {
 }
 
 /// Reads `json`, or one `invalid` problem at its place under `base`.
-fn deserialize<T: serde::de::DeserializeOwned>(
+pub(crate) fn deserialize<T: serde::de::DeserializeOwned>(
     json: &Json,
     base: &[PathSegment],
 ) -> Result<T, Problem> {

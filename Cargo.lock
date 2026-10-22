@@ -349,6 +349,7 @@ name = "covalence-server"
 version = "0.0.0"
 dependencies = [
  "axum",
+ "base64",
  "clap",
  "covalence-core",
  "covalence-protocol",

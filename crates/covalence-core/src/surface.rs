@@ -16,7 +16,7 @@
 //! match `gesture` triggers on those entries. The surface's state,
 //! `surface.<slug>.*`, is written through the journal as `state.patch`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -38,6 +38,7 @@ pub mod render;
 
 use crate::binding::ControlBinding;
 use crate::binding::worker::{Bindings, Problems};
+use crate::flow::{Code, Problem, Report, is_identifier};
 use gesture::{Detected, Recogniser, Timing};
 
 /// Entity types in the store.
@@ -487,6 +488,118 @@ fn check_attach(attach: &Attach) -> Result<(), AttachError> {
         }
     }
     Ok(())
+}
+
+impl Surface {
+    /// Reads a surface from JSON, or one `invalid` problem.
+    pub fn parse(json: &serde_json::Value) -> Result<Surface, Vec<Problem>> {
+        crate::binding::deserialize(json, &[]).map_err(|p| vec![p])
+    }
+}
+
+impl Page {
+    /// Reads a page from JSON, or one `invalid` problem.
+    pub fn parse(json: &serde_json::Value) -> Result<Page, Vec<Problem>> {
+        crate::binding::deserialize(json, &[]).map_err(|p| vec![p])
+    }
+}
+
+/// Checks a surface: a name, a slug no other surface has, a model, and a
+/// start page that exists.
+pub fn validate_surface(
+    surface: &Surface,
+    taken_slugs: &BTreeSet<String>,
+    pages: &BTreeMap<PageId, Layout>,
+) -> Report {
+    let mut errors = named("surface", &surface.name, &surface.slug, taken_slugs);
+    if surface.model.trim().is_empty() {
+        errors.push(Problem::new(
+            vec![key("model")],
+            Code::Invalid,
+            "model is required",
+        ));
+    }
+    if let Some(page) = &surface.start_page
+        && !pages.contains_key(page)
+    {
+        errors.push(Problem::new(
+            vec![key("startPage")],
+            Code::UnknownPage,
+            format!("no page {page:?}"),
+        ));
+    }
+    Report {
+        errors,
+        warnings: Vec::new(),
+    }
+}
+
+/// Checks a page: a name, a slug no other page has, and a layout that
+/// still holds every control bound on it.
+pub fn validate_page(
+    page: &Page,
+    taken_slugs: &BTreeSet<String>,
+    bound: &BTreeSet<String>,
+) -> Report {
+    let mut errors = named("page", &page.name, &page.slug, taken_slugs);
+    let Layout { cols, rows } = page.layout;
+    if cols == 0 || rows == 0 || cols > 32 || rows > 32 {
+        errors.push(Problem::new(
+            vec![key("layout")],
+            Code::Invalid,
+            format!("a {cols}×{rows} layout isn't supported: use 1 to 32 columns and rows"),
+        ));
+    } else {
+        let outside: Vec<&str> = bound
+            .iter()
+            .filter(|c| !page.layout.contains(c))
+            .map(String::as_str)
+            .collect();
+        if !outside.is_empty() {
+            let verb = if outside.len() == 1 { "is" } else { "are" };
+            errors.push(Problem::new(
+                vec![key("layout")],
+                Code::UnknownControl,
+                format!(
+                    "{} {verb} bound, but a {cols}×{rows} layout ends at k{}",
+                    outside.join(", "),
+                    cols * rows - 1
+                ),
+            ));
+        }
+    }
+    Report {
+        errors,
+        warnings: Vec::new(),
+    }
+}
+
+/// The name and slug problems of a surface or page.
+fn named(kind: &str, name: &str, slug: &str, taken: &BTreeSet<String>) -> Vec<Problem> {
+    let mut errors = Vec::new();
+    if name.trim().is_empty() {
+        errors.push(Problem::new(
+            vec![key("name")],
+            Code::Invalid,
+            "name is required",
+        ));
+    }
+    if !is_identifier(slug) {
+        errors.push(Problem::new(
+            vec![key("slug")],
+            Code::BadSlug,
+            format!(
+                "slug {slug:?} must start with a lowercase letter and use only letters, digits and _"
+            ),
+        ));
+    } else if taken.contains(slug) {
+        errors.push(Problem::new(
+            vec![key("slug")],
+            Code::DuplicateSlug,
+            format!("another {kind} already has slug {slug:?}"),
+        ));
+    }
+    errors
 }
 
 fn key(k: &str) -> PathSegment {

@@ -168,9 +168,93 @@ struct Resolved {
     look: Look,
 }
 
-struct Evaluated {
-    value: Option<PropValue>,
-    reads: BTreeSet<StatePath>,
+/// One property, evaluated.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Evaluated {
+    /// Its value, or its fallback, or nothing: the control's default.
+    pub value: Option<PropValue>,
+    /// Why its own result wasn't used, if it failed.
+    pub error: Option<String>,
+    pub reads: BTreeSet<StatePath>,
+}
+
+/// Evaluates one property as the worker does: the binding's result if it
+/// fits the property, else its fallback, else nothing.
+pub fn evaluate(
+    prop: Prop,
+    b: &Binding,
+    state: &Arc<LiveState>,
+    aliases: &BTreeMap<String, ConnId>,
+    evaluator: &dyn Evaluator,
+) -> Evaluated {
+    let (value, reads) = match b.evaluate(state) {
+        Some(outcome) => (outcome.value, outcome.reads),
+        None => {
+            let Binding::Expr { source, .. } = b else {
+                unreachable!("only expr bindings need the evaluator")
+            };
+            let scope = Scope::new(state, aliases);
+            let evaluation = evaluator.evaluate(source, &scope);
+            let value = evaluation
+                .value
+                .map(|v| v.as_ref().map(to_json))
+                .map_err(|e| e.to_string());
+            (value, evaluation.reads.paths)
+        }
+    };
+    let (value, error) = match value {
+        Ok(Some(v)) => match prop_value(prop, &v) {
+            Ok(pv) => (Some(pv), None),
+            Err(e) => (None, Some(e)),
+        },
+        Ok(None) => (None, None),
+        Err(e) => (None, Some(e)),
+    };
+    let value = value.or_else(|| b.fallback().and_then(|f: Json| prop_value(prop, &f).ok()));
+    Evaluated {
+        value,
+        error,
+        reads,
+    }
+}
+
+/// A control's look from its properties. Stale if any value it read is.
+pub fn look(props: &BTreeMap<Prop, Evaluated>, state: &LiveState) -> Look {
+    let mut look = Look::default();
+    for (prop, evaluated) in props {
+        if let Some(value) = &evaluated.value {
+            value.clone().apply(*prop, &mut look);
+        }
+    }
+    look.stale = state.read(|tree| {
+        props.values().flat_map(|e| &e.reads).any(|path| {
+            tree.leaves_under(path)
+                .any(|(_, leaf)| leaf.meta.quality == Quality::Stale)
+        })
+    });
+    look
+}
+
+/// A binding evaluated once against live state, for the editor's preview.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Preview {
+    pub props: BTreeMap<Prop, Evaluated>,
+    pub look: Look,
+}
+
+pub fn preview(
+    binding: &ControlBinding,
+    state: &Arc<LiveState>,
+    aliases: &BTreeMap<String, ConnId>,
+    evaluator: &dyn Evaluator,
+) -> Preview {
+    let props: BTreeMap<Prop, Evaluated> = binding
+        .props
+        .iter()
+        .map(|(prop, b)| (*prop, evaluate(*prop, b, state, aliases, evaluator)))
+        .collect();
+    let look = look(&props, state);
+    Preview { props, look }
 }
 
 impl Worker {
@@ -377,35 +461,11 @@ impl Worker {
         changed
     }
 
-    /// One property: its value, or its fallback, or nothing (the control's
-    /// default). Errors are kept for the editor and logged when they change.
+    /// One property. Errors are kept for the editor and logged when they change.
     fn evaluate(&mut self, id: &str, prop: Prop, b: &Binding) -> Evaluated {
-        let (value, reads) = match b.evaluate(&self.state) {
-            Some(outcome) => (outcome.value, outcome.reads),
-            None => {
-                let Binding::Expr { source, .. } = b else {
-                    unreachable!("only expr bindings need the evaluator")
-                };
-                let scope = Scope::new(&self.state, &self.aliases);
-                let evaluation = self.evaluator.evaluate(source, &scope);
-                let value = evaluation
-                    .value
-                    .map(|v| v.as_ref().map(to_json))
-                    .map_err(|e| e.to_string());
-                (value, evaluation.reads.paths)
-            }
-        };
-        let (value, error) = match value {
-            Ok(Some(v)) => match prop_value(prop, &v) {
-                Ok(pv) => (Some(pv), None),
-                Err(e) => (None, Some(e)),
-            },
-            Ok(None) => (None, None),
-            Err(e) => (None, Some(e)),
-        };
-        let value = value.or_else(|| b.fallback().and_then(|f: Json| prop_value(prop, &f).ok()));
-        self.note(id, prop, error);
-        Evaluated { value, reads }
+        let evaluated = evaluate(prop, b, &self.state, &self.aliases, &self.evaluator);
+        self.note(id, prop, evaluated.error.clone());
+        evaluated
     }
 
     fn note(&self, id: &str, prop: Prop, error: Option<String>) {
@@ -424,21 +484,8 @@ impl Worker {
         }
     }
 
-    /// The control's look from its properties. Stale if any value it read is.
     fn look(&self, resolved: &Resolved) -> Look {
-        let mut look = Look::default();
-        for (prop, evaluated) in &resolved.props {
-            if let Some(value) = &evaluated.value {
-                value.clone().apply(*prop, &mut look);
-            }
-        }
-        look.stale = self.state.read(|tree| {
-            resolved.props.values().flat_map(|e| &e.reads).any(|path| {
-                tree.leaves_under(path)
-                    .any(|(_, leaf)| leaf.meta.quality == Quality::Stale)
-            })
-        });
-        look
+        look(&resolved.props, &self.state)
     }
 
     fn draw_all(&mut self) {
