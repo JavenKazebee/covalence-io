@@ -130,7 +130,7 @@ mod tests {
                 "pp.t[\"a.b\"][\"q\\\"]\"][-2]",
                 vec![key("t"), key("a.b"), key("q\"]"), Index(-2)],
             ),
-            ("var._x9", vec![key("_x9")]),
+            ("vars._x9", vec![key("_x9")]),
             // A numeric string key stays a string key.
             ("vh.m[\"7\"]", vec![key("m"), key("7")]),
         ];

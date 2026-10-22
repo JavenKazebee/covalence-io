@@ -26,7 +26,7 @@
 
 - **An action step's target is either fixed or an expression.** A dynamic target declares a **constraint**: a plugin ID or an interface. The editor uses the constraint to type-check the step's parameters, and the runtime checks the resolved target against it.
 - **Targets can be stored in state.** The state schema gains `kind: "target"`, with an optional `interface` constraint, so a variable or page parameter can hold "the selected camera". The stored value is the ID form, so renaming an alias never breaks it ([state spec §1.1](../specs/state-and-event-log.md)).
-- **In expressions, `target(t)` returns a read-only view** of the target's state, already narrowed to `key` and, when the target came through an interface, mapped to the interface's names: `target(var.selectedCam).tally.program`. It also exposes `.alias`, `.name` and `.connected`.
+- **In expressions, `target(t)` returns a read-only view** of the target's state, already narrowed to `key` and, when the target came through an interface, mapped to the interface's names: `target(vars.selectedCam).tally.program`. It also exposes `.alias`, `.name` and `.connected`.
 - **If a dynamic target resolves to nothing, or to something that doesn't satisfy the constraint, the step fails** with `no_target` and follows its normal error policy. Nothing is dispatched.
 - **The journal records the resolved target.** `action.requested` already carries `conn`. It gains `key?` and `via?` (the interface used), so "why did this fire?" shows which camera was actually used.
 
@@ -54,7 +54,7 @@
 - **Plugins can extend an interface** with their own actions, but those are only reachable with a plugin-constrained target, not an interface one.
 
 ### Dependency tracking (amends ADR 0004; accepted in ADR 0021)
-- **Bindings and state triggers track their dependencies at run time.** Every evaluation records the state paths it actually reads, through the state proxy and through `target()`. The core subscribes to that read set and re-evaluates when any path in it changes. After each evaluation the read set is replaced, so a binding that follows `var.selectedCam` moves to the new camera's paths as soon as the variable changes.
+- **Bindings and state triggers track their dependencies at run time.** Every evaluation records the state paths it actually reads, through the state proxy and through `target()`. The core subscribes to that read set and re-evaluates when any path in it changes. After each evaluation the read set is replaced, so a binding that follows `vars.selectedCam` moves to the new camera's paths as soon as the variable changes.
 - **Re-evaluation happens once per scheduler turn,** after patches are coalesced ([state spec](../specs/state-and-event-log.md)). An expression never sees a half-applied turn.
 - **`oxc` static extraction stays, but for the editor only:** validation, autocomplete, "where is this used?", and warnings for paths that don't exist. It's no longer the source of truth for reactivity.
 

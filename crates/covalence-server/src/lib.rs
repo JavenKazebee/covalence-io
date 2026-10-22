@@ -58,7 +58,7 @@ pub use ui::{DEFAULT_UI_DIR, with_ui};
 const CONNECTION: &str = "connection";
 
 /// Roots that aliases may not take (state spec §1.1).
-const RESERVED_ROOTS: &[&str] = &["var", "sys", "surface", "page", "flow"];
+const RESERVED_ROOTS: &[&str] = &["vars", "sys", "surface", "page", "flow"];
 
 /// A plugin the server makes available: `io.covalence.videohub@0.1.0=plugins/videohub/mod.ts`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -620,7 +620,7 @@ mod tests {
         for ok in ["vh", "_x", "pp2"] {
             assert!(is_valid_alias(ok), "{ok}");
         }
-        for bad in ["", "2vh", "v h", "v.h", "var", "sys"] {
+        for bad in ["", "2vh", "v h", "v.h", "vars", "sys"] {
             assert!(!is_valid_alias(bad), "{bad}");
         }
     }

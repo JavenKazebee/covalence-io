@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 pub mod clock;
 pub mod engine;
+pub mod expr;
 pub mod flow;
 pub mod gate;
 pub mod host;

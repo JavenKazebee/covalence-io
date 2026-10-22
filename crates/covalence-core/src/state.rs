@@ -89,6 +89,15 @@ pub struct Leaf {
 /// Leaf paths changed by one mutation.
 pub type Dirty = BTreeSet<StatePath>;
 
+/// What [`StateTree::probe`] found at a path.
+#[derive(Debug)]
+pub enum Probe<'a> {
+    Leaf(&'a Leaf),
+    /// Leaves below it, none at it.
+    Branch,
+    Missing,
+}
+
 #[derive(Debug, Default)]
 pub struct StateTree {
     // Ordered so that a path's descendants are contiguous right after it.
@@ -112,6 +121,30 @@ impl StateTree {
         self.leaves
             .range(path..)
             .take_while(move |(k, _)| k.is_within(path))
+    }
+
+    /// What is at `path`, without rebuilding anything.
+    pub fn probe(&self, path: &StatePath) -> Probe<'_> {
+        if let Some(leaf) = self.leaves.get(path) {
+            return Probe::Leaf(leaf);
+        }
+        match self.leaves_under(path).next() {
+            Some(_) => Probe::Branch,
+            None => Probe::Missing,
+        }
+    }
+
+    /// The segments directly below `path`, in path order.
+    pub fn children(&self, path: &StatePath) -> Vec<PathSegment> {
+        let mut out: Vec<PathSegment> = Vec::new();
+        for (k, _) in self.leaves_under(path) {
+            if let Some(seg) = k.path.get(path.path.len())
+                && out.last() != Some(seg)
+            {
+                out.push(seg.clone());
+            }
+        }
+        out
     }
 
     /// The value at `path`: a leaf, or a map rebuilt from the leaves below it.

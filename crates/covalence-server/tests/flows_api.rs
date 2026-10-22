@@ -318,7 +318,7 @@ async fn flow_requests_are_checked() {
                 "name": "Bad", "enabled": true,
                 "triggers": [{ "kind": "event", "source": { "conn": vh }, "event": "routeChanged" }],
                 "concurrency": "parallel",
-                "conditions": ["var.armed"],
+                "conditions": ["vars.armed"],
             }),
         )
         .await;

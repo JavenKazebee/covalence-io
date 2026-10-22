@@ -8,7 +8,7 @@
 
 ## Context
 - [ADR 0004](0004-javascript-expressions-and-scripts.md) has three levels: expressions (JS expression syntax only), script steps (full JS/TS) and plugins. The core parses everything with `oxc`, to reject non-expression syntax and to extract the state paths an expression reads.
-- The syntax restriction protected two things: **no side effects**, and **static dependency extraction**. [ADR 0019](0019-dynamic-action-targets-and-interfaces.md) already showed that static extraction can't follow dynamic reads (`vh.outputs[var.n].source`) and proposed tracking reads at run time instead.
+- The syntax restriction protected two things: **no side effects**, and **static dependency extraction**. [ADR 0019](0019-dynamic-action-targets-and-interfaces.md) already showed that static extraction can't follow dynamic reads (`vh.outputs[vars.n].source`) and proposed tracking reads at run time instead.
 - Syntax is a poor proxy for side effects. A lookup table with `const`, a `for` loop over an array or a small helper function changes nothing outside itself, but the rule forbids them. Meanwhile, what could actually change the world is whatever the host hands in, and that's ours to control.
 - M4 is the first milestone with QuickJS in the core. JavaScript stays the language: Rhai, Rune, Lua/Luau, CEL and Starlark were compared again, and none outweighs one language shared with TS plugins and a browser editor with generated types.
 
@@ -26,7 +26,8 @@
 
 **Expressions are pure by sandbox, not by syntax.**
 - **Any syntax.** The core compiles the source as an expression first, then as a function body. `vh.outputs[1].source == 3` and a multi-line body ending in `return` are both expressions.
-- **Read-only scope.** Every name in scope is a read-only proxy. A write such as `var.x = 1` throws "state is read-only here; use a `set` step".
+- **User variables are the `vars` root,** renamed from `var`, which is a JavaScript keyword: `var.x` can never parse. The state tree, `set` paths and the specs use `vars` too, so there is one name.
+- **Read-only scope.** Every name in scope is a read-only proxy. A write such as `vars.x = 1` throws "state is read-only here; use a `set` step".
 - **No host API.** Nothing that acts, waits or emits is in scope.
 - **No memory between evaluations.** Each evaluation gets a fresh context, or one whose global object is frozen, so nothing carries over. Phase 1 of M4 measures which is cheaper.
 - **No nondeterminism.** `Date.now()`, `new Date()` without arguments and `Math.random()` throw. This keeps replay and standby shadowing exact. It also keeps reactivity honest: `sys.time.now` is state, so an expression that reads it re-evaluates as time passes, and one that read the system clock would not.

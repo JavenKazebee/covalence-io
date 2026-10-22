@@ -4,7 +4,7 @@
     "enabled": true,
     "triggers": [{ "kind": "api" }],
     "concurrency": "parallel",
-    "body": [{ "id": "wait1", "kind": "wait", "for": "var.delay" }]
+    "body": [{ "id": "wait1", "kind": "wait", "for": "vars.delay" }]
   },
   "errors": [{ "path": ["body", 0], "code": "invalid" }],
   "warnings": []

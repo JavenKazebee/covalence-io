@@ -20,7 +20,7 @@ All live values in the system share one namespace.
 | Root | Owner | Example |
 |---|---|---|
 | `<alias>` | A connection, named by its user-chosen alias | `pp.timers.countdown.remaining` |
-| `var` | User variables | `var.serviceStarted` |
+| `vars` | User variables | `vars.serviceStarted` |
 | `sys` | The core | `sys.time.now`, `sys.node.role`, `sys.timecode.frames` |
 | `surface` | Surfaces and controls | `surface.fohDeck.page`, `surface.fohDeck.connected` |
 | `page` | Per-page state | `page.cameraA.selected` |
@@ -28,6 +28,7 @@ All live values in the system share one namespace.
 
 - **Segments** match `[A-Za-z_][A-Za-z0-9_]*`. Collection keys that aren't valid identifiers use bracket syntax: `vh.outputs["SDI 4"].source`.
 - **Aliases** are unique per project, must not collide with the reserved roots, and are renameable.
+- **User variables are `vars`, not `var`,** because `var` is a JavaScript keyword and couldn't be read in an expression ([ADR 0021](../adr/0021-expressions-as-sandboxed-snippets.md)).
 - **On the wire and in storage, paths are segment arrays** (`["outputs", "SDI 4", "source"]`), per [ADR 0017](../adr/0017-wire-paths-as-segment-arrays.md). The dotted text form is for expressions, the UI and logs.
 - **The stored form uses IDs, not aliases.** The project stores references as `{conn: <connectionId>, path: [...]}`, and the alias is shown only when rendering text. Renaming an alias therefore never breaks a reference.
 

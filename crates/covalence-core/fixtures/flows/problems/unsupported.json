@@ -2,7 +2,7 @@
   "flow": {
     "name": "Later",
     "enabled": true,
-    "conditions": ["var.armed"],
+    "conditions": ["vars.armed"],
     "triggers": [
       { "kind": "state", "when": "vh.outputs[1].source == 3", "edge": "rising" },
       {
@@ -18,7 +18,7 @@
       {
         "id": "route1",
         "kind": "action",
-        "target": { "expr": "var.router", "constraint": { "plugin": "io.covalence.videohub" } },
+        "target": { "expr": "vars.router", "constraint": { "plugin": "io.covalence.videohub" } },
         "action": "route",
         "params": { "output": 1, "input": { "expr": "local.input" } },
         "retry": { "attempts": 2 }

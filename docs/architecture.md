@@ -59,7 +59,7 @@ These are the user-facing terms. Product and component names use the chemistry t
 | **Interface** | A versioned contract for one kind of device (`camera.ptz@1`) that plugins implement, so one action or binding works across brands. |
 | **Event** | Something that happened at a moment in time (`pp.timerEnded`). |
 | **State** | Typed values that persist over time, held in one tree (`pp.timers.countdown.remaining`). |
-| **Variable** | User-defined state (`var.serviceStarted`). |
+| **Variable** | User-defined state (`vars.serviceStarted`). |
 | **Surface** | A physical or virtual control device: Stream Deck, MIDI controller, web panel. |
 | **Control** | One input or output on a surface: button, encoder, fader, touch strip, display. |
 | **Gesture** | An interpreted input: press, release, double-press, long-press, hold-repeat, turn. |

@@ -86,7 +86,7 @@ type Duration = string;  // "500ms", "2s", "1m30s"
 | `wait` | `for: Duration \| Expr` | none |
 | `waitUntil` | `until: Expr`, `timeout?` | `{value}`. Checked immediately (level, not edge), then on every change |
 | `call` | `flow`, `inputs?`, `wait?: boolean` (default `true`) | The callee's `outputs`, or `{run}` if `wait` is `false` |
-| `set` | `path: "local.<name>" \| "var.<name>"`, `value: Expr` | none |
+| `set` | `path: "local.<name>" \| "vars.<name>"`, `value: Expr` | none |
 | `script` | `source` (JS/TS), `timeout?` | Whatever the script returns |
 | `log` | `level`, `message: Expr` | none |
 | `stop` | `status?: ok \| failed`, `outputs?`, `error?` | ends the run |
@@ -134,7 +134,7 @@ Steps read data through expressions. These names are in scope:
 | `steps.<id>` | `{status, result?, error?, startedAt, durationMs}` for steps that have run | no |
 | `<as>`, `index` | The current loop item and index, inside `forEach` | no |
 | `error` | The error, inside a `catch` | no |
-| state roots | `<alias>`, `var`, `sys`, `surface`, `page`, `flow` ([state spec §1.1](state-and-event-log.md)) | `var` via `set` and scripts |
+| state roots | `<alias>`, `vars`, `sys`, `surface`, `page`, `flow` ([state spec §1.1](state-and-event-log.md)) | `vars` via `set` and scripts |
 | `target(t)` | A target's state ([ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md)) | no |
 
 - **Steps in a branch that didn't run are absent** from `steps`. Reading them gives `undefined`, like any missing value ([ADR 0004](../adr/0004-javascript-expressions-and-scripts.md)).
@@ -217,7 +217,7 @@ body:
   - id: recall
     kind: action
     target:
-      expr: var.selectedCam
+      expr: vars.selectedCam
       constraint: { interface: camera.ptz@1 }
     action: recallPreset
     params: { preset: { expr: page.params.shot } }
@@ -225,7 +225,7 @@ body:
     retry: { attempts: 2, backoff: 200ms }
   - id: settle
     kind: waitUntil
-    until: "!target(var.selectedCam).moving"
+    until: "!target(vars.selectedCam).moving"
     timeout: 5s
     onError: continue
   - id: cut
@@ -301,7 +301,7 @@ Common fields: `id`, `kind`, `name?`, `enabled?`, `timeout?`, `onError?`. `retry
 | `action` | `target: {conn}`, `action`, `params` | The action's result | A fixed target with no `key`. **(M4)** Each top-level parameter is a literal value or `{expr: Expr}`. See below |
 | `wait` | `for: Duration` or **(M4)** `{expr: Expr}` | none | The expression must give a duration string or a number of milliseconds ≥ 0. Anything else fails the step with `invalidDuration` |
 | `waitUntil` **(M4)** | `until: Expr`, `timeout?` | `{value}` | Evaluated when the step starts, and done straight away if truthy (level, not edge). Otherwise re-evaluated whenever its read set changes, until truthy. `timeout` fails it with `timeout` |
-| `set` **(M4)** | `path: "local.<name>" \| "var.<name>"`, `value: Expr` | none | `<name>` is one segment, `[A-Za-z_][A-Za-z0-9_]*`. See below |
+| `set` **(M4)** | `path: "local.<name>" \| "vars.<name>"`, `value: Expr` | none | `<name>` is one segment, `[A-Za-z_][A-Za-z0-9_]*`. See below |
 | `branch` **(M4)** | `arms: {when: Expr, steps: Step[]}[]`, `else?: Step[]` | `{status}` | See below |
 
 - **Durations** match `^(\d+h)?(\d+m)?(\d+s)?(\d+ms)?$`, are not empty, and are greater than zero: `500ms`, `2s`, `1m30s`. A literal `wait` must be greater than zero. An expression may give zero, which doesn't wait.
@@ -313,7 +313,7 @@ Common fields: `id`, `kind`, `name?`, `enabled?`, `timeout?`, `onError?`. `retry
 - **(M4) `set`.**
   - **Evaluation.** `value` is evaluated when the step starts.
   - **`local.<name>`** is visible to later steps in the same run, and is gone when the run ends.
-  - **`var.<name>`** is written to the state store as a `state.patch` with origin `{flow, run, step}` and `cause` → the step's `run.step started` entry. Variables aren't declared and aren't kept across a restart ([M4](../milestones/m4-expressions.md)).
+  - **`vars.<name>`** is written to the state store as a `state.patch` with origin `{flow, run, step}` and `cause` → the step's `run.step started` entry. Variables aren't declared and aren't kept across a restart ([M4](../milestones/m4-expressions.md)).
   - **Removing.** A value of `undefined` removes the local or variable.
 - **(M4) `branch`.**
   - **Choosing an arm.** The arms' `when` expressions are evaluated in order, and the steps of the first truthy arm run. If none is truthy, `else` runs. With no `else`, the branch is done without running any steps.
@@ -412,7 +412,7 @@ return names[vh.outputs[1].source] ?? "Unknown";
 | `local` | Run-local variables set by `set` (§8.3) |
 | `steps.<id>` | `{status, result?, error?, startedAt, durationMs}` for steps that have finished in this run. Steps that haven't run, or are still running, read as `undefined` |
 | `<alias>` | A connection's state |
-| `var`, `sys`, `flow` | User variables, core state, flow status ([state spec](state-and-event-log.md) §1.1) |
+| `vars`, `sys`, `flow` | User variables, core state, flow status ([state spec](state-and-event-log.md) §1.1) |
 | the standard library | `mmss`, `hhmmss`, `clamp`, `round`, `pad`, `lerp`, `rgb`, `hsl`, `mix` ([ADR 0004](../adr/0004-javascript-expressions-and-scripts.md)) |
 
 - **Scope outside a run.** In filters, conditions and `state` triggers there's no run, so `local` and `steps` are empty.
@@ -433,7 +433,7 @@ return names[vh.outputs[1].source] ?? "Unknown";
 
 **Dependencies.** Each evaluation records the state paths it read; that's its read set.
 - `state` triggers and `waitUntil` re-evaluate when a path in their read set changes, once per scheduler turn, after patches are coalesced.
-- The read set is replaced after each evaluation, so a dynamic read (`vh.outputs[var.n].source`) follows `var.n`.
+- The read set is replaced after each evaluation, so a dynamic read (`vh.outputs[vars.n].source`) follows `vars.n`.
 
 **Limits and failures.** Each evaluation gets 50 ms and 16 MB; both are core settings. A failure is `{code, message, at?}`:
 

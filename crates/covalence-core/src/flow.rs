@@ -373,7 +373,7 @@ mod tests {
             "-1s",
             " 1s",
             "1 s",
-            "var.delay",
+            "vars.delay",
         ] {
             assert!(bad.parse::<Duration>().is_err(), "{bad:?}");
         }

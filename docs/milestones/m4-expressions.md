@@ -1,19 +1,19 @@
 # Milestone 4: Expressions
 
-- **Status:** In progress (Phase 0 done)
+- **Status:** In progress (Phases 0–1 done)
 - **Started:** 2026-10-21
 
 Flows start reading data. QuickJS arrives in the core ([ADR 0004](../adr/0004-javascript-expressions-and-scripts.md)), and expressions can appear in action parameters, wait durations, trigger filters and the new steps. A flow can react to a state value changing, not just to a plugin event. It can see what earlier steps returned, branch on it, wait for a condition, and set run-local and user variables. Expressions can use any JavaScript syntax but can't change anything ([ADR 0021](../adr/0021-expressions-as-sandboxed-snippets.md)). Script steps, which can act, stay out, as do loops and the other blocks.
 
 ## Done when
 
-- [ ] An action step whose parameter is `{expr: "var.nextSource"}` routes `vh` to whatever `var.nextSource` holds when the step starts. If the value fails the action's params schema, the step fails with code `invalidParams` and the evaluated value is in the error.
+- [ ] An action step whose parameter is `{expr: "vars.nextSource"}` routes `vh` to whatever `vars.nextSource` holds when the step starts. If the value fails the action's params schema, the step fails with code `invalidParams` and the evaluated value is in the error.
 - [ ] A flow with a `state` trigger `when: "vh.outputs[1].source == 3"`, `edge: rising` runs once each time output 1 changes to source 3, not when it's already 3 at startup and not again while it stays 3. `why` on its action walks back through `trigger.matched` to the `state.patch` that made the expression true.
 - [ ] An `event` trigger with `filter: "trigger.payload.output == 1"` runs only for that output. A filter that is false journals nothing. A flow that listens to `vh` `routeChanged` with a filter excluding its own route, and acts on `vh`, doesn't loop, including on a live device's echo with no `cause`.
 - [ ] A `branch` step picks the first arm whose `when` is true, or `else`. `steps.<id>.result` from an earlier action is readable in a later step's expression, and steps in arms that didn't run read as `undefined`.
 - [ ] A `waitUntil` step with `until: "vh.outputs[1].source == 4"` finishes as soon as that's true (straight away if it already is), and fails with `timeout` if its `timeout` passes first. Cancelling the run during it ends the run `cancelled`.
-- [ ] `set` writes `local.<name>` (visible to later steps in the same run, gone after it) and `var.<name>` (a `state.patch` in the journal with `cause` → its `run.step`, visible to bindings and other flows).
-- [ ] A multi-line expression with a `const` lookup table and a `return` works as an action parameter. An expression that writes (`var.x = 1`), calls `Date.now()` or `Math.random()`, or returns a promise fails with a clear error, and nothing it touched changes.
+- [ ] `set` writes `local.<name>` (visible to later steps in the same run, gone after it) and `vars.<name>` (a `state.patch` in the journal with `cause` → its `run.step`, visible to bindings and other flows).
+- [ ] A multi-line expression with a `const` lookup table and a `return` works as an action parameter. An expression that writes (`vars.x = 1`), calls `Date.now()` or `Math.random()`, or returns a promise fails with a clear error, and nothing it touched changes.
 - [ ] An expression that throws, loops forever or allocates too much fails its step (or, for a trigger, filter or condition, counts as false and is logged, rate-limited) within the evaluation limits, without stalling the core.
 - [ ] The flow editor edits all of the above: any parameter can switch between a literal and an expression, expressions show a live preview against current state, and `branch` arms nest their own step lists.
 - [ ] A Rust end-to-end test covers the above in CI, with no hardware. A browser smoke test runs one expression flow through the UI.
@@ -28,27 +28,29 @@ Flows start reading data. QuickJS arrives in the core ([ADR 0004](../adr/0004-ja
 - [x] **Where QuickJS lives:** a `covalence_core::expr` module behind an `Evaluator` trait, so the flow runtime and its tests don't depend on the engine directly.
 - [x] **Evaluation limits:** 50 ms per evaluation through the interrupt hook, and 16 MB of memory, as core settings. Failures are `exprError`, `exprTimeout` and `exprMemory`, with message and source position.
 - [x] **Determinism.** No time or randomness in expressions, so nothing needs a `nondet` entry yet. Time is read from `sys.time.now` state. The standard library from ADR 0004 (`mmss`, `clamp`, `round` …) is in.
-- [x] **`var` without declarations.** `set` can write any `var.<name>` with any value. The `variable` entity, its schema and persistence across restarts wait for a variables milestone, so `var` values are lost on restart until then.
+- [x] **`vars` without declarations.** `set` can write any `vars.<name>` with any value. The `variable` entity, its schema and persistence across restarts wait for a variables milestone, so `vars` values are lost on restart until then.
 - [x] **Trigger and condition journaling.** A false `filter` journals nothing, since it runs on every event. A false flow `condition` journals `trigger.matched` with `blocked: true, reason: condition`. A `state` trigger's first evaluation sets its baseline and never fires.
 - [x] [Flow spec](../specs/flows.md) §8 is now "the implemented subset", with the M4 additions marked: `{expr}` params, `wait.for` as an expression, `state` triggers, `event` filters, `conditions`, `branch`, `waitUntil`, `set`, `steps.<id>` and `local`, the matching order, and a new §8.7 on expressions. §9 has `POST /expressions/evaluate`.
 
 ### Phase 1: Expression engine (Rust)
-- [ ] `rquickjs` on QuickJS-ng in `covalence_core::expr`: compile as an expression, else as a function body; evaluate with a scope; return a `Value` or an error with its source position.
-- [ ] Value conversion both ways, including `{int}` to a JS number within the safe range, and `undefined` for missing values. A returned promise is an error.
-- [ ] Scope objects for `trigger`, `local`, `steps`, and the state roots through read-only, read-recording proxies. Missing paths read as `undefined`, never throw. Writes throw.
-- [ ] The sandbox: no host API, `Date.now()`, argument-less `new Date()` and `Math.random()` throw, and no state carries between evaluations. Measure a fresh context per evaluation against a frozen global object and pick the cheaper.
-- [ ] Time and memory limits; cancellation through the interrupt hook.
-- [ ] The standard library.
-- [ ] Unit tests for the language edges: `==` across int and float, missing paths, bracket keys (`vh.outputs["SDI 4"]`), multi-line bodies, every sandbox escape above, limits, cancellation. A benchmark for one simple expression, including proxies and read tracking, against the 16 ms re-render budget in [architecture](../architecture.md#performance-budgets-targets-to-test-against).
+- [x] `rquickjs` 0.14 on QuickJS-ng in `covalence_core::expr` (`QuickJs`, behind the `Evaluator` trait): compile as an expression, else as a function body; evaluate with a `Scope`; return a `Value` or an `ExprError` with its source position. `check` compiles without running, for validation.
+- [x] Value conversion both ways, through JSON. Ints within ±2⁵³ stay ints; `undefined` is "no value"; NaN, infinities, functions, symbols and promises are errors.
+- [x] Scope objects for `trigger`, `local`, `steps`, and the state roots through read-only, read-recording proxies (`prelude.js`). Missing paths read as `undefined`, never throw. Writes throw. Listing a node's keys reads its whole subtree. `Reads::touched_by` matches a dirty set.
+- [x] The sandbox: no host API, and `Date.now()`, `Date()`, argument-less `new Date()` and `Math.random()` throw. `Promise` is hidden, and there are no timers, `performance` or weak references. **A fresh context per evaluation,** measured at ~265 µs in release, ~190 µs of it parsing the prelude. A frozen, reused context wasn't built: it needs a lockdown of every built-in to be safe. Loading the prelude as bytecode measured ~95 µs, but needs `unsafe`; deferred until surface bindings need the speed.
+- [x] Time and memory limits (50 ms, 16 MB); cancellation through the interrupt hook, from the run's cancel channel. Both are uncatchable. Deep recursion fails with `exprError`.
+- [x] The standard library: `mmss`, `hhmmss`, `clamp`, `round`, `pad`, `lerp`, `rgb`, `hsl`, `mix`. Colours are `#rrggbb` strings.
+- [x] Unit tests in `crates/covalence-core/src/expr/tests.rs` for the language edges, every sandbox escape, read tracking, limits and cancellation. The benchmark is an ignored test: `cargo test --release -p covalence-core --lib expr::tests::bench -- --ignored --nocapture`.
+- [x] **`var` became `vars`** everywhere, because `var` is a JavaScript keyword ([ADR 0021](../adr/0021-expressions-as-sandboxed-snippets.md)).
+- Carried to Phase 2: aliases that are JavaScript keywords or global names (`if`, `Math`, `clamp`, `steps`) can't be read in expressions. The engine leaves such names unbound rather than hiding a global; alias validation in the server should reject them.
 
 ### Phase 2: Flow model and runtime (Rust)
 - [ ] Flow types gain `{expr}` params, `wait.for` as an expression, `state` triggers, `event` `filter`, flow `conditions`, and the `branch`, `waitUntil` and `set` steps. `Flow::parse` still rejects everything else with its path.
-- [ ] Validation: expression syntax (by compiling it), `set` paths that aren't `local.<name>` or `var.<name>`, duplicate step IDs across nested arms. Literal params are still checked against the schema; expression params are checked at run time. Step references aren't checked by the core.
+- [ ] Validation: expression syntax (by compiling it), `set` paths that aren't `local.<name>` or `vars.<name>`, duplicate step IDs across nested arms. Literal params are still checked against the schema; expression params are checked at run time. Step references aren't checked by the core.
 - [ ] Fixtures in `crates/covalence-core/fixtures/flows/` for each new shape, and `problems/` for each new error.
 - [ ] `steps.<id>` results `{status, result?, error?, startedAt, durationMs}` kept per run. `local` kept per run.
 - [ ] `branch`: positions become nested (`[branch1, route2]`). `run.step` entries for the branch itself and for its chosen arm's steps.
 - [ ] `waitUntil` subscribes to its read set, re-evaluates on change and wakes on cancel or timeout.
-- [ ] `set` on `var` goes through the state store as a `state.patch` with origin `{flow, run, step}` and `cause` → its `run.step`.
+- [ ] `set` on `vars` goes through the state store as a `state.patch` with origin `{flow, run, step}` and `cause` → its `run.step`.
 - [ ] Trigger matcher for `state` triggers: evaluate on load and whenever the read set changes, fire on the chosen edge, `cause` → the `state.patch` entry. Filters and conditions are evaluated with `trigger` in scope before the concurrency mode is applied.
 - [ ] The loop guard (§8.6) also covers `state` triggers.
 
