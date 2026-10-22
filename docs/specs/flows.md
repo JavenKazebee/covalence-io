@@ -44,9 +44,10 @@ type Expr = string;                   // JS expression source (ADR 0004)
 
 | Kind | Fields | `trigger` payload in expressions |
 |---|---|---|
-| `gesture` | `control: ControlRef`, `gesture: press \| release \| double \| long \| hold \| turn` | `{surface, control, gesture, delta?}` |
+| `control` | `control: ControlRef`, `event`: an input event, such as `press`, `double`, `hold`, `turn` or `change`, or a helper's; `echo?` | `{surface, layer?, control, event, delta?, value?, item?}` |
 | `event` | `source: Target \| TargetConstraint`, `event`, `filter?: Expr` | `{source, event, payload}`, with `payload` typed by the `EventDef` |
 | `state` | `when: Expr`, `edge: rising \| falling \| change` | `{value, previous}` |
+| `state` with `match` | `match: PathPattern`, `when?: Expr`, `edge` | `{path, captures, value, previous, ts}` |
 | `schedule` | per [ADR 0014](../adr/0014-time-sources-and-scheduling.md) | `{scheduled, fired}` |
 | `call` | none; any flow may call this one | `{caller: {flow, run}}` |
 | `api` / `osc` | `address?` for OSC | `{args}` |
@@ -54,6 +55,9 @@ type Expr = string;                   // JS expression source (ADR 0004)
 
 - An `event` trigger can listen to an interface instead of one connection. `source: {interface: "camera.ptz@1"}` fires for any camera, and `trigger.source` says which ([ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md)).
 - `state` triggers are edge-triggered. Their dependencies are tracked at run time, like bindings.
+- **A control's input is state, and its events are derived from that state** ([ADR 0024](../adr/0024-surfaces-as-two-way-devices.md), [surfaces spec §4](surfaces.md)). A `control` trigger is the quick way in for events: a press, a double, a turn. `ControlRef` names one control by layer or surface, or a set of them by control group, region, neighbour, selector or expression. A layer-relative ref matches per surface, on whichever surfaces that layer controls the control.
+- **`state` triggers cover conditions and combinations** over input state: a press that only counts while armed, a shift key, a helper's position crossing a threshold.
+- **A `state` trigger with `match`** fires for each path matching the pattern, with `*` matching one segment: `surface.*.controls.*.pressed`. `trigger.path` is the path that changed, and `trigger.captures` the segments `*` matched. `when` is optional, and sees `trigger.value`. It works on any state, so a GPIO contact from a plugin and a key on a surface can drive the same flow.
 
 ---
 
@@ -134,7 +138,7 @@ Steps read data through expressions. These names are in scope:
 | `steps.<id>` | `{status, result?, error?, startedAt, durationMs}` for steps that have run | no |
 | `<as>`, `index` | The current loop item and index, inside `forEach` | no |
 | `error` | The error, inside a `catch` | no |
-| state roots | `<alias>`, `vars`, `sys`, `surface`, `page`, `flow` ([state spec §1.1](state-and-event-log.md)) | `vars` via `set` and scripts |
+| state roots | `<alias>`, `vars`, `sys`, `surface`, `layer` (M5: `page`), `flow` ([state spec §1.1](state-and-event-log.md)) | `vars` via `set` and scripts |
 | `target(t)` | A target's state ([ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md)) | no |
 
 - **Steps in a branch that didn't run are absent** from `steps`. Reading them gives `undefined`, like any missing value ([ADR 0004](../adr/0004-javascript-expressions-and-scripts.md)).
@@ -188,10 +192,11 @@ The three views are three ways of showing the same tree.
 
 | View | Shows a flow when | Notes |
 |---|---|---|
-| **Button** | One `gesture` trigger, no conditions, and a body of only `action`, `wait`, `set` and `log` steps | Edits add steps to the flat list |
+| **Button** | At least one `control` trigger, no conditions, and a body of only `action`, `wait`, `set` and `log` steps | Edits add steps to the flat list. **(Later)** Other triggers show as "Also runs when…" chips, and editing a flow with more than one trigger says so first |
 | **Rule** | One trigger, and a body that is either the Button shape or a single `branch` whose arms have that shape | Conditions show as the "if" card |
 | **Flow** | Any flow | Blocks are nested regions. Edges show order only |
 
+- **A key's flows.** A control's binding holds its look and its helpers; what happens when it's used lives in flows ([ADR 0024](../adr/0024-surfaces-as-two-way-devices.md)). **(Later)** Selecting a key in the surface editor lists every flow that references it (by layer, control group or region), with each flow's other triggers, and opens them in the Button view.
 - "Open as flow" is always possible. Going back down is offered when the tree matches the simpler shape.
 - `editor` holds view-only data: node positions, collapsed blocks, colours and comments. It's exported, so a layout survives a round trip, but it never affects a run and its changes are left out of the diff summary.
 - Without saved positions, the Flow view lays the tree out automatically from top to bottom.
@@ -208,9 +213,9 @@ name: Recall shot on selected camera
 slug: recallShot
 enabled: true
 triggers:
-  - kind: gesture
-    control: { page: camControl, control: k8 }
-    gesture: press
+  - kind: control
+    control: { layer: camControl, control: k8 }
+    event: press
 concurrency: restart
 failover: abort
 body:
@@ -220,7 +225,7 @@ body:
       expr: vars.selectedCam
       constraint: { interface: camera.ptz@1 }
     action: recallPreset
-    params: { preset: { expr: page.params.shot } }
+    params: { preset: { expr: layer.params.shot } }
     timeout: 2s
     retry: { attempts: 2, backoff: 200ms }
   - id: settle
@@ -244,7 +249,7 @@ Keys appear in a fixed order. Fields that are always expressions (`when`, `until
 This section is what the core accepts today.
 - [Milestone 3](../milestones/m3-first-flows.md) implemented the Button-view shape (§6) without expressions.
 - [Milestone 4](../milestones/m4-expressions.md) adds expressions (§8.7), `state` triggers, `event` filters, flow conditions, and the `branch`, `waitUntil` and `set` steps. Rules that M4 adds or changes are marked **(M4)**.
-- [Milestone 5](../milestones/m5-surfaces-and-bindings.md) adds `gesture` triggers, marked **(M5)**. The core accepts them; the API can't save pages until M5 Phase 3, so until then no `gesture` trigger validates there.
+- [Milestone 5](../milestones/m5-surfaces-and-bindings.md) adds `gesture` triggers, marked **(M5)**. M5 Phase 5 replaces them with `control` triggers on input events ([ADR 0024](../adr/0024-surfaces-as-two-way-devices.md)), marked **(Now)**. Rules marked **(Later)** have no milestone yet.
 
 **Anything outside this section is rejected on save with an error, never stored and ignored.** Types live in `covalence_core::flow` ([ADR 0020](../adr/0020-project-entity-types-in-the-core.md)).
 
@@ -256,7 +261,7 @@ This section is what the core accepts today.
 | `name` | Required, non-empty |
 | `slug` | Optional on create: derived from `name` (camelCase, ASCII, deduplicated with a number). Must match `[a-z][A-Za-z0-9_]*` and be unique |
 | `enabled` | Required |
-| `triggers` | `api`, `event`, **(M4)** `state` and **(M5)** `gesture` (§8.2). May be empty, with a warning: the flow can't start |
+| `triggers` | `api`, `event`, **(M4)** `state` and **(M5)** `gesture`, **(Now)** `control` (§8.2). May be empty, with a warning: the flow can't start |
 | `conditions` | **(M4)** Optional list of expressions. All must be truthy when a trigger matches, or no run starts (§8.2) |
 | `inputs`, `outputs` | Must be absent |
 | `concurrency` | Required. All four modes |
@@ -271,7 +276,8 @@ This section is what the core accepts today.
 | `api` | none | `{args: {}}` | Fired by `POST /flows/{id}/run` (§9). A flow without one can't be run from the API or the UI's Run button |
 | `event` | `source: {conn}`, `event`, **(M4)** `filter?: Expr` | `{source, event, payload}` | `event` must be in the plugin manifest's `events`. No `{plugin}` or `{interface}` sources |
 | `state` **(M4)** | `when: Expr`, `edge: rising \| falling \| change` | `{value, previous}` | See below |
-| `gesture` **(M5)** | `control: {page, control}`, `gesture: press \| release \| double \| long \| hold` | `{surface, page, control, gesture, delta?}`, with IDs | Matches on any surface showing the page. `turn` isn't supported yet. Gestures and their timing are in the [surfaces spec §3](surfaces.md). `trigger.matched` has `cause` → the `input.gesture` entry |
+| `gesture` **(M5)** | `control: {page, control}`, `gesture: press \| release \| double \| long \| hold` | `{surface, page, control, gesture, delta?}`, with IDs | Matches on any surface showing the page. `turn` isn't supported yet. Gestures and their timing are in the [surfaces spec §4.2](surfaces.md). `trigger.matched` has `cause` → the `input.gesture` entry |
+| `control` **(Now)** | `control: {layer, control}`, `event: press \| release \| double \| long \| hold \| turn \| change \| touch \| untouch` | `{surface, layer, control, event, delta?, value?}`, with IDs | Replaces `gesture`. Matches the control on any surface where the layer controlled it. `trigger.matched` has `cause` → the `input.event` entry ([surfaces spec §7](surfaces.md)). **(Later)** `{surface, control}`, `{group}` with `trigger.item`, region, relative, selector and expression refs, helper events, and `echo` |
 
 - `trigger.matched` names the trigger by its index in `triggers`.
 - **(M4) Matching order.** When a trigger fires:
@@ -293,6 +299,7 @@ This section is what the core accepts today.
   - **Payload.** `trigger.value` and `trigger.previous` are the new and old results.
   - **Cause.** `trigger.matched` has `cause` → the last `state.patch` in that turn that touched the read set.
   - **When it doesn't run.** A disabled flow doesn't evaluate its `state` triggers. Saving a flow resets their baselines.
+  - **(Now) Input state.** Key, touch and encoder input each get a scheduler turn of their own (surfaces spec §4.1), so a `state` trigger over `pressed` sees every press, however short. Its `cause` is the input's `state.patch`.
 
 ### 8.3 Steps
 
@@ -338,7 +345,7 @@ Errors block the save; warnings don't. There are no drafts yet.
   - literal parameters that fail the action's schema
   - a bad literal duration
   - **(M4)** an expression that doesn't compile, a malformed `set` path, a `branch` with no arms
-  - **(M5)** a `gesture` trigger on a page that doesn't exist (`unknownPage`), or a control outside its layout (`unknownControl`)
+  - **(M5)** a `gesture` trigger on a page that doesn't exist (`unknownPage`), or a control outside its layout (`unknownControl`). **(Now)** The same for a `control` trigger, with `unknownLayer`, `unknownControl` for a control the layer doesn't list, and `unsupported` for an event its control's inputs can't give
 - **Warnings:**
   - no triggers
   - an `event` trigger on a connection the flow also acts on (see §8.6)

@@ -60,11 +60,14 @@ These are the user-facing terms. Product and component names use the chemistry t
 | **Event** | Something that happened at a moment in time (`pp.timerEnded`). |
 | **State** | Typed values that persist over time, held in one tree (`pp.timers.countdown.remaining`). |
 | **Variable** | User-defined state (`vars.serviceStarted`). |
-| **Surface** | A physical or virtual control device: Stream Deck, MIDI controller, web panel. |
-| **Control** | One input or output on a surface: button, encoder, fader, touch strip, display. |
-| **Gesture** | An interpreted input: press, release, double-press, long-press, hold-repeat, turn. |
-| **Page** | A layout of control bindings shown on a surface. |
-| **Binding** | Dataflow: a reactive link from state to a control's look (label, colour, image), stored as a value, template, rules, map or expression ([spec](specs/bindings.md)). Faders and encoders use **value mappings** in the other direction. |
+| **Surface** | A physical or virtual control device: Stream Deck, MIDI controller, fader panel, GPIO box, web panel. Two-way: it takes input and shows output ([ADR 0024](adr/0024-surfaces-as-two-way-devices.md)). |
+| **Control** | One part of a surface, typed by its capabilities: inputs (`momentary`, `relative`, `absolute`, `touch`) and outputs (`image`, `led`, `level`, `text`). |
+| **Input state** | What a control reports, kept as state: `pressed`, `detents`, `value`, `touched`. Volatile: reset on attach and detach. |
+| **Input event** | An occurrence derived from input state: press, release, double, long, hold, turn, change, touch. |
+| **Helper** | Builds on a control's input state to give derived state and events: a toggle, a position, a velocity, a selection, a script. |
+| **Layer** | A set of control bindings on the controls it covers. Which layer controls each control is computed from state: navigation, conditions and rank. Pages, shift layers, popovers, folders and sections are all layers. |
+| **Control group** | Spreads a live list (the selected camera's ISO values) over a set of controls in a layer, with `item` in bindings and triggers. |
+| **Binding** | Dataflow: a reactive link from state to a control's look (label, colour, image), stored as a value, template, rules, map or expression ([spec](specs/bindings.md)). A binding also holds the control's **helpers**, the input direction. |
 | **Flow** | The single unit of automation: trigger(s) + optional conditions + a tree of steps. Control flow only. Button action lists, rules and node graphs are all flows ([spec](specs/flows.md)). |
 | **Run** | One execution of a flow, with a handle, a status and a cancellation token. |
 | **Expression** | A JS expression, used in bindings, conditions and parameters. |
@@ -87,7 +90,7 @@ You can always move a flow up to a more powerful view ("Open as flow"). A linear
 
 The full definition is in the [flow spec](specs/flows.md).
 
-- **Triggers:** gesture on a control, event, state condition (edge-triggered), schedule, flow-called-by-flow, API or OSC call, and startup.
+- **Triggers:** an input event on a control, event, state condition (edge-triggered), schedule, flow-called-by-flow, API or OSC call, and startup.
 - **Concurrency mode per flow:** `parallel` | `queue` | `restart` | `ignore` (when a run is already active).
 - **Steps:** action, wait (duration), wait-until (expression, timeout), call flow, set variable, script, log, stop, break, continue.
 - **Blocks:** group (with catch and finally), branch, loop, parallel.

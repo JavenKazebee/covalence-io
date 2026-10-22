@@ -2,6 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-10-22
+- **Amended by:** [0024](0024-surfaces-as-two-way-devices.md) (proposed): controls are typed by capability and positioned, control input is device state with events derived from it (replacing `input.raw` and `input.gesture`), pages become layers that list their controls and fit by capability, and `gesture` triggers become `control` triggers
 - **Specs:** [surfaces](../specs/surfaces.md), [bindings](../specs/bindings.md), [plugin protocol §8](../specs/plugin-protocol.md)
 - **Related:** [ADR 0010](0010-orbital-remote-nodes.md), [ADR 0012](0012-simulated-devices.md), [ADR 0020](0020-project-entity-types-in-the-core.md)
 - **Milestone:** [M5: Surfaces and bindings](../milestones/m5-surfaces-and-bindings.md)
@@ -19,7 +20,7 @@
 - **The current page is state,** `surface.<slug>.page`, set from `startPage` on attach and changed through the API. It's journaled like any other state change, so it's visible to bindings, expressions and `why`. Flows can't change it in M5.
 - **The core's surface module is independent of transport.** A transport attaches a surface with its `ControlDef`s, feeds it input and receives draws. The web surface is the first transport. The plugin host and Orbitals will be the next, through the same module.
 - **The web surface uses its own WebSocket, `/surface/{id}`,** carrying plugin protocol §8 notifications as JSON, with images as base64 PNG. One socket is one surface, and the socket closing is the detach.
-- **Gestures follow fixed rules** ([surfaces spec §3](../specs/surfaces.md)): `press` fires on `down` straight away, and `double` fires as well as `press`, never instead of it. Timing comes from the host's `ts`; `long` and `hold` use a core timer started when the `down` arrives.
+- **Gestures follow fixed rules** ([surfaces spec §4.2](../specs/surfaces.md)): `press` fires on `down` straight away, and `double` fires as well as `press`, never instead of it. Timing comes from the host's `ts`; `long` and `hold` use a core timer started when the `down` arrives.
 
 ## Consequences
 - The browser deck exercises the same core path as a hardware deck will: attach, `ControlDef`s, input with device timestamps, rendered images. What the virtual deck shows is what a hardware deck would show.
@@ -27,7 +28,7 @@
 - `/ws` stays a read-only feed for the editor. A UI session that both edits and shows a deck opens two sockets.
 - Base64 PNG over JSON costs a third more bytes than binary frames. At 15 keys of about 10 KB on a LAN that doesn't matter. Binary frames can come with the plugin host transport, which already carries bytes.
 - A flow that wants to act only on a double-press has to listen for `double` alone. Making `press` wait for the double window would cost 300 ms on every press, which the 5 ms budget rules out.
-- Operators can't build a "next page" button yet. Core-provided actions are an open question ([surfaces spec §6](../specs/surfaces.md)).
+- Operators can't build a "next page" button yet. Core-provided actions are an open question ([surfaces spec §10](../specs/surfaces.md)).
 
 ## Alternatives considered
 - **Surfaces over `/ws`:** one socket per UI session. But `/ws` coalesces and batches for the editor, its messages are a different protocol, and a deck in a kiosk browser needs none of the editor's feed.

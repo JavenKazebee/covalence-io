@@ -150,7 +150,7 @@ interface Manifest {
   actions: ActionDef[];
   events: EventDef[];
   state: StateSchema;            // see the state spec §1.2–1.4
-  presets?: PresetDef[];         // suggested button and page templates
+  presets?: PresetDef[];         // suggested button and layer templates
   implements?: InterfaceImpls;   // proposed: interfaces such as "camera.ptz@1" (ADR 0019)
   surfaces?: SurfaceProviderDef; // if the plugin provides surfaces (for example a web panel)
   simulator?: { stateLevel: boolean; protocolLevel: boolean };
@@ -262,28 +262,56 @@ Using transports is optional. A plugin that opens sockets directly through Deno 
 
 ## 8. Surfaces (Orbital and plugin-provided)
 
+A surface is a two-way device ([ADR 0024](../adr/0024-surfaces-as-two-way-devices.md), [surfaces spec](surfaces.md)). The host reports its controls' input, which the core keeps as state and derives events from, and the core sets their outputs. **(Now)** marks the M5 Phase 5 reshaping; **(Later)**, what has no milestone yet. The web surface carries these notifications today (surfaces §8). The plugin host and Orbitals carry them **(Later)**.
+
 | Method | Direction | Params |
 |---|---|---|
-| `surface.attach` | host → core, ntf | `{surface, model, serial?, name, controls: ControlDef[], layout: {cols, rows}}` |
+| `surface.attach` | host → core, ntf | `{surface, model, serial?, name, controls: ControlDef[], outputs?: {brightness?: boolean}}`. **(Now)** No `layout` |
 | `surface.detach` | host → core, ntf | `{surface}` |
-| `surface.input` | host → core, ntf | `{surface, control, kind: "down" \| "up" \| "turn" \| "touch" \| "value", value?, ts}` |
-| `surface.draw` | core → host, ntf | `{surface, control, image: bytes, format: "jpeg" \| "bmp" \| "png" \| "rgb565"}` |
-| `surface.led` | core → host, ntf | `{surface, control, color}` |
-| `surface.brightness` | core → host, ntf | `{surface, value: 0..100}` |
-| `surface.text` | core → host, ntf | `{surface, control, text}` (for controls that only show text) |
+| `surface.input` | host → core, ntf | `{surface, control, kind: "down" \| "up" \| "turn" \| "touch" \| "value", value?, ts, echo?}` |
+| `surface.draw` | core → host, ntf | `{surface, control, image: bytes, format: "jpeg" \| "bmp" \| "png" \| "rgb565"}`, for `image` outputs |
+| `surface.led` | core → host, ntf | `{surface, control, color}`, for `led` outputs **(Later)** |
+| `surface.level` | core → host, ntf | `{surface, control, value: 0..1}`, for `level` outputs: motor faders, encoder rings, meters **(Later)** |
+| `surface.text` | core → host, ntf | `{surface, control, text}`, for `text` outputs **(Later)** |
+| `surface.brightness` | core → host, ntf | `{surface, value: 0..100}`, when the attach declares `brightness` **(Later)** |
 
 ```ts
-interface ControlDef {
-  id: string;                       // "k0", "enc1", "strip"
-  kind: "button" | "encoder" | "fader" | "touchstrip" | "lcd" | "led";
-  x: number; y: number; w?: number; h?: number;     // grid position
-  image?: { w: number; h: number; format: string; rotation?: 0 | 90 | 180 | 270 };
-  pressable?: boolean;              // encoders that click
+interface ControlDef {                // (Now) capabilities replace `kind`, `image` and `pressable`
+  id: string;                         // unique per surface: "k0", "dial1", "pad.36"
+  label?: string;
+  at: { x: number; y: number; w?: number; h?: number };    // (Now) required: grid cells; controls don't overlap
+  inputs?: InputCap[];
+  outputs?: OutputCap[];
+  suggest?: Helper[];                 // (Later) default helpers for this control (bindings §5)
 }
+
+type InputCap =
+  | { kind: "momentary"; velocity?: boolean }   // down, up
+  | { kind: "relative" }                        // turn
+  | { kind: "absolute"; axes?: 1 | 2 }          // value
+  | { kind: "touch" };                          // touch
+
+type OutputCap =
+  | { kind: "image"; w: number; h: number; format: string; rotation?: 0 | 90 | 180 | 270 }
+  | { kind: "led"; rgb?: boolean }
+  | { kind: "level"; motor?: boolean }
+  | { kind: "text"; chars?: number; lines?: number };
 ```
 
-- **Gestures are computed in the core,** using the host's `ts`. Network jitter therefore never turns a double-press into two separate presses.
-- **The core renders images** at each control's native size and format, and sends only the controls that changed.
+| Input `kind` | Capability | `value` | Input state (surfaces §3) |
+|---|---|---|---|
+| `down` | `momentary` | Velocity, 0 to 1, if the capability has `velocity` | `pressed: true`, `velocity` |
+| `up` | `momentary` | none | `pressed: false` |
+| `turn` | `relative` | Signed detents since the last `turn` | `detents` changes by `value` |
+| `value` | `absolute` | 0 to 1, or `[x, y]` with `axes: 2` | `value` |
+| `touch` | `touch` | 1 when touched, 0 when released | `touched` |
+
+- **The SDK has presets** for common controls: `button`, `encoder`, `fader`, `touchstrip`, `lcd` and `led` build the capability lists that M5's `kind` stood for. A device with no physical layout (GPIO pins) still gets an `at`: the SDK places its controls in a row.
+- **Input state, events and gestures are computed in the core,** using the host's `ts` (surfaces §4). Network jitter therefore never turns a double-press into two separate presses. Hosts send what happened, not what it means: a MIDI host normalises its controller's relative encoding into signed detents, and a 14-bit fader into 0 to 1.
+- **A host can't define helpers.** It can `suggest` defaults for a control, such as a jog wheel's acceleration.
+- **`echo: true`** **(Later)** marks input the device sent because the core moved it, such as a motor fader reaching its requested position (surfaces §4.4). A host that can't tell leaves it out, and the core decides from timing.
+- **Input that doesn't match a control's capabilities** (a `turn` on a control with no `relative` input) is dropped and logged, rate-limited.
+- **The core renders images** at each `image` output's native size and format, and sends only the outputs that changed.
 
 ---
 
@@ -366,5 +394,5 @@ export default definePlugin({
 1. ~~Schema tool~~: TypeSpec → JSON Schema. See [ADR 0016](../adr/0016-protocol-schema-tooling.md).
 2. ~~Path format on the wire~~: segment arrays. See [ADR 0017](../adr/0017-wire-paths-as-segment-arrays.md).
 3. Transferring Orbital plugin bundles: should the core push the package over the link, or should the Orbital fetch it from the registry?
-4. Should plugins be able to define **custom gestures or controls**, such as a jog wheel's acceleration curve, or does the core own all gesture logic?
+4. ~~Should plugins be able to define **custom gestures or controls**, such as a jog wheel's acceleration curve, or does the core own all gesture logic?~~ Decided by [ADR 0024](../adr/0024-surfaces-as-two-way-devices.md): controls are any set of capabilities, their input is state with events derived in the core, the core owns helpers, and a host can `suggest` defaults (§8).
 5. Port number and mDNS TXT records for Orbital discovery.

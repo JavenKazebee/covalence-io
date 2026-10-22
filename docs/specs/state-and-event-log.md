@@ -22,8 +22,8 @@ All live values in the system share one namespace.
 | `<alias>` | A connection, named by its user-chosen alias | `pp.timers.countdown.remaining` |
 | `vars` | User variables | `vars.serviceStarted` |
 | `sys` | The core | `sys.time.now`, `sys.node.role`, `sys.timecode.frames` |
-| `surface` | Surfaces and controls | `surface.fohDeck.page`, `surface.fohDeck.connected` |
-| `page` | Per-page state | `page.cameraA.selected` |
+| `surface` | Surfaces, their navigation and their controls' input state | `surface.fohDeck.current.main`, `surface.fohDeck.controls.k0.pressed` |
+| `layer` | Per-layer state: parameters and helper values. **(Now)** Replaces M5's `page` root | `layer.cameraA.controls.dial1.position` |
 | `flow` | Flow and run status | `flow.preService.running`, `flow.preService.lastRun.status` |
 
 - **Segments** match `[A-Za-z_][A-Za-z0-9_]*`. Collection keys that aren't valid identifiers use bracket syntax: `vh.outputs["SDI 4"].source`.
@@ -92,6 +92,8 @@ Action parameters can refer to a collection for their choices (`choices: { from:
 
 Patches are coalesced per path within one scheduler turn: the latest value wins, but **events are never coalesced**.
 
+**(Now) Control input** ([ADR 0024](../adr/0024-surfaces-as-two-way-devices.md), [surfaces spec §4.1](surfaces.md)) is the exception. Each key, touch and encoder input is applied in a scheduler turn of its own, so no edge is lost. Fader and other `absolute` input is coalesced like any other patch. Input state is **volatile**: it's reset on attach and detach, isn't restored after a restart, and starts released on a node that has just been promoted (§4).
+
 ### 1.6 UI subscriptions (`GET /ws`)
 
 UI clients get live state over a WebSocket at `/ws`. Each frame is one JSON text message. Paths use the text form (§1.1).
@@ -158,12 +160,13 @@ Ordering is defined **only** by `seq` within a log. `ts` is for display.
 
 | Kind | Data | Notes |
 |---|---|---|
-| `input.raw` | `{surface, control, kind: down\|up\|turn\|touch\|value, value?, deviceTs}` | `surface` is the entity ID. `deviceTs` is the host's clock: the browser's, or the Orbital's if remote |
-| `input.gesture` | `{surface, page?, control, gesture: press\|release\|double\|long\|hold\|turn, delta?}` | `page` is the page ID shown when the input arrived. `cause` → the `input.raw` entry ([surfaces spec §3](surfaces.md)) |
+| `input.raw` | `{surface, control, kind: down\|up\|turn\|touch\|value, value?, deviceTs}` | **(M5)** `surface` is the entity ID. `deviceTs` is the host's clock: the browser's, or the Orbital's if remote. **(Now)** Replaced by a `state.patch` on the control's input state |
+| `input.gesture` | `{surface, page?, control, gesture: press\|release\|double\|long\|hold\|turn, delta?}` | **(M5)** `page` is the page ID shown when the input arrived. `cause` → the `input.raw` entry. **(Now)** Replaced by `input.event` |
+| `input.event` | `{surface, layer?, control, event, delta?, value?, echo?, item?}` | **(Now)** An event derived from a control's input state ([surfaces spec §4.2](surfaces.md)). `layer` is the layer that controlled the control, absent if none did. `cause` → the input's `state.patch`, or for a timed `long` or `hold`, the `down`'s. **(Later)** `item` is the control group item it showed |
 | `event` | `{source, event, payload}` | From a plugin, the core or a script. From a plugin action: `cause` → the `action.requested` entry |
-| `state.patch` | `{ops: [{path, value} \| {path, delete: true}]}` | Paths stored in ID form. From a plugin action: `cause` → the `action.requested` entry ([plugin protocol](plugin-protocol.md) §6 `call`) |
+| `state.patch` | `{ops: [{path, value} \| {path, delete: true}], deviceTs?}` | Paths stored in ID form. From a plugin action: `cause` → the `action.requested` entry ([plugin protocol](plugin-protocol.md) §6 `call`). **(Now)** From control input: origin the surface, and `deviceTs` the host's clock |
 | `state.quality` | `{subtree, quality}` | Marks a subtree stale or good |
-| `trigger.matched` | `{flow, trigger, blocked?, reason?}` | `cause` → the event, gesture or patch. `reason` says why it was blocked ([flow spec](flows.md) §8.5) |
+| `trigger.matched` | `{flow, trigger, blocked?, reason?}` | `cause` → the event, input event or patch. `reason` says why it was blocked ([flow spec](flows.md) §8.5) |
 | `run.started` | `{flow, run, mode, inputs}` | |
 | `run.step` | `{run, step, status: started\|done\|failed\|skipped, detail?}` | |
 | `run.checkpoint` | `{run, step, locals}` | For `resume` on failover |
@@ -179,11 +182,11 @@ Ordering is defined **only** by `seq` within a log. `ts` is for display.
 
 **"Why did this fire?"** means walking `cause` backwards. For example:
 
-`action.result` → `action.requested` → `run.step` → `run.started` → `trigger.matched` → `input.gesture` → `input.raw`
+`action.result` → `action.requested` → `run.step` → `run.started` → `trigger.matched` → `input.event` → `state.patch` (the input)
 
 ### 2.3 Project op log
 
-Entities: `connection`, `surface`, `page`, `control_binding`, `value_mapping`, `flow`, `variable`, `asset`, `user`, `role_assignment`, `setting`, `restore_point`.
+Entities: `connection`, `surface`, `surface_group` (Later), `layer` (M5: `page`), `control_binding`, `control_group` (Later) (which also holds a control's helpers, replacing `value_mapping`), `flow`, `variable`, `asset`, `user`, `role_assignment`, `setting`, `restore_point`.
 
 ```ts
 interface ProjectOp extends Entry {
@@ -234,6 +237,7 @@ Surface output (key images, LEDs) is gated by role only. A standby node doesn't 
   2. For each run that has no `run.finished` entry, apply its flow's failover policy (`abort` | `resume` from the last `run.checkpoint` | `restart`).
   3. Re-arm triggers and schedules.
   4. Request fresh snapshots from all connections.
+  5. **(Now)** Reset every surface's control input state to released. Surfaces reattach to the new active node, and nothing a standby replicated counts as held.
 - **Fencing:** hosts and Orbitals reject `action.invoke` messages carrying a term lower than the highest term they've seen.
 
 ---
@@ -259,5 +263,5 @@ Secrets aren't stored here ([ADR 0006](../adr/0006-project-storage-and-versionin
 1. Should integers be a distinct type in expressions, or should we always use f64 in JS and keep `int` only as a schema hint? (Leaning towards the hint.)
 2. Journal retention defaults on a Raspberry Pi with an SD card. How much should we write, and how do we limit wear?
 3. Should `run.checkpoint` be automatic at every step, or opt-in per flow? Automatic is simpler; opt-in costs less.
-4. Should state patches from a connection be journaled in full, or sampled for very high-rate values (meters, timecode)? Proposal: the schema flag `journal: sampled(100ms)`.
-5. How should drafts interact with multi-user editing? Is one draft shared per page, or does each user have their own?
+4. Should state patches from a connection be journaled in full, or sampled for very high-rate values (meters, timecode)? Proposal: the schema flag `journal: sampled(100ms)`. Fader input and helper values (surfaces spec §4) need the answer before helpers ship.
+5. How should drafts interact with multi-user editing? Is one draft shared per layer, or does each user have their own?

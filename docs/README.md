@@ -15,7 +15,7 @@
 - [Plugin protocol](specs/plugin-protocol.md)
 - [Flows](specs/flows.md)
 - [Bindings](specs/bindings.md)
-- [Surfaces and pages](specs/surfaces.md)
+- [Surfaces and layers](specs/surfaces.md)
 
 ## Architecture decision records
 
@@ -42,7 +42,8 @@
 | [0019](adr/0019-dynamic-action-targets-and-interfaces.md) | Dynamic action targets and plugin interfaces | Proposed |
 | [0020](adr/0020-project-entity-types-in-the-core.md) | Project entity types live in the core, as serde types | Accepted |
 | [0021](adr/0021-expressions-as-sandboxed-snippets.md) | Expressions are sandboxed snippets; what code can do depends on where it runs | Accepted |
-| [0022](adr/0022-surfaces-pages-and-the-web-surface.md) | Surfaces and pages are core entities; the web surface speaks the surface protocol | Accepted |
+| [0022](adr/0022-surfaces-pages-and-the-web-surface.md) | Surfaces and pages are core entities; the web surface speaks the surface protocol | Accepted (amended by 0024) |
 | [0023](adr/0023-key-rendering-and-binding-evaluation.md) | Keys are rendered in the core; structured bindings are evaluated without QuickJS | Accepted |
+| [0024](adr/0024-surfaces-as-two-way-devices.md) | Surfaces are two-way devices; control input is device state; layers decide who controls each control | Proposed |
 
 Each record covers its context, the decision, its consequences and the alternatives considered. Don't edit an accepted record to change its decision; write a new one that supersedes it.
