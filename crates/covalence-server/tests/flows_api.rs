@@ -447,3 +447,193 @@ async fn flow_requests_are_checked() {
 
     server.stop().await;
 }
+
+// ---------------------------------------------------------------------------
+// Milestone 4: expressions (docs/milestones/m4-expressions.md)
+
+async fn evaluate(server: &Server, body: Value) -> Value {
+    let (status, out) = server.post("/expressions/evaluate", body).await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    out
+}
+
+/// `trigger.matched` entries for one flow.
+async fn matched_for(server: &Server, flow: &Value) -> Vec<Value> {
+    let journal = server.get("/journal?from=1&limit=1000").await;
+    journal
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["kind"] == "trigger.matched" && e["data"]["flow"] == flow["id"])
+        .cloned()
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn expressions_preview_over_http() {
+    let server = Server::start();
+    videohub(&server, "vh").await;
+    let source: Value = server.value("vh.outputs[1].source").await.unwrap();
+
+    let out = evaluate(&server, json!({ "source": "vh.outputs[1].source + 1" })).await;
+    assert_eq!(out["value"], json!(source.as_i64().unwrap() + 1), "{out}");
+    assert_eq!(out["reads"], json!(["vh.outputs[1].source"]));
+
+    // A sample trigger, for previewing filters; `undefined` has no value.
+    let out = evaluate(
+        &server,
+        json!({ "source": "trigger.payload.output == 1", "trigger": { "payload": { "output": 1 } } }),
+    )
+    .await;
+    assert_eq!(out["value"], true);
+    let out = evaluate(&server, json!({ "source": "vars.nothing" })).await;
+    assert!(
+        out.get("value").is_none() && out.get("error").is_none(),
+        "{out}"
+    );
+
+    // Errors carry their code and position; nothing is written.
+    let out = evaluate(&server, json!({ "source": "1 +" })).await;
+    assert_eq!(out["error"]["code"], "exprSyntax", "{out}");
+    assert_eq!(out["error"]["at"]["line"], 1);
+    let out = evaluate(&server, json!({ "source": "vars.x = 1" })).await;
+    assert_eq!(out["error"]["code"], "exprError", "{out}");
+    assert!(server.value("vars.x").await.is_none());
+    let out = evaluate(&server, json!({ "source": "while (true) {}" })).await;
+    assert_eq!(out["error"]["code"], "exprTimeout", "{out}");
+
+    server.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn expression_params_route_to_a_variable() {
+    let server = Server::start();
+    let vh = videohub(&server, "vh").await;
+
+    // `set` writes the variable; a second step routes to it.
+    let flow = create(
+        &server,
+        json!({
+            "name": "Route to next", "enabled": true, "triggers": [{ "kind": "api" }],
+            "concurrency": "queue",
+            "body": [
+                { "id": "pick", "kind": "set", "path": "vars.nextSource", "value": "(vars.nextSource ?? 3) + 1" },
+                {
+                    "id": "route1", "kind": "action", "target": { "conn": vh }, "action": "route",
+                    "params": { "output": 1, "input": { "expr": "vars.nextSource" } },
+                },
+            ],
+        }),
+    )
+    .await;
+    let info = finished(&server, &start(&server, &flow).await).await;
+    assert_eq!(info["status"], "ok", "{info}");
+    assert_eq!(server.value("vars.nextSource").await, Some(json!(4)));
+    server
+        .eventually(WAIT, "vh output 1 on 4", || async {
+            (server.value("vh.outputs[1].source").await == Some(json!(4))).then_some(())
+        })
+        .await;
+
+    // A value that fails the action's schema fails the step before the request.
+    let bad = create(
+        &server,
+        json!({
+            "name": "Bad input", "enabled": true, "triggers": [{ "kind": "api" }],
+            "concurrency": "parallel",
+            "body": [{
+                "id": "route1", "kind": "action", "target": { "conn": vh }, "action": "route",
+                "params": { "output": 1, "input": { "expr": "'four'" } },
+            }],
+        }),
+    )
+    .await;
+    let run = start(&server, &bad).await;
+    let info = finished(&server, &run).await;
+    assert_eq!(info["error"]["code"], "invalidParams", "{info}");
+    assert!(
+        info["error"]["message"].as_str().unwrap().contains("four"),
+        "{info}"
+    );
+    assert!(
+        !run_entries(&server, &run)
+            .await
+            .contains(&"action.requested".to_owned())
+    );
+
+    server.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn state_triggers_and_filters_over_http() {
+    let server = Server::start();
+    let vh = videohub(&server, "vh").await;
+    let vh2 = videohub(&server, "vh2").await;
+    let route_vh = |output: u32, input: u32| json!({ "action": "vh.route", "params": { "output": output, "input": input } });
+    let (status, _) = server.post("/actions", route_vh(1, 0)).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Runs once each time vh output 1 becomes 3, and copies it to vh2.
+    let follow = create(
+        &server,
+        json!({
+            "name": "On three", "enabled": true,
+            "triggers": [{ "kind": "state", "when": "vh.outputs[1].source == 3", "edge": "rising" }],
+            "concurrency": "queue",
+            "body": [{
+                "id": "copy", "kind": "action", "target": { "conn": vh2 }, "action": "route",
+                "params": { "output": 1, "input": { "expr": "vh.outputs[1].source" } },
+            }],
+        }),
+    )
+    .await;
+    server.post("/actions", route_vh(1, 3)).await;
+    server
+        .eventually(WAIT, "vh2 output 1 on 3", || async {
+            (server.value("vh2.outputs[1].source").await == Some(json!(3))).then_some(())
+        })
+        .await;
+    server.post("/actions", route_vh(1, 4)).await;
+    server.post("/actions", route_vh(1, 4)).await;
+    let matched = matched_for(&server, &follow).await;
+    assert_eq!(matched.len(), 1, "{matched:?}");
+    let run = server
+        .get(&format!("/runs?flow={}", follow["id"].as_str().unwrap()))
+        .await;
+    let run = finished(&server, run[0]["run"].as_str().unwrap()).await;
+    let chain = why_kinds(&server, run["finished"].as_u64().unwrap()).await;
+    assert_eq!(
+        chain[..3],
+        ["run.finished", "run.started", "trigger.matched"]
+    );
+    assert_eq!(chain[3], "state.patch", "{chain:?}");
+
+    // A filter that leaves out the flow's own change keeps it from looping,
+    // live echo or not: one match for one outside route.
+    let mirror = create(
+        &server,
+        json!({
+            "name": "Mirror 1 to 2", "enabled": true,
+            "triggers": [{
+                "kind": "event", "source": { "conn": vh }, "event": "routeChanged",
+                "filter": "trigger.payload.output == 1",
+            }],
+            "concurrency": "queue",
+            "body": [{
+                "id": "mirror", "kind": "action", "target": { "conn": vh }, "action": "route",
+                "params": { "output": 2, "input": { "expr": "trigger.payload.input" } },
+            }],
+        }),
+    )
+    .await;
+    server.post("/actions", route_vh(1, 5)).await;
+    server
+        .eventually(WAIT, "vh output 2 on 5", || async {
+            (server.value("vh.outputs[2].source").await == Some(json!(5))).then_some(())
+        })
+        .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(matched_for(&server, &mirror).await.len(), 1);
+
+    server.stop().await;
+}

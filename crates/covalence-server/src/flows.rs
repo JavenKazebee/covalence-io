@@ -7,6 +7,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use covalence_core::expr;
 use covalence_core::flow::Flow;
 use covalence_core::flow::runtime::{CancelError, FireError, FireOutcome, RunInfo};
 use covalence_core::journal::Origin;
@@ -24,6 +25,7 @@ pub(crate) fn routes() -> Router<Arc<App>> {
         .route("/runs", get(runs))
         .route("/runs/{run}", get(one_run))
         .route("/runs/{run}/cancel", post(cancel))
+        .route("/expressions/evaluate", post(evaluate))
 }
 
 async fn list(State(app): State<Arc<App>>) -> Json<Vec<Flow>> {
@@ -142,4 +144,40 @@ async fn cancel(
 
 fn no_flow(id: &str) -> ApiError {
     ApiError::new(StatusCode::NOT_FOUND, format!("no flow {id:?}"))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EvaluateBody {
+    source: String,
+    /// A sample `trigger` payload, for previewing filters.
+    #[serde(default)]
+    trigger: Option<JsonValue>,
+}
+
+/// The editor's live preview (flow spec §9): `{value?, error?, reads}`.
+/// Never writes, runs actions or journals.
+async fn evaluate(
+    State(app): State<Arc<App>>,
+    Json(body): Json<EvaluateBody>,
+) -> ApiResult<Json<JsonValue>> {
+    // Up to the time limit of work, off the async workers.
+    let evaluation = tokio::task::spawn_blocking(move || {
+        let trigger = body.trigger.as_ref().map(crate::json_to_value);
+        app.evaluate(&body.source, trigger.as_ref())
+    })
+    .await
+    .map_err(ApiError::internal)?;
+    let mut out = serde_json::Map::new();
+    match evaluation.value {
+        Ok(Some(value)) => {
+            out.insert("value".into(), expr::to_json(&value));
+        }
+        Ok(None) => {}
+        Err(error) => {
+            out.insert("error".into(), json!(error));
+        }
+    }
+    out.insert("reads".into(), json!(evaluation.reads.text));
+    Ok(Json(JsonValue::Object(out)))
 }

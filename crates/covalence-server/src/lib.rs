@@ -8,7 +8,7 @@
 //! | `GET /plugins`               | Configured plugins and their manifests, once loaded      |
 //! | `GET /connections`           | Connections                                              |
 //! | `POST /connections`          | Creates a connection: `{plugin, alias, config, mode?}`   |
-//! | `GET /state?path=vh.outputs` | Leaves at or below a text path (all state without one); `flow.*` included |
+//! | `GET /state?path=vh.outputs` | Leaves at or below a text path (all state without one); `flow.*` and `vars.*` included |
 //! | `POST /actions`              | Requests an action: `{action: "vh.route", params}`       |
 //! | `GET /journal?from&limit`    | Journal entries, oldest first                            |
 //! | `GET /journal/{seq}/why`     | The cause chain from an entry back to its root           |
@@ -22,6 +22,7 @@
 //! | `GET /runs?flow`             | Active, queued and recent runs, newest first             |
 //! | `GET /runs/{run}`            | One run                                                  |
 //! | `POST /runs/{run}/cancel`    | Cancels a run: `202 {run, status}`                       |
+//! | `POST /expressions/evaluate` | Previews an expression: `{source, trigger?}` → `{value?, error?, reads}` |
 //!
 //! Any other path is the built web UI, when there is one (see `ui`).
 
@@ -34,7 +35,7 @@ use std::time::Duration;
 
 use covalence_core::engine::{ActionOutcome, ActionRequest, Actions};
 use covalence_core::expr::{self, QuickJs};
-use covalence_core::flow::runtime::STATE_ROOT;
+use covalence_core::flow::runtime::{STATE_ROOT, VARS_ROOT};
 use covalence_core::flow::{self, Flow, FlowId, Runtime};
 use covalence_core::host::{HostConfig, HostPhase};
 use covalence_core::journal::{DEFAULT_RING_CAPACITY, Journal};
@@ -285,6 +286,15 @@ impl App {
         self.conns.read().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// Evaluates an expression against live state, for the editor's preview.
+    /// Blocks for up to the evaluation time limit.
+    pub fn evaluate(&self, source: &str, trigger: Option<&Value>) -> expr::Evaluation {
+        let aliases = alias_map(&self.conns());
+        let mut scope = expr::Scope::new(&self.core.shared().state, &aliases);
+        scope.trigger = trigger;
+        expr::Evaluator::evaluate(self.evaluator.as_ref(), source, &scope)
+    }
+
     /// Tells the runtime the current aliases, after a connection changes.
     pub(crate) fn sync_aliases(&self) {
         self.runtime.set_aliases(alias_map(&self.conns()));
@@ -295,7 +305,7 @@ impl App {
     }
 
     /// Every state root the API shows, by its key in the state tree: each
-    /// connection's ID under its alias, and the core's `flow` root.
+    /// connection's ID under its alias, and the core's `flow` and `vars` roots.
     pub(crate) fn state_roots(&self) -> BTreeMap<ConnId, String> {
         let mut roots: BTreeMap<ConnId, String> = self
             .conns()
@@ -303,6 +313,7 @@ impl App {
             .map(|(id, c)| (id.clone(), c.alias.clone()))
             .collect();
         roots.insert(STATE_ROOT.into(), STATE_ROOT.into());
+        roots.insert(VARS_ROOT.into(), VARS_ROOT.into());
         roots
     }
 

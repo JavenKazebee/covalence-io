@@ -1,20 +1,20 @@
 # Milestone 4: Expressions
 
-- **Status:** In progress (Phases 0–2 done)
+- **Status:** In progress (Phases 0–3 done)
 - **Started:** 2026-10-21
 
 Flows start reading data. QuickJS arrives in the core ([ADR 0004](../adr/0004-javascript-expressions-and-scripts.md)), and expressions can appear in action parameters, wait durations, trigger filters and the new steps. A flow can react to a state value changing, not just to a plugin event. It can see what earlier steps returned, branch on it, wait for a condition, and set run-local and user variables. Expressions can use any JavaScript syntax but can't change anything ([ADR 0021](../adr/0021-expressions-as-sandboxed-snippets.md)). Script steps, which can act, stay out, as do loops and the other blocks.
 
 ## Done when
 
-- [ ] An action step whose parameter is `{expr: "vars.nextSource"}` routes `vh` to whatever `vars.nextSource` holds when the step starts. If the value fails the action's params schema, the step fails with code `invalidParams` and the evaluated value is in the error.
-- [ ] A flow with a `state` trigger `when: "vh.outputs[1].source == 3"`, `edge: rising` runs once each time output 1 changes to source 3, not when it's already 3 at startup and not again while it stays 3. `why` on its action walks back through `trigger.matched` to the `state.patch` that made the expression true.
-- [ ] An `event` trigger with `filter: "trigger.payload.output == 1"` runs only for that output. A filter that is false journals nothing. A flow that listens to `vh` `routeChanged` with a filter excluding its own route, and acts on `vh`, doesn't loop, including on a live device's echo with no `cause`.
-- [ ] A `branch` step picks the first arm whose `when` is true, or `else`. `steps.<id>.result` from an earlier action is readable in a later step's expression, and steps in arms that didn't run read as `undefined`.
-- [ ] A `waitUntil` step with `until: "vh.outputs[1].source == 4"` finishes as soon as that's true (straight away if it already is), and fails with `timeout` if its `timeout` passes first. Cancelling the run during it ends the run `cancelled`.
-- [ ] `set` writes `local.<name>` (visible to later steps in the same run, gone after it) and `vars.<name>` (a `state.patch` in the journal with `cause` → its `run.step`, visible to bindings and other flows).
-- [ ] A multi-line expression with a `const` lookup table and a `return` works as an action parameter. An expression that writes (`vars.x = 1`), calls `Date.now()` or `Math.random()`, or returns a promise fails with a clear error, and nothing it touched changes.
-- [ ] An expression that throws, loops forever or allocates too much fails its step (or, for a trigger, filter or condition, counts as false and is logged, rate-limited) within the evaluation limits, without stalling the core.
+- [x] An action step whose parameter is `{expr: "vars.nextSource"}` routes `vh` to whatever `vars.nextSource` holds when the step starts. If the value fails the action's params schema, the step fails with code `invalidParams` and the evaluated value is in the error.
+- [x] A flow with a `state` trigger `when: "vh.outputs[1].source == 3"`, `edge: rising` runs once each time output 1 changes to source 3, not when it's already 3 at startup and not again while it stays 3. `why` on its action walks back through `trigger.matched` to the `state.patch` that made the expression true.
+- [x] An `event` trigger with `filter: "trigger.payload.output == 1"` runs only for that output. A filter that is false journals nothing. A flow that listens to `vh` `routeChanged` with a filter excluding its own route, and acts on `vh`, doesn't loop, including on a live device's echo with no `cause`.
+- [x] A `branch` step picks the first arm whose `when` is true, or `else`. `steps.<id>.result` from an earlier action is readable in a later step's expression, and steps in arms that didn't run read as `undefined`.
+- [x] A `waitUntil` step with `until: "vh.outputs[1].source == 4"` finishes as soon as that's true (straight away if it already is), and fails with `timeout` if its `timeout` passes first. Cancelling the run during it ends the run `cancelled`.
+- [x] `set` writes `local.<name>` (visible to later steps in the same run, gone after it) and `vars.<name>` (a `state.patch` in the journal with `cause` → its `run.step`, visible to bindings and other flows).
+- [x] A multi-line expression with a `const` lookup table and a `return` works as an action parameter. An expression that writes (`vars.x = 1`), calls `Date.now()` or `Math.random()`, or returns a promise fails with a clear error, and nothing it touched changes.
+- [x] An expression that throws, loops forever or allocates too much fails its step (or, for a trigger, filter or condition, counts as false and is logged, rate-limited) within the evaluation limits, without stalling the core.
 - [ ] The flow editor edits all of the above: any parameter can switch between a literal and an expression, expressions show a live preview against current state, and `branch` arms nest their own step lists.
 - [ ] A Rust end-to-end test covers the above in CI, with no hardware. A browser smoke test runs one expression flow through the UI.
 
@@ -60,9 +60,10 @@ Flows start reading data. QuickJS arrives in the core ([ADR 0004](../adr/0004-ja
 - Known gap: evaluations run on the async worker that needs them and share one engine, so a slow expression (up to 50 ms) delays others. Fine for flows; revisit with bindings.
 
 ### Phase 3: HTTP API
-- [ ] The flow endpoints accept and return the new shapes; validation problems keep `{path, code, message}`, with expression errors pointing into the source.
-- [ ] `POST /expressions/evaluate {source, trigger?}`: evaluates against live state for the editor's preview and returns `{value?, error?, reads}` (flow spec §9). It never writes, runs actions or journals.
-- [ ] End-to-end tests for every "Done when" item the API can reach, in `crates/covalence-server/tests/`.
+- [x] The flow endpoints accept and return the new shapes (through `save_flow`); validation problems keep `{path, code, message}`, and expression errors add `at` within the source.
+- [x] `POST /expressions/evaluate {source, trigger?}` (`crates/covalence-server/src/flows.rs`): evaluates against live state for the editor's preview, on a blocking thread, and returns `{value?, error?, reads}` (flow spec §9). It never writes, runs actions or journals.
+- [x] `GET /state` and the WebSocket show the `vars` root beside connections and `flow`.
+- [x] End-to-end tests in `crates/covalence-server/tests/flows_api.rs` against the real host and two simulated Videohubs: the preview endpoint, expression params routing to a `set` variable, `invalidParams` before the request, a `state` trigger firing once per rising edge with `why` reaching its `state.patch`, and a filter that keeps a flow acting on its own trigger's connection from looping. Branches, `waitUntil`, cancellation and limits are covered in `crates/covalence-core/tests/flow_runtime.rs` and `expr/tests.rs`.
 
 ### Phase 4: UI
 - [ ] Expression input: CodeMirror 6 with JS highlighting, a one-line field that grows to several lines, inline errors from the server, and a debounced live preview from `POST /expressions/evaluate`.
