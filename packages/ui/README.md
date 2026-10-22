@@ -34,3 +34,9 @@ params are forms generated from the plugin manifest's JSON Schemas
 (`src/forms/schema.ts`); `x-choices: {from: "inputs"}` fills a dropdown from the
 connection's live state. The journal follows the live tail, fetches the backlog
 over `GET /journal`, and refetches any gap.
+
+Flows (`#/flows`, `#/flows/<id>`) are edited as drafts (`src/flows/model.ts`)
+whose types mirror `covalence_core::flow` by hand; `src/flows/model.test.ts`
+checks them against the shared fixtures in `crates/covalence-core/fixtures/flows/`
+(ADR 0020). Run status is live state under `flow`; the runs table follows the
+journal tail for the flow's `trigger.matched` and `run.*` entries.

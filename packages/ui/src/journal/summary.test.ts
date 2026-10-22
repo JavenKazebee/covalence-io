@@ -1,12 +1,15 @@
 import { describe as group, expect, it } from "vitest";
 import type { JournalEntry } from "../live/protocol";
-import { describe, describeOrigin, type SummaryContext } from "./summary";
+import { describe, describeOrigin, toneOf, type SummaryContext } from "./summary";
 
 const CONN = "01M5G0BR216VZXJ28P323QT90B";
 const CALL = "01M5G0BXZ5X3WHGEVZW8PV0WQS";
+const FLOW = "01JC0000000000000000000001";
+const RUN = "01JC00000000000000000RUN042";
 const ctx: SummaryContext = {
   alias: (id) => (id === CONN ? "vh" : id),
   callName: (call) => (call === CALL ? "vh.route" : undefined),
+  flowName: (id) => (id === FLOW ? "Route twice" : id),
 };
 
 function entry(kind: string, data: unknown): JournalEntry {
@@ -45,7 +48,32 @@ group("journal summaries", () => {
     expect(describe(entry("log", { level: "info", message: "plugin host started" }), ctx)).toBe("[info] plugin host started");
   });
 
+  it("follows a flow run from trigger to finish", () => {
+    expect(describe(entry("trigger.matched", { flow: FLOW, trigger: 0 }), ctx)).toBe("Route twice: trigger 1 matched");
+    const blocked = entry("trigger.matched", { flow: FLOW, trigger: 1, blocked: true, reason: "ignore" });
+    expect(describe(blocked, ctx)).toBe("Route twice: trigger 2 matched, blocked (ignore)");
+    expect(toneOf(blocked)).toBe("warn");
+    expect(describe(entry("run.started", { flow: FLOW, run: RUN, mode: "parallel", inputs: {} }), ctx)).toBe(
+      "Route twice: run …RUN042 started (parallel)",
+    );
+    expect(describe(entry("run.step", { run: RUN, step: "route1", status: "started", detail: { position: ["route1"] } }), ctx)).toBe(
+      "run …RUN042 step route1 started",
+    );
+    const failed = entry("run.step", {
+      run: RUN,
+      step: "wait1",
+      status: "failed",
+      detail: { position: ["wait1"], error: { code: "cancelled", message: "run cancelled" } },
+    });
+    expect(describe(failed, ctx)).toBe("run …RUN042 step wait1 failed: cancelled: run cancelled");
+    expect(toneOf(failed)).toBe("bad");
+    expect(describe(entry("run.finished", { run: RUN, status: "ok" }), ctx)).toBe("run …RUN042 ok");
+    expect(toneOf(entry("run.finished", { run: RUN, status: "cancelled" }))).toBe("warn");
+  });
+
   it("describes origins", () => {
+    expect(describeOrigin({ flow: FLOW, run: RUN }, ctx)).toBe("flow Route twice");
+    expect(describeOrigin({ flow: FLOW, run: RUN, step: "route1" }, ctx)).toBe("flow Route twice › route1");
     expect(describeOrigin({ user: "api", client: "http" }, ctx)).toBe("api (http)");
     expect(describeOrigin({ conn: CONN }, ctx)).toBe("vh");
     expect(describeOrigin({ core: "system" }, ctx)).toBe("core system");
