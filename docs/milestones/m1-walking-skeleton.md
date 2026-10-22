@@ -80,7 +80,7 @@ The acceptance test is `crates/covalence-server/tests/e2e.rs` (needs `deno` on t
 
 ## Known gaps, carried forward
 
-- In live mode a Videohub route's `state.patch` arrives with the device's echo, outside the action, so it has no `cause`. Only changes made while an action runs (the simulator, or optimistic writes in `run`) link to it.
+- In live mode a Videohub route's `state.patch` arrives with the device's echo, outside the action, so it has no `cause`. Only changes made while an action runs (the simulator, or optimistic writes in `run`) link to it. So the flow loop guard can't see live loops; since M4 an `event` `filter` that excludes the flow's own change breaks them ([flow spec](../specs/flows.md) §8.6).
 - In simulate mode the simulated device lives in the plugin worker, so a host crash resets it to its initial state.
 
 ## Out of scope

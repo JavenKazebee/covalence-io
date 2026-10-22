@@ -1,6 +1,6 @@
 # Milestone 4: Expressions
 
-- **Status:** In progress (Phases 0–4 done)
+- **Status:** Done
 - **Started:** 2026-10-21
 
 Flows start reading data. QuickJS arrives in the core ([ADR 0004](../adr/0004-javascript-expressions-and-scripts.md)), and expressions can appear in action parameters, wait durations, trigger filters and the new steps. A flow can react to a state value changing, not just to a plugin event. It can see what earlier steps returned, branch on it, wait for a condition, and set run-local and user variables. Expressions can use any JavaScript syntax but can't change anything ([ADR 0021](../adr/0021-expressions-as-sandboxed-snippets.md)). Script steps, which can act, stay out, as do loops and the other blocks.
@@ -16,7 +16,7 @@ Flows start reading data. QuickJS arrives in the core ([ADR 0004](../adr/0004-ja
 - [x] A multi-line expression with a `const` lookup table and a `return` works as an action parameter. An expression that writes (`vars.x = 1`), calls `Date.now()` or `Math.random()`, or returns a promise fails with a clear error, and nothing it touched changes.
 - [x] An expression that throws, loops forever or allocates too much fails its step (or, for a trigger, filter or condition, counts as false and is logged, rate-limited) within the evaluation limits, without stalling the core.
 - [x] The flow editor edits all of the above: any parameter can switch between a literal and an expression, expressions show a live preview against current state, and `branch` arms nest their own step lists.
-- [ ] A Rust end-to-end test covers the above in CI, with no hardware. A browser smoke test runs one expression flow through the UI.
+- [x] A Rust end-to-end test covers the above in CI, with no hardware (`crates/covalence-server/tests/flows_api.rs`, `crates/covalence-core/tests/flow_runtime.rs`). The browser smoke test was dropped from M4 (Phase 5).
 
 ## Phases
 
@@ -76,9 +76,9 @@ Flows start reading data. QuickJS arrives in the core ([ADR 0004](../adr/0004-ja
 - [x] Checked by hand in the browser against a real server and two simulated Videohubs: the fixture flow opens, saves unchanged, shows a broken condition's error under it with its position, runs through its `else` arm, and its `state` trigger fires from an outside route.
 
 ### Phase 5: Acceptance
-- [ ] The Rust end-to-end tests run in the existing `cargo test` CI job.
-- [ ] A browser smoke test in `packages/ui/e2e/`: create a flow with an expression parameter and a `branch`, run it, and see the route change. This also closes M3's gap of nothing in CI checking the Flows UI and API together.
-- [ ] Mark the live-echo loop gap in [M1 known gaps](m1-walking-skeleton.md#known-gaps-carried-forward) and flow spec §8.6 as fixed by filters, or say what's left.
+- [x] The Rust end-to-end tests run in the existing `cargo test` CI job.
+- Dropped: a browser smoke test for flows, as in M3. The expression editor was checked by hand against a real server (Phase 4), and its flow types are tested against the shared fixtures. Nothing in CI checks the Flows UI and API together, so a break between them will only show in use. The M2 smoke test (`packages/ui/e2e/`) is where one would go.
+- [x] The live-echo loop gap is narrowed, not fixed: a `filter` that excludes the flow's own change breaks the loop, but the loop guard still can't see a live echo with no `cause`. Said so in [M1 known gaps](m1-walking-skeleton.md#known-gaps-carried-forward) and flow spec §8.6.
 
 ## Ordering
 
