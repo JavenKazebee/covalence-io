@@ -2,7 +2,7 @@
 //!
 //! Entries get a gap-free `seq` under one lock, are written to SQLite (when a
 //! store is attached) before they become visible, and are kept in an in-memory
-//! ring for fast reads. Only the kinds Milestones 1 and 3 need exist so far.
+//! ring for fast reads. Only the kinds Milestones 1, 3 and 5 need exist so far.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -121,6 +121,10 @@ pub enum Record {
     RunStep(RunStepRecord),
     #[serde(rename = "run.finished")]
     RunFinished(RunFinishedRecord),
+    #[serde(rename = "input.raw")]
+    InputRaw(InputRawRecord),
+    #[serde(rename = "input.gesture")]
+    InputGesture(InputGestureRecord),
 }
 
 impl Record {
@@ -139,6 +143,8 @@ impl Record {
             Record::RunStarted(_) => "run.started",
             Record::RunStep(_) => "run.step",
             Record::RunFinished(_) => "run.finished",
+            Record::InputRaw(_) => "input.raw",
+            Record::InputGesture(_) => "input.gesture",
         }
     }
 }
@@ -338,6 +344,69 @@ impl RunError {
 }
 
 /// An entry before it gets its `seq`, `term` and timestamps.
+/// `input.raw`: one input from a surface, as it arrived (surfaces spec §3).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InputRawRecord {
+    /// The surface's entity ID.
+    pub surface: String,
+    pub control: String,
+    pub kind: InputKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<f64>,
+    /// The host's timestamp, in milliseconds on its own clock.
+    pub device_ts: f64,
+}
+
+/// `input.gesture`: what the core made of raw input (surfaces spec §3).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InputGestureRecord {
+    /// The surface's entity ID.
+    pub surface: String,
+    /// The page shown on the surface when the input arrived, by ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<String>,
+    pub control: String,
+    pub gesture: Gesture,
+    /// `hold`: the repeat count, from 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delta: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InputKind {
+    Down,
+    Up,
+    Turn,
+    Touch,
+    Value,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Gesture {
+    Press,
+    Release,
+    Double,
+    Long,
+    Hold,
+    Turn,
+}
+
+impl Gesture {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Gesture::Press => "press",
+            Gesture::Release => "release",
+            Gesture::Double => "double",
+            Gesture::Long => "long",
+            Gesture::Hold => "hold",
+            Gesture::Turn => "turn",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct NewEntry {
     pub origin: Origin,

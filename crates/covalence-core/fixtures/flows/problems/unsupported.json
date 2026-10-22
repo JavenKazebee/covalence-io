@@ -4,12 +4,7 @@
     "enabled": true,
     "triggers": [
       {
-        "kind": "gesture",
-        "control": {
-          "page": "p",
-          "control": "k1"
-        },
-        "gesture": "press"
+        "kind": "startup"
       },
       {
         "kind": "event",
@@ -17,6 +12,14 @@
           "interface": "router@1"
         },
         "event": "routeChanged"
+      },
+      {
+        "kind": "gesture",
+        "control": {
+          "page": "01JBZ7P0D3F5G7H9J1K3L5M7PA",
+          "control": "k0"
+        },
+        "gesture": "turn"
       }
     ],
     "concurrency": "ignore",
@@ -84,6 +87,14 @@
         "triggers",
         1,
         "source"
+      ],
+      "code": "unsupported"
+    },
+    {
+      "path": [
+        "triggers",
+        2,
+        "gesture"
       ],
       "code": "unsupported"
     },

@@ -22,7 +22,13 @@ pub use quickjs::QuickJs;
 
 /// The reserved roots an expression can read besides connection aliases, as
 /// `(name in expressions, pseudo-connection the state is stored under)`.
-pub const RESERVED_ROOTS: &[(&str, &str)] = &[("vars", "vars"), ("sys", "sys"), ("flow", "flow")];
+pub const RESERVED_ROOTS: &[(&str, &str)] = &[
+    ("vars", "vars"),
+    ("sys", "sys"),
+    ("flow", "flow"),
+    ("surface", "surface"),
+    ("page", "page"),
+];
 
 /// JavaScript's reserved words, which can't be names in an expression.
 const KEYWORDS: &[&str] = &[

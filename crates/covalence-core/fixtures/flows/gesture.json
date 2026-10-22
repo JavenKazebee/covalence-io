@@ -1,0 +1,30 @@
+{
+  "id": "01JC0000000000000000000004",
+  "name": "Route on press",
+  "slug": "routeOnPress",
+  "enabled": true,
+  "triggers": [
+    {
+      "kind": "gesture",
+      "control": { "page": "01JBZ7P0D3F5G7H9J1K3L5M7PA", "control": "k0" },
+      "gesture": "press"
+    },
+    {
+      "kind": "gesture",
+      "control": { "page": "01JBZ7P0D3F5G7H9J1K3L5M7PA", "control": "k14" },
+      "gesture": "hold"
+    }
+  ],
+  "conditions": ["trigger.gesture != \"hold\" || trigger.delta <= 3"],
+  "concurrency": "ignore",
+  "failover": "abort",
+  "body": [
+    {
+      "id": "route1",
+      "kind": "action",
+      "target": { "conn": "01JBZ7P0D3F5G7H9J1K3L5M7N9" },
+      "action": "route",
+      "params": { "output": 1, "input": { "expr": "trigger.control == \"k0\" ? 3 : 4" } }
+    }
+  ]
+}

@@ -11,6 +11,7 @@ pub mod host;
 pub mod journal;
 pub mod schema;
 pub mod state;
+pub mod surface;
 pub mod text_path;
 
 pub use covalence_protocol::PROTOCOL_VERSION;

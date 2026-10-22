@@ -158,8 +158,8 @@ Ordering is defined **only** by `seq` within a log. `ts` is for display.
 
 | Kind | Data | Notes |
 |---|---|---|
-| `input.raw` | `{surface, control, kind: down\|up\|turn\|touch\|value, value?, deviceTs?}` | `deviceTs` comes from the Orbital's clock, if remote |
-| `input.gesture` | `{surface, control, gesture: press\|release\|double\|long\|hold\|turn, delta?}` | `cause` → the `input.raw` entry |
+| `input.raw` | `{surface, control, kind: down\|up\|turn\|touch\|value, value?, deviceTs}` | `surface` is the entity ID. `deviceTs` is the host's clock: the browser's, or the Orbital's if remote |
+| `input.gesture` | `{surface, page?, control, gesture: press\|release\|double\|long\|hold\|turn, delta?}` | `page` is the page ID shown when the input arrived. `cause` → the `input.raw` entry ([surfaces spec §3](surfaces.md)) |
 | `event` | `{source, event, payload}` | From a plugin, the core or a script. From a plugin action: `cause` → the `action.requested` entry |
 | `state.patch` | `{ops: [{path, value} \| {path, delete: true}]}` | Paths stored in ID form. From a plugin action: `cause` → the `action.requested` entry ([plugin protocol](plugin-protocol.md) §6 `call`) |
 | `state.quality` | `{subtree, quality}` | Marks a subtree stale or good |

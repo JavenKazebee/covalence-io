@@ -30,11 +30,16 @@ Covalence gets its first control surface. A virtual Stream Deck in the UI ([ADR 
 - [x] [Flow spec](../specs/flows.md) §8 lists `gesture` triggers as **(M5)**. [Bindings spec](../specs/bindings.md) has a status note, the new evaluation rule in §3, and open question 1 answered. New [surfaces spec](../specs/surfaces.md).
 
 ### Phase 1: Surfaces in the core (Rust)
-- [ ] A `covalence_core::surface` module: attached surfaces and their `ControlDef`s, `surface.<slug>.connected` and `.page` state, and `input.raw` journaling.
-- [ ] The gesture recogniser: `input.raw` → `input.gesture` with `cause`, using the host's `ts`. Unit tests for every gesture, including out-of-order and late events.
-- [ ] `gesture` triggers in the flow model and runtime, with validation that the control exists on the page.
-- [ ] The renderer: a control's resolved look (label, text colour, background) → an image at its native size and format. Snapshot tests.
-- [ ] A simulated surface in the test harness that speaks `surface.*`.
+- [x] `covalence_core::surface` (`Surfaces`): the `surface` and `page` entity types, attached surfaces and their `ControlDef`s, and `surface.<slug>.connected`, `.model` and `.page` written through the journal as `state.patch`. A transport attaches a surface and gets a `Link`: an input sender, whose drop detaches it, and a draw receiver, which closes when a newer attach replaces it. `show` switches pages and checks the layout. A surface that reattaches shows the page it showed last.
+- [x] `input.raw` and `input.gesture` journal records. Gestures carry the page shown when the input arrived, and `cause` → the raw input; a timed `long` or `hold` → its `down`; a release on detach → the `connected: false` patch.
+- [x] The gesture recogniser (`surface::gesture`), on the host's `ts` with a core timer for `long` and `hold`. Unit tests for every gesture, a late `up`, a missed `up`, doubles per control and across a detach.
+- [x] `gesture` triggers in the flow model, validation (`unknownPage`, `unknownControl`; `turn` is `unsupported`) and runtime, matched from `input.gesture` entries beside `event` triggers. `trigger.matched` has the surface as its origin. Fixtures: `gesture.json` and `problems/gestures.json`; `problems/unsupported.json` now uses `startup` and a `turn` gesture.
+- [x] The renderer (`surface::render`): `tiny-skia` and `cosmic-text` with Inter SemiBold embedded (`assets/fonts/`, OFL) and no system fonts. A label shrinks before it breaks a word, wraps to three lines, and only then breaks words and cuts off. Stale keys are dimmed with an amber corner. PNG only. Snapshot tests in `tests/key_images.rs` (`UPDATE_SNAPSHOTS=1` to rewrite them).
+- [x] A simulated 15-key deck in `tests/surfaces.rs`, attaching through `Surfaces` as the web surface will: state on attach and detach, every key drawn, gestures from input and the timer, replacement, page switching, and a `gesture` trigger whose `set` step's `why` reaches `input.raw`.
+- `surface` and `page` are reserved roots in expressions, so a connection alias can't be either.
+- Until bindings arrive (Phase 2), every key is drawn blank, and drawing happens on the caller's thread.
+- The server passes no pages to flow validation until Phase 3, so a `gesture` trigger can't be saved through the API yet.
+- `ControlDef` and `Attach` are Rust types in the core for now. They move into the protocol's TypeSpec when the plugin host carries surfaces.
 
 ### Phase 2: Bindings (Rust)
 - [ ] `page` and `control_binding` entity types and fixtures ([ADR 0020](../adr/0020-project-entity-types-in-the-core.md)), including problem fixtures for each validation error.

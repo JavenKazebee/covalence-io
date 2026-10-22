@@ -393,7 +393,8 @@ impl Drop for Runtime {
     }
 }
 
-/// Fires `event` triggers from plugin events in the journal.
+/// Fires `event` and `gesture` triggers from plugin events and surface
+/// gestures in the journal.
 async fn match_events(inner: Arc<Inner>) {
     let mut feed = inner.shared.journal.subscribe();
     loop {
@@ -405,36 +406,48 @@ async fn match_events(inner: Arc<Inner>) {
             }
             Err(broadcast::error::RecvError::Closed) => return,
         };
-        let Record::Event(event) = &entry.record else {
-            continue;
-        };
-        let Source::Conn(conn) = &event.source else {
-            continue;
-        };
-        let candidates: Vec<(Arc<Flow>, usize)> = inner
-            .book()
-            .flows
-            .values()
-            .filter(|slot| slot.flow.enabled)
-            .filter_map(|slot| {
-                let index = slot.flow.triggers.iter().position(|t| {
+        let (candidates, payload, origin) = match &entry.record {
+            Record::Event(event) => {
+                let Source::Conn(conn) = &event.source else {
+                    continue;
+                };
+                let candidates = inner.candidates(|t| {
                     matches!(t, Trigger::Event { source, event: name, .. }
                         if &source.conn == conn && name == &event.event)
-                })?;
-                Some((slot.flow.clone(), index))
-            })
-            .collect();
-        let mut payload = vec![
-            (
-                "source".into(),
-                Value::Map(vec![("conn".into(), conn.as_str().into())]),
-            ),
-            ("event".into(), event.event.as_str().into()),
-        ];
-        if let Some(p) = &event.payload {
-            payload.push(("payload".into(), p.clone()));
-        }
-        let payload = Value::Map(payload);
+                });
+                let mut payload = vec![
+                    (
+                        "source".into(),
+                        Value::Map(vec![("conn".into(), conn.as_str().into())]),
+                    ),
+                    ("event".into(), event.event.as_str().into()),
+                ];
+                if let Some(p) = &event.payload {
+                    payload.push(("payload".into(), p.clone()));
+                }
+                (candidates, Value::Map(payload), Origin::system())
+            }
+            Record::InputGesture(input) => {
+                let Some(page) = &input.page else { continue };
+                let candidates = inner.candidates(|t| {
+                    matches!(t, Trigger::Gesture { control, gesture }
+                        if &control.page == page
+                            && control.control == input.control
+                            && *gesture == input.gesture)
+                });
+                let mut payload = vec![
+                    ("surface".into(), input.surface.as_str().into()),
+                    ("page".into(), page.as_str().into()),
+                    ("control".into(), input.control.as_str().into()),
+                    ("gesture".into(), input.gesture.as_str().into()),
+                ];
+                if let Some(delta) = input.delta {
+                    payload.push(("delta".into(), delta.into()));
+                }
+                (candidates, Value::Map(payload), entry.origin.clone())
+            }
+            _ => continue,
+        };
         for (flow, trigger) in candidates {
             // A false filter journals nothing (spec §8.2).
             if let Trigger::Event {
@@ -448,7 +461,7 @@ async fn match_events(inner: Arc<Inner>) {
             let fire = Fire {
                 trigger,
                 cause: Some(entry.seq),
-                origin: Origin::system(),
+                origin: origin.clone(),
                 payload: payload.clone(),
                 failed_condition: inner.failed_condition(&flow, &payload),
             };
@@ -510,6 +523,19 @@ struct Fire {
 impl Inner {
     fn book(&self) -> MutexGuard<'_, Book> {
         self.book.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Each enabled flow with a trigger that `matches`, and its index.
+    fn candidates(&self, matches: impl Fn(&Trigger) -> bool) -> Vec<(Arc<Flow>, usize)> {
+        self.book()
+            .flows
+            .values()
+            .filter(|slot| slot.flow.enabled)
+            .filter_map(|slot| {
+                let index = slot.flow.triggers.iter().position(&matches)?;
+                Some((slot.flow.clone(), index))
+            })
+            .collect()
     }
 
     fn watches(&self) -> MutexGuard<'_, BTreeMap<(FlowId, usize), Watch>> {

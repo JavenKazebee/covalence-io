@@ -11,7 +11,9 @@ use std::time::Duration as StdDuration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::journal::Gesture;
 use crate::state::ConnId;
+use crate::surface::PageId;
 
 pub mod runtime;
 mod validate;
@@ -90,6 +92,20 @@ pub enum Trigger {
     },
     /// An expression over state, on an edge (spec §8.2).
     State { when: Expr, edge: Edge },
+    /// A gesture on a control of a page, on any surface showing it
+    /// (surfaces spec §3.1).
+    Gesture {
+        control: ControlRef,
+        gesture: Gesture,
+    },
+}
+
+/// A control on a page.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ControlRef {
+    pub page: PageId,
+    pub control: String,
 }
 
 /// Which change of a `state` trigger's value fires it.

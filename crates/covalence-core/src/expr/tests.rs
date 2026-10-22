@@ -400,6 +400,8 @@ fn names_aliases_cannot_take() {
         "vars",
         "sys",
         "flow",
+        "surface",
+        "page",
         "undefined",
     ] {
         assert!(is_taken_name(taken), "{taken}");

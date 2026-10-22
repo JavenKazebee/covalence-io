@@ -43,7 +43,7 @@ interface Page {                  // project entity `page`
 | Path | Value | Written by |
 |---|---|---|
 | `surface.<slug>.connected` | `boolean` | The core, on attach and detach |
-| `surface.<slug>.page` | page slug, or `null` | The core: `startPage` on attach, then the API (§5) |
+| `surface.<slug>.page` | page slug, or `null` | The core: on attach, the page the surface last showed, or `startPage` the first time; then the API (§5) |
 | `surface.<slug>.model` | `string` | The core, on attach |
 
 - `surface` and `page` are reserved roots: a connection alias can't be either (state spec §1.1).
@@ -54,7 +54,7 @@ interface Page {                  // project entity `page`
 
 ## 3. Input and gestures
 
-Every `surface.input` is journaled as `input.raw` (state spec §2). The core turns raw input into gestures and journals each as `input.gesture`, with `cause` → the `input.raw` entry that completed it.
+Every `surface.input` is journaled as `input.raw` (state spec §2). The core turns raw input into gestures and journals each as `input.gesture`, with the page shown when the input arrived and `cause` → the `input.raw` entry that completed it. A timed `long` or `hold` is caused by the `down` it follows. Input from a control the surface didn't declare is ignored and not journaled.
 
 | Gesture | Fires | Notes |
 |---|---|---|
@@ -73,7 +73,7 @@ Every `surface.input` is journaled as `input.raw` (state spec §2). The core tur
 
 - **Timing comes from the host's `ts`**, so jitter between the device and the core doesn't change what a gesture is. `ts` is monotonic per surface session; it isn't compared with the core's clock.
 - **`long` and `hold` need a timer,** because no input arrives while a key is held. The core starts one when the `down` arrives. If the `up` arrives first and its `ts` shows the key was held for `longAfter` or more (late delivery), `long` fires before `release`. A `hold` repeat that would fire after the `up`'s `ts` doesn't fire.
-- **A detach releases everything:** controls that were down get `release`, with `cause` → the detach.
+- **A detach releases everything:** controls that were down get `release`, with `cause` → the `state.patch` that set `connected: false`.
 
 ### 3.1 `gesture` triggers
 
@@ -82,9 +82,9 @@ Every `surface.input` is journaled as `input.raw` (state spec §2). The core tur
 ```
 
 - The trigger matches a gesture on that control **on any surface that's showing that page** when the input arrives. `page` is a page ID; the editor shows its name.
-- The `trigger` payload is `{surface, page, control, gesture, delta?}`, with `surface` and `page` as slugs.
-- `trigger.matched` has `cause` → the `input.gesture` entry, so `why` on an action reaches the raw input.
-- Validation: the page must exist and `control` must be inside its layout (`unknownControl`).
+- The `trigger` payload is `{surface, page, control, gesture, delta?}`, with `surface` and `page` as entity IDs, as an `event` trigger's `source.conn` is.
+- `trigger.matched` has `cause` → the `input.gesture` entry and the surface as its origin, so `why` on an action reaches the raw input.
+- Validation: the page must exist (`unknownPage`) and `control` must be inside its layout (`unknownControl`). `turn` is `unsupported` until encoders arrive.
 
 ---
 

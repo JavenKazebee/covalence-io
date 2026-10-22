@@ -373,11 +373,15 @@ impl App {
         if flow.slug.is_empty() {
             flow.slug = flow::derive_slug(&flow.name, &taken);
         }
+        // Pages can't be saved until M5 Phase 3, so no `gesture` trigger
+        // validates yet.
+        let pages = BTreeMap::new();
         let report = flow::validate(
             &flow,
             &flow::Context {
                 conns: &by_conn,
                 taken_slugs: &taken,
+                pages: &pages,
                 evaluator: self.evaluator.as_ref(),
             },
         );

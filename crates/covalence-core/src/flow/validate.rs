@@ -12,6 +12,7 @@ use super::{Flow, Step, StepKind, Trigger, WaitFor, param_expr};
 use crate::expr::{At, Evaluator};
 use crate::schema;
 use crate::state::ConnId;
+use crate::surface::{Layout, PageId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,6 +36,10 @@ pub enum Code {
     BadPath,
     /// A `branch` without arms.
     NoArms,
+    /// A `gesture` trigger on a page that doesn't exist.
+    UnknownPage,
+    /// A `gesture` trigger on a control outside its page's layout.
+    UnknownControl,
     // Warnings.
     NoTriggers,
     /// An event trigger on a connection the flow also acts on (spec §8.6).
@@ -86,6 +91,8 @@ pub struct Context<'a> {
     pub conns: &'a BTreeMap<ConnId, Option<&'a Manifest>>,
     /// Slugs taken by other flows.
     pub taken_slugs: &'a BTreeSet<String>,
+    /// Every page's layout, by page ID.
+    pub pages: &'a BTreeMap<PageId, Layout>,
     /// Compiles expressions.
     pub evaluator: &'a dyn Evaluator,
 }
@@ -136,7 +143,7 @@ impl Flow {
     }
 }
 
-const LATER_TRIGGERS: &[&str] = &["gesture", "schedule", "call", "osc", "startup"];
+const LATER_TRIGGERS: &[&str] = &["schedule", "call", "osc", "startup"];
 const LATER_STEPS: &[&str] = &[
     "call", "script", "log", "stop", "break", "continue", "group", "loop", "parallel",
 ];
@@ -171,6 +178,9 @@ fn find_unsupported(json: &Value) -> Vec<Problem> {
         match trigger.get("kind").and_then(Value::as_str) {
             Some(kind) if LATER_TRIGGERS.contains(&kind) => {
                 not_yet(at("kind"), &format!("{kind:?} triggers"))
+            }
+            Some("gesture") if trigger.get("gesture").and_then(Value::as_str) == Some("turn") => {
+                not_yet(at("gesture"), "\"turn\" gestures")
             }
             Some("event") => {
                 let source = trigger.get("source");
@@ -309,6 +319,25 @@ pub fn validate(flow: &Flow, ctx: &Context) -> Report {
                 }
             }
             Trigger::State { when, .. } => v.expr(at("when"), when),
+            Trigger::Gesture { control, .. } => match ctx.pages.get(&control.page) {
+                None => v.error(
+                    path![key("triggers"), index(i), key("control"), key("page")],
+                    Code::UnknownPage,
+                    format!("no page {:?}", control.page),
+                ),
+                Some(layout) if !layout.contains(&control.control) => v.error(
+                    path![key("triggers"), index(i), key("control"), key("control")],
+                    Code::UnknownControl,
+                    format!(
+                        "the page is {}×{}, so its controls are k0 to k{}, not {:?}",
+                        layout.cols,
+                        layout.rows,
+                        (layout.cols * layout.rows).saturating_sub(1),
+                        control.control
+                    ),
+                ),
+                Some(_) => {}
+            },
         }
     }
     for (i, condition) in flow.conditions.iter().enumerate() {
