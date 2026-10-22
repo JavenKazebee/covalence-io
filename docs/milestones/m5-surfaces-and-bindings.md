@@ -78,7 +78,6 @@ Covalence gets its first control surface. A virtual Stream Deck in the UI ([ADR 
 ### Phase 5: Acceptance
 - [ ] The Rust end-to-end tests run in the existing `cargo test` CI job.
 - [ ] Checked by hand in the browser: bind a key to a Videohub output, press another key to route it, and watch the first key change.
-- [ ] Decide whether the browser smoke test dropped from M3 and M4 comes back, now that pressing a key in the UI is the main path through the product.
 
 ## Ordering
 
