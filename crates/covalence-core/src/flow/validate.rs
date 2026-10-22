@@ -8,7 +8,8 @@ use covalence_protocol::state::{Path, PathSegment};
 use serde::Serialize;
 use serde_json::Value;
 
-use super::{Flow, StepKind, Trigger};
+use super::{Flow, Step, StepKind, Trigger, WaitFor, param_expr};
+use crate::expr::{At, Evaluator};
 use crate::schema;
 use crate::state::ConnId;
 
@@ -18,7 +19,7 @@ pub enum Code {
     // Errors.
     /// The JSON doesn't have the shape of a flow.
     Invalid,
-    /// Part of the flow spec that M3 doesn't implement yet.
+    /// Part of the flow spec that isn't implemented yet.
     Unsupported,
     BadId,
     DuplicateId,
@@ -28,21 +29,32 @@ pub enum Code {
     UnknownAction,
     UnknownEvent,
     BadParams,
+    /// An expression that doesn't compile (spec §8.7).
+    ExprSyntax,
+    /// A `set` path that isn't `local.<name>` or `vars.<name>`.
+    BadPath,
+    /// A `branch` without arms.
+    NoArms,
     // Warnings.
     NoTriggers,
     /// An event trigger on a connection the flow also acts on (spec §8.6).
     SelfTrigger,
     /// The connection's plugin hasn't loaded, so its actions and events weren't checked.
     Unchecked,
+    /// A `waitUntil` that may wait forever.
+    NoTimeout,
 }
 
 /// One problem, with its place in the flow as a segment array:
-/// `["body", 1, "params", "input"]`.
+/// `["body", 1, "params", "input"]`. `at` is a position within an
+/// expression's source.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Problem {
     pub path: Path,
     pub code: Code,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub at: Option<At>,
 }
 
 impl Problem {
@@ -51,6 +63,7 @@ impl Problem {
             path,
             code,
             message: message.into(),
+            at: None,
         }
     }
 }
@@ -73,6 +86,8 @@ pub struct Context<'a> {
     pub conns: &'a BTreeMap<ConnId, Option<&'a Manifest>>,
     /// Slugs taken by other flows.
     pub taken_slugs: &'a BTreeSet<String>,
+    /// Compiles expressions.
+    pub evaluator: &'a dyn Evaluator,
 }
 
 fn key(k: &str) -> PathSegment {
@@ -88,8 +103,13 @@ macro_rules! path {
     ($($seg:expr),* $(,)?) => { vec![$($seg),*] };
 }
 
+/// `base` followed by `more`.
+fn join(base: &[PathSegment], more: &[PathSegment]) -> Path {
+    base.iter().chain(more).cloned().collect()
+}
+
 impl Flow {
-    /// Reads a flow from JSON. Parts of the spec that M3 doesn't implement
+    /// Reads a flow from JSON. Parts of the spec that aren't implemented yet
     /// are reported as `unsupported`, with their place in the flow; any other
     /// shape problem is one `invalid` problem.
     pub fn parse(json: &Value) -> Result<Flow, Vec<Problem>> {
@@ -116,26 +136,18 @@ impl Flow {
     }
 }
 
-const LATER_TRIGGERS: &[&str] = &["gesture", "state", "schedule", "call", "osc", "startup"];
+const LATER_TRIGGERS: &[&str] = &["gesture", "schedule", "call", "osc", "startup"];
 const LATER_STEPS: &[&str] = &[
-    "waitUntil",
-    "call",
-    "set",
-    "script",
-    "log",
-    "stop",
-    "break",
-    "continue",
-    "group",
-    "branch",
-    "loop",
-    "parallel",
+    "call", "script", "log", "stop", "break", "continue", "group", "loop", "parallel",
 ];
 
 /// Spec features that a later milestone adds, so the message can say "not
 /// yet" instead of "unknown field".
 fn find_unsupported(json: &Value) -> Vec<Problem> {
     let mut out = Vec::new();
+    let Some(flow) = json.as_object() else {
+        return out;
+    };
     let mut not_yet = |path: Path, what: &str| {
         out.push(Problem::new(
             path,
@@ -143,14 +155,7 @@ fn find_unsupported(json: &Value) -> Vec<Problem> {
             format!("{what} aren't supported yet"),
         ))
     };
-    let Some(flow) = json.as_object() else {
-        return out;
-    };
-    for (field, what) in [
-        ("conditions", "conditions"),
-        ("inputs", "flow inputs"),
-        ("outputs", "flow outputs"),
-    ] {
+    for (field, what) in [("inputs", "flow inputs"), ("outputs", "flow outputs")] {
         if flow.contains_key(field) {
             not_yet(path![key(field)], what);
         }
@@ -168,9 +173,6 @@ fn find_unsupported(json: &Value) -> Vec<Problem> {
                 not_yet(at("kind"), &format!("{kind:?} triggers"))
             }
             Some("event") => {
-                if trigger.get("filter").is_some() {
-                    not_yet(at("filter"), "event filters");
-                }
                 let source = trigger.get("source");
                 if source.is_some_and(|s| s.get("plugin").is_some() || s.get("interface").is_some())
                 {
@@ -180,8 +182,18 @@ fn find_unsupported(json: &Value) -> Vec<Problem> {
             _ => {}
         }
     }
-    for (i, step) in array(flow.get("body")) {
-        let at = |k: &str| path![key("body"), index(i), key(k)];
+    unsupported_steps(flow.get("body"), &[key("body")], &mut not_yet);
+    out
+}
+
+fn unsupported_steps(
+    steps: Option<&Value>,
+    base: &[PathSegment],
+    not_yet: &mut dyn FnMut(Path, &str),
+) {
+    for (i, step) in array(steps) {
+        let here = join(base, &[index(i)]);
+        let at = |k: &str| join(&here, &[key(k)]);
         if step.get("retry").is_some() {
             not_yet(at("retry"), "retries");
         }
@@ -196,21 +208,17 @@ fn find_unsupported(json: &Value) -> Vec<Problem> {
                 } else if target.is_some_and(|t| t.get("key").is_some()) {
                     not_yet(at("target"), "targets narrowed with a key");
                 }
-                if let Some(params) = step.get("params").and_then(Value::as_object) {
-                    for (name, value) in params {
-                        if is_expr(value) {
-                            not_yet(
-                                path![key("body"), index(i), key("params"), key(name)],
-                                "expressions",
-                            );
-                        }
-                    }
+            }
+            Some("branch") => {
+                for (a, arm) in array(step.get("arms")) {
+                    let arm_at = join(&here, &[key("arms"), index(a), key("steps")]);
+                    unsupported_steps(arm.get("steps"), &arm_at, not_yet);
                 }
+                unsupported_steps(step.get("else"), &at("else"), not_yet);
             }
             _ => {}
         }
     }
-    out
 }
 
 fn array(value: Option<&Value>) -> impl Iterator<Item = (usize, &Value)> {
@@ -221,13 +229,6 @@ fn array(value: Option<&Value>) -> impl Iterator<Item = (usize, &Value)> {
         .enumerate()
 }
 
-/// `{expr: "..."}`: an expression where a literal parameter is expected (spec §7).
-fn is_expr(value: &Value) -> bool {
-    value
-        .as_object()
-        .is_some_and(|o| o.len() == 1 && o.contains_key("expr"))
-}
-
 /// `[a-z][A-Za-z0-9_]*`, for step IDs and slugs.
 fn is_identifier(s: &str) -> bool {
     let mut chars = s.chars();
@@ -235,19 +236,41 @@ fn is_identifier(s: &str) -> bool {
         && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
 }
 
+/// A `set` path: `local.<name>` or `vars.<name>`, with one segment
+/// `[A-Za-z_][A-Za-z0-9_]*` (spec §8.3).
+pub fn parse_set_path(path: &str) -> Option<(SetTarget, &str)> {
+    let (root, name) = path.split_once('.')?;
+    let target = match root {
+        "local" => SetTarget::Local,
+        "vars" => SetTarget::Vars,
+        _ => return None,
+    };
+    let mut chars = name.chars();
+    let ok = matches!(chars.next(), Some(c) if c == '_' || c.is_ascii_alphabetic())
+        && chars.all(|c| c == '_' || c.is_ascii_alphanumeric());
+    ok.then_some((target, name))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SetTarget {
+    Local,
+    Vars,
+}
+
 /// Checks a parsed flow against the connections and manifests it refers to.
 pub fn validate(flow: &Flow, ctx: &Context) -> Report {
-    let mut report = Report::default();
-    let mut error = |path: Path, code: Code, message: String| {
-        report.errors.push(Problem::new(path, code, message))
+    let mut v = Validation {
+        ctx,
+        report: Report::default(),
+        seen: BTreeSet::new(),
+        acted_on: BTreeSet::new(),
     };
-    let mut warnings = Vec::new();
 
     if flow.name.trim().is_empty() {
-        error(path![key("name")], Code::Invalid, "name is required".into());
+        v.error(path![key("name")], Code::Invalid, "name is required".into());
     }
     if !is_identifier(&flow.slug) {
-        error(
+        v.error(
             path![key("slug")],
             Code::BadSlug,
             format!(
@@ -256,61 +279,131 @@ pub fn validate(flow: &Flow, ctx: &Context) -> Report {
             ),
         );
     } else if ctx.taken_slugs.contains(&flow.slug) {
-        error(
+        v.error(
             path![key("slug")],
             Code::DuplicateSlug,
             format!("another flow already has slug {:?}", flow.slug),
         );
     }
 
-    // The manifest of a connection, or None after reporting why it can't be checked.
-    let mut manifest_of =
-        |conn: &ConnId, at: Path, error: &mut dyn FnMut(Path, Code, String)| match ctx
-            .conns
-            .get(conn)
+    for (i, trigger) in flow.triggers.iter().enumerate() {
+        let at = |k: &str| path![key("triggers"), index(i), key(k)];
+        match trigger {
+            Trigger::Api {} => {}
+            Trigger::Event {
+                source,
+                event,
+                filter,
+            } => {
+                if let Some(manifest) = v.manifest_of(&source.conn, at("source"))
+                    && !manifest.events.iter().any(|e| &e.id == event)
+                {
+                    v.error(
+                        at("event"),
+                        Code::UnknownEvent,
+                        format!("plugin {} has no event {event:?}", manifest.id),
+                    );
+                }
+                if let Some(filter) = filter {
+                    v.expr(at("filter"), filter);
+                }
+            }
+            Trigger::State { when, .. } => v.expr(at("when"), when),
+        }
+    }
+    for (i, condition) in flow.conditions.iter().enumerate() {
+        v.expr(path![key("conditions"), index(i)], condition);
+    }
+
+    v.steps(&flow.body, &[key("body")]);
+
+    let mut report = v.report;
+    let acted_on = v.acted_on;
+    if flow.triggers.is_empty() {
+        report.warnings.push(Problem::new(
+            path![key("triggers")],
+            Code::NoTriggers,
+            "the flow has no triggers, so nothing can start it",
+        ));
+    }
+    for (i, trigger) in flow.triggers.iter().enumerate() {
+        if let Trigger::Event { source, .. } = trigger
+            && acted_on.contains(&source.conn)
         {
+            report.warnings.push(Problem::new(
+                path![key("triggers"), index(i)],
+                Code::SelfTrigger,
+                "this trigger listens to a connection the flow also acts on, so the flow may start itself; runs it starts that way are blocked",
+            ));
+        }
+    }
+    report
+}
+
+struct Validation<'a> {
+    ctx: &'a Context<'a>,
+    report: Report,
+    /// Step IDs so far, across the whole flow.
+    seen: BTreeSet<String>,
+    /// Connections the flow's action steps act on.
+    acted_on: BTreeSet<ConnId>,
+}
+
+impl<'a> Validation<'a> {
+    fn error(&mut self, path: Path, code: Code, message: String) {
+        self.report.errors.push(Problem::new(path, code, message));
+    }
+
+    fn warn(&mut self, path: Path, code: Code, message: &str) {
+        self.report.warnings.push(Problem::new(path, code, message));
+    }
+
+    /// Reports an expression that doesn't compile.
+    fn expr(&mut self, path: Path, source: &str) {
+        if let Err(e) = self.ctx.evaluator.check(source) {
+            self.report.errors.push(Problem {
+                path,
+                code: Code::ExprSyntax,
+                message: e.message,
+                at: e.at,
+            });
+        }
+    }
+
+    /// The manifest of a connection, or None after reporting why it can't be checked.
+    fn manifest_of(&mut self, conn: &ConnId, at: Path) -> Option<&'a Manifest> {
+        let conns: &'a BTreeMap<ConnId, Option<&'a Manifest>> = self.ctx.conns;
+        match conns.get(conn) {
             None => {
-                let mut at = at;
-                at.push(key("conn"));
-                error(
-                    at,
+                self.error(
+                    join(&at, &[key("conn")]),
                     Code::UnknownConnection,
                     format!("no connection {conn:?}"),
                 );
                 None
             }
             Some(None) => {
-                warnings.push(Problem::new(
+                self.warn(
                     at,
                     Code::Unchecked,
-                    format!("connection {conn:?}'s plugin hasn't loaded, so this wasn't checked"),
-                ));
+                    &format!("connection {conn:?}'s plugin hasn't loaded, so this wasn't checked"),
+                );
                 None
             }
             Some(Some(manifest)) => Some(*manifest),
-        };
-
-    for (i, trigger) in flow.triggers.iter().enumerate() {
-        let Trigger::Event { source, event } = trigger else {
-            continue;
-        };
-        let at = path![key("triggers"), index(i), key("source")];
-        if let Some(manifest) = manifest_of(&source.conn, at, &mut error)
-            && !manifest.events.iter().any(|e| &e.id == event)
-        {
-            error(
-                path![key("triggers"), index(i), key("event")],
-                Code::UnknownEvent,
-                format!("plugin {} has no event {event:?}", manifest.id),
-            );
         }
     }
 
-    let mut seen = BTreeSet::new();
-    for (i, step) in flow.body.iter().enumerate() {
-        let at = |k: &str| path![key("body"), index(i), key(k)];
+    fn steps(&mut self, steps: &[Step], base: &[PathSegment]) {
+        for (i, step) in steps.iter().enumerate() {
+            self.step(step, &join(base, &[index(i)]));
+        }
+    }
+
+    fn step(&mut self, step: &Step, here: &[PathSegment]) {
+        let at = |k: &str| join(here, &[key(k)]);
         if !is_identifier(&step.id) {
-            error(
+            self.error(
                 at("id"),
                 Code::BadId,
                 format!(
@@ -318,69 +411,98 @@ pub fn validate(flow: &Flow, ctx: &Context) -> Report {
                     step.id
                 ),
             );
-        } else if !seen.insert(step.id.as_str()) {
-            error(
+        } else if !self.seen.insert(step.id.clone()) {
+            self.error(
                 at("id"),
                 Code::DuplicateId,
                 format!("another step already has ID {:?}", step.id),
             );
         }
-        let StepKind::Action {
-            target,
-            action,
-            params,
-        } = &step.kind
-        else {
-            continue;
-        };
-        let Some(manifest) = manifest_of(&target.conn, at("target"), &mut error) else {
-            continue;
-        };
-        let Some(def) = manifest.actions.iter().find(|a| &a.id == action) else {
-            error(
-                at("action"),
-                Code::UnknownAction,
-                format!("plugin {} has no action {action:?}", manifest.id),
-            );
-            continue;
-        };
-        let schema = serde_json::to_value(&def.params).expect("manifest values encode as JSON");
-        for mismatch in schema::check(&schema, &Value::Object(params.clone())) {
-            let mut path = at("params");
-            path.extend(mismatch.path);
-            error(path, Code::BadParams, mismatch.message);
+        match &step.kind {
+            StepKind::Action {
+                target,
+                action,
+                params,
+            } => {
+                self.acted_on.insert(target.conn.clone());
+                let mut literal = true;
+                for (name, value) in params {
+                    if let Some(e) = param_expr(value) {
+                        literal = false;
+                        self.expr(join(here, &[key("params"), key(name)]), e);
+                    }
+                }
+                let Some(manifest) = self.manifest_of(&target.conn, at("target")) else {
+                    return;
+                };
+                let Some(def) = manifest.actions.iter().find(|a| &a.id == action) else {
+                    let message = format!("plugin {} has no action {action:?}", manifest.id);
+                    self.error(at("action"), Code::UnknownAction, message);
+                    return;
+                };
+                let schema =
+                    serde_json::to_value(&def.params).expect("manifest values encode as JSON");
+                // Expression parameters are checked when the step runs.
+                let is_expr = |path: &Path| {
+                    !literal
+                        && matches!(path.first(), Some(PathSegment::Key(k))
+                            if params.get(k).and_then(param_expr).is_some())
+                };
+                for mismatch in schema::check(&schema, &Value::Object(params.clone())) {
+                    if is_expr(&mismatch.path) {
+                        continue;
+                    }
+                    self.error(
+                        join(&at("params"), &mismatch.path),
+                        Code::BadParams,
+                        mismatch.message,
+                    );
+                }
+            }
+            StepKind::Wait { duration } => {
+                if let WaitFor::Expr(e) = duration {
+                    self.expr(join(here, &[key("for"), key("expr")]), e);
+                }
+            }
+            StepKind::WaitUntil { until } => {
+                self.expr(at("until"), until);
+                if step.timeout.is_none() {
+                    self.warn(
+                        here.to_vec(),
+                        Code::NoTimeout,
+                        "this step has no timeout, so it may wait forever",
+                    );
+                }
+            }
+            StepKind::Set { path, value } => {
+                if parse_set_path(path).is_none() {
+                    self.error(
+                        at("path"),
+                        Code::BadPath,
+                        format!("{path:?} must be local.<name> or vars.<name>"),
+                    );
+                }
+                self.expr(at("value"), value);
+            }
+            StepKind::Branch { arms, otherwise } => {
+                if arms.is_empty() {
+                    self.error(
+                        at("arms"),
+                        Code::NoArms,
+                        "a branch needs at least one arm".into(),
+                    );
+                }
+                for (a, arm) in arms.iter().enumerate() {
+                    let arm_at = join(here, &[key("arms"), index(a)]);
+                    self.expr(join(&arm_at, &[key("when")]), &arm.when);
+                    self.steps(&arm.steps, &join(&arm_at, &[key("steps")]));
+                }
+                if let Some(otherwise) = otherwise {
+                    self.steps(otherwise, &at("else"));
+                }
+            }
         }
     }
-
-    if flow.triggers.is_empty() {
-        warnings.push(Problem::new(
-            path![key("triggers")],
-            Code::NoTriggers,
-            "the flow has no triggers, so nothing can start it",
-        ));
-    }
-    let acted_on: BTreeSet<&ConnId> = flow
-        .body
-        .iter()
-        .filter_map(|s| match &s.kind {
-            StepKind::Action { target, .. } => Some(&target.conn),
-            StepKind::Wait { .. } => None,
-        })
-        .collect();
-    for (i, trigger) in flow.triggers.iter().enumerate() {
-        if let Trigger::Event { source, .. } = trigger
-            && acted_on.contains(&source.conn)
-        {
-            warnings.push(Problem::new(
-                path![key("triggers"), index(i)],
-                Code::SelfTrigger,
-                "this trigger listens to a connection the flow also acts on, so the flow may start itself; runs it starts that way are blocked",
-            ));
-        }
-    }
-
-    report.warnings = warnings;
-    report
 }
 
 /// A slug from a flow's name: camelCase ASCII, starting with a lowercase

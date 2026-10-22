@@ -318,13 +318,29 @@ async fn flow_requests_are_checked() {
                 "name": "Bad", "enabled": true,
                 "triggers": [{ "kind": "event", "source": { "conn": vh }, "event": "routeChanged" }],
                 "concurrency": "parallel",
-                "conditions": ["vars.armed"],
+                "conditions": ["vars.armed &&"],
+                "inputs": {},
             }),
         )
         .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(body["errors"][0]["path"], json!(["conditions"]));
+    assert_eq!(body["errors"][0]["path"], json!(["inputs"]));
     assert_eq!(body["errors"][0]["code"], "unsupported");
+
+    // An expression that doesn't compile points into its source.
+    let (status, body) = server
+        .post(
+            "/flows",
+            json!({
+                "name": "Bad", "enabled": true, "triggers": [{ "kind": "api" }],
+                "concurrency": "parallel", "conditions": ["vars.armed &&"],
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["errors"][0]["path"], json!(["conditions", 0]));
+    assert_eq!(body["errors"][0]["code"], "exprSyntax");
+    assert_eq!(body["errors"][0]["at"]["line"], 1, "{body}");
 
     let (status, body) = server
         .post(

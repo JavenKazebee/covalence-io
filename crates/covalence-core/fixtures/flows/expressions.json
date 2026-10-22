@@ -1,0 +1,57 @@
+{
+  "id": "01JC0000000000000000000003",
+  "name": "Pick a source",
+  "slug": "pickSource",
+  "enabled": true,
+  "triggers": [
+    {
+      "kind": "event",
+      "source": { "conn": "01JBZ7P0D3F5G7H9J1K3L5M7N9" },
+      "event": "routeChanged",
+      "filter": "trigger.payload?.output == 1"
+    },
+    { "kind": "state", "when": "vh.outputs[1].source == 3", "edge": "rising" }
+  ],
+  "conditions": ["vars.armed"],
+  "concurrency": "restart",
+  "failover": "abort",
+  "body": [
+    {
+      "id": "remember",
+      "kind": "set",
+      "path": "local.input",
+      "value": "vars.nextSource ?? 2"
+    },
+    {
+      "id": "decide",
+      "kind": "branch",
+      "arms": [
+        {
+          "when": "local.input > 4",
+          "steps": [
+            {
+              "id": "high",
+              "kind": "action",
+              "target": { "conn": "01JBZ7P0D3F5G7H9J1K3L5M7NA" },
+              "action": "route",
+              "params": { "output": 1, "input": { "expr": "local.input" } }
+            }
+          ]
+        }
+      ],
+      "else": [{ "id": "pause", "kind": "wait", "for": { "expr": "vars.pauseMs ?? 100" } }]
+    },
+    {
+      "id": "settled",
+      "kind": "waitUntil",
+      "timeout": "5s",
+      "until": "vh2.outputs[1].source == local.input"
+    },
+    {
+      "id": "note",
+      "kind": "set",
+      "path": "vars.lastPick",
+      "value": "const s = steps.high?.status;\nreturn s ?? 'none';"
+    }
+  ]
+}

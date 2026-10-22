@@ -18,7 +18,9 @@ use rquickjs::context::intrinsic;
 use rquickjs::{Context, Ctx, Exception, Function, Runtime};
 use tokio::sync::watch;
 
-use super::{At, Evaluation, Evaluator, ExprCode, ExprError, Limits, RESERVED_ROOTS, Reads, Scope};
+use super::{
+    At, Evaluation, Evaluator, ExprCode, ExprError, Limits, RESERVED_ROOTS, Reads, Scope, to_json,
+};
 use crate::state::{LiveState, Probe, StatePath};
 use crate::text_path;
 
@@ -132,6 +134,23 @@ impl Evaluator for QuickJs {
             .unwrap_or_else(|t| t.borrow().reads.clone());
         Evaluation { value, reads }
     }
+}
+
+/// Every global name an expression sees, besides aliases: built-ins, the
+/// standard library, the scope and the reserved roots.
+pub(super) fn global_names() -> Vec<String> {
+    let engine = QuickJs::default();
+    let state = Arc::new(LiveState::new());
+    let aliases = BTreeMap::new();
+    let scope = Scope::new(&state, &aliases);
+    let tracker = Rc::new(RefCell::new(Tracker::new(state.clone())));
+    engine
+        .run(None, |ctx| {
+            setup(ctx, &scope, &tracker)?;
+            ctx.eval::<Vec<String>, _>("Object.getOwnPropertyNames(globalThis)")
+                .map_err(|e| thrown(ctx, &e))
+        })
+        .expect("listing globals works")
 }
 
 /// A context with only what expressions need.
@@ -397,37 +416,6 @@ fn segments(key: &str) -> Vec<PathSegment> {
     }
     out.push(PathSegment::Key(key.to_owned()));
     out
-}
-
-/// A value going into JavaScript. Binary and extension values have no JSON
-/// form and arrive as `null`; so do NaN and the infinities.
-fn to_json(value: &Value) -> serde_json::Value {
-    use serde_json::Value as J;
-    match value {
-        Value::Nil | Value::Binary(_) | Value::Ext(..) => J::Null,
-        Value::Boolean(b) => J::Bool(*b),
-        Value::Integer(i) => match (i.as_i64(), i.as_u64()) {
-            (Some(n), _) => n.into(),
-            (None, Some(n)) => n.into(),
-            (None, None) => J::Null,
-        },
-        Value::F32(f) => serde_json::Number::from_f64(f64::from(*f)).map_or(J::Null, J::Number),
-        Value::F64(f) => serde_json::Number::from_f64(*f).map_or(J::Null, J::Number),
-        Value::String(s) => J::String(s.as_str().map_or_else(|| s.to_string(), str::to_owned)),
-        Value::Array(items) => J::Array(items.iter().map(to_json).collect()),
-        Value::Map(entries) => J::Object(
-            entries
-                .iter()
-                .map(|(k, v)| {
-                    let key = match k {
-                        Value::String(s) => s.as_str().map_or_else(|| s.to_string(), str::to_owned),
-                        other => other.to_string(),
-                    };
-                    (key, to_json(v))
-                })
-                .collect(),
-        ),
-    }
 }
 
 /// The largest integer JavaScript represents exactly, 2⁵³ − 1.

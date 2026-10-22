@@ -83,6 +83,17 @@ pub trait Actions: Send + Sync + 'static {
         &self,
         req: ActionRequest,
     ) -> Pin<Box<dyn Future<Output = Result<ActionOutcome, CoreError>> + Send + '_>>;
+
+    /// The JSON Schema for an action's params, from its plugin's manifest, so
+    /// params computed by expressions can be checked before the request
+    /// (flow spec §8.3). `None` when it isn't known; the plugin still checks.
+    fn params_schema<'a>(
+        &'a self,
+        _conn: &'a str,
+        _action: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Option<serde_json::Value>> + Send + 'a>> {
+        Box::pin(async { None })
+    }
 }
 
 impl Actions for Core {

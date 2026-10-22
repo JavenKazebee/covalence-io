@@ -121,7 +121,7 @@ async fn create_connection(
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
             format!(
-                "{:?} is not a valid alias: use letters, digits and _, not starting with a digit, and not a reserved root",
+                "{:?} is not a valid alias: use letters, digits and _, not starting with a digit, and not a reserved root or a name expressions already use",
                 req.alias
             ),
         ));
@@ -175,6 +175,7 @@ async fn create_connection(
         .write()
         .unwrap_or_else(|e| e.into_inner())
         .insert(conn.id.clone(), conn.clone());
+    app.sync_aliases();
 
     // The connection stays registered even if the host rejects it, so it is
     // retried after a host restart; report the failure all the same.

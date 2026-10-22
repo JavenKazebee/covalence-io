@@ -33,6 +33,7 @@ use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::time::Duration;
 
 use covalence_core::engine::{ActionOutcome, ActionRequest, Actions};
+use covalence_core::expr::{self, QuickJs};
 use covalence_core::flow::runtime::STATE_ROOT;
 use covalence_core::flow::{self, Flow, FlowId, Runtime};
 use covalence_core::host::{HostConfig, HostPhase};
@@ -183,6 +184,8 @@ pub struct App {
     flows: RwLock<BTreeMap<FlowId, Flow>>,
     /// Runs the flows in `flows`.
     runtime: Runtime,
+    /// Compiles and evaluates expressions, for the runtime and validation.
+    evaluator: Arc<QuickJs>,
     /// Held while a flow is checked and stored, so slugs stay unique.
     saving: Mutex<()>,
     /// Set at shutdown, so long-lived WebSocket sessions let go of the app.
@@ -220,8 +223,14 @@ impl App {
         // here (flow spec §8.4).
         let flows = load(&store, flow::ENTITY, |f: &Flow| f.id.clone())?;
 
+        let evaluator = Arc::new(QuickJs::default());
         let app = Arc::new_cyclic(|app: &Weak<App>| {
-            let runtime = Runtime::start(core.shared().clone(), Arc::new(AppActions(app.clone())));
+            let runtime = Runtime::start(
+                core.shared().clone(),
+                Arc::new(AppActions(app.clone())),
+                evaluator.clone(),
+            );
+            runtime.set_aliases(alias_map(&conns));
             for flow in flows.values() {
                 runtime.set_flow(flow.clone());
             }
@@ -232,6 +241,7 @@ impl App {
                 conns: RwLock::new(conns),
                 flows: RwLock::new(flows),
                 runtime,
+                evaluator,
                 saving: Mutex::new(()),
                 closing: tokio::sync::watch::Sender::new(false),
             }
@@ -275,6 +285,11 @@ impl App {
         self.conns.read().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// Tells the runtime the current aliases, after a connection changes.
+    pub(crate) fn sync_aliases(&self) {
+        self.runtime.set_aliases(alias_map(&self.conns()));
+    }
+
     fn conn_by_alias(&self, alias: &str) -> Option<Connection> {
         self.conns().values().find(|c| c.alias == alias).cloned()
     }
@@ -315,6 +330,7 @@ impl App {
                         path: vec![PathSegment::Key("id".into())],
                         code: flow::Code::Invalid,
                         message: format!("id {:?} doesn't match the URL's {id:?}", flow.id),
+                        at: None,
                     }],
                     warnings: Vec::new(),
                 });
@@ -351,6 +367,7 @@ impl App {
             &flow::Context {
                 conns: &by_conn,
                 taken_slugs: &taken,
+                evaluator: self.evaluator.as_ref(),
             },
         );
         if !report.is_ok() {
@@ -461,6 +478,29 @@ impl Actions for AppActions {
             }
         })
     }
+
+    fn params_schema<'a>(
+        &'a self,
+        conn: &'a str,
+        action: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Option<serde_json::Value>> + Send + 'a>> {
+        let app = self.0.upgrade();
+        Box::pin(async move {
+            let app = app?;
+            let plugin = app.conns().get(conn)?.plugin.clone();
+            let manifest = app.manifest(&plugin).await?;
+            let def = manifest.actions.iter().find(|a| a.id == action)?;
+            serde_json::to_value(&def.params).ok()
+        })
+    }
+}
+
+/// Connection IDs by alias, for expressions.
+fn alias_map(conns: &BTreeMap<ConnId, Connection>) -> BTreeMap<String, ConnId> {
+    conns
+        .values()
+        .map(|c| (c.alias.clone(), c.id.clone()))
+        .collect()
 }
 
 /// Reads every stored entity of one type, keyed by `id`.
@@ -559,11 +599,14 @@ fn resolve_permissions(
     })
 }
 
+/// An identifier that isn't a reserved root and that expressions can read:
+/// not a JavaScript keyword or a name they already have (flow spec §8.7).
 fn is_valid_alias(alias: &str) -> bool {
     let mut chars = alias.chars();
     matches!(chars.next(), Some(c) if c == '_' || c.is_ascii_alphabetic())
         && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
         && !RESERVED_ROOTS.contains(&alias)
+        && !expr::is_taken_name(alias)
 }
 
 #[cfg(test)]
@@ -620,7 +663,9 @@ mod tests {
         for ok in ["vh", "_x", "pp2"] {
             assert!(is_valid_alias(ok), "{ok}");
         }
-        for bad in ["", "2vh", "v h", "v.h", "vars", "sys"] {
+        for bad in [
+            "", "2vh", "v h", "v.h", "vars", "sys", "var", "if", "Math", "steps",
+        ] {
             assert!(!is_valid_alias(bad), "{bad}");
         }
     }

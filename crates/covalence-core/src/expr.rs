@@ -24,6 +24,68 @@ pub use quickjs::QuickJs;
 /// `(name in expressions, pseudo-connection the state is stored under)`.
 pub const RESERVED_ROOTS: &[(&str, &str)] = &[("vars", "vars"), ("sys", "sys"), ("flow", "flow")];
 
+/// JavaScript's reserved words, which can't be names in an expression.
+const KEYWORDS: &[&str] = &[
+    "await",
+    "break",
+    "case",
+    "catch",
+    "class",
+    "const",
+    "continue",
+    "debugger",
+    "default",
+    "delete",
+    "do",
+    "else",
+    "enum",
+    "export",
+    "extends",
+    "false",
+    "finally",
+    "for",
+    "function",
+    "if",
+    "implements",
+    "import",
+    "in",
+    "instanceof",
+    "interface",
+    "let",
+    "new",
+    "null",
+    "package",
+    "private",
+    "protected",
+    "public",
+    "return",
+    "static",
+    "super",
+    "switch",
+    "this",
+    "throw",
+    "true",
+    "try",
+    "typeof",
+    "var",
+    "void",
+    "while",
+    "with",
+    "yield",
+    "arguments",
+];
+
+/// Whether `name` can't be a connection alias, because an expression would
+/// read something else by it: a JavaScript keyword, a built-in such as
+/// `Math`, the standard library, `trigger`, `local`, `steps` or a reserved root.
+pub fn is_taken_name(name: &str) -> bool {
+    static GLOBALS: std::sync::OnceLock<BTreeSet<String>> = std::sync::OnceLock::new();
+    KEYWORDS.contains(&name)
+        || GLOBALS
+            .get_or_init(|| quickjs::global_names().into_iter().collect())
+            .contains(name)
+}
+
 /// Per-evaluation limits (ADR 0021).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Limits {
@@ -158,6 +220,51 @@ impl ExprCode {
 pub struct At {
     pub line: u32,
     pub column: u32,
+}
+
+/// A value as JSON, as it goes into JavaScript. Binary and extension values have no JSON
+/// form and arrive as `null`; so do NaN and the infinities.
+pub fn to_json(value: &Value) -> serde_json::Value {
+    use serde_json::Value as J;
+    match value {
+        Value::Nil | Value::Binary(_) | Value::Ext(..) => J::Null,
+        Value::Boolean(b) => J::Bool(*b),
+        Value::Integer(i) => match (i.as_i64(), i.as_u64()) {
+            (Some(n), _) => n.into(),
+            (None, Some(n)) => n.into(),
+            (None, None) => J::Null,
+        },
+        Value::F32(f) => serde_json::Number::from_f64(f64::from(*f)).map_or(J::Null, J::Number),
+        Value::F64(f) => serde_json::Number::from_f64(*f).map_or(J::Null, J::Number),
+        Value::String(s) => J::String(s.as_str().map_or_else(|| s.to_string(), str::to_owned)),
+        Value::Array(items) => J::Array(items.iter().map(to_json).collect()),
+        Value::Map(entries) => J::Object(
+            entries
+                .iter()
+                .map(|(k, v)| {
+                    let key = match k {
+                        Value::String(s) => s.as_str().map_or_else(|| s.to_string(), str::to_owned),
+                        other => other.to_string(),
+                    };
+                    (key, to_json(v))
+                })
+                .collect(),
+        ),
+    }
+}
+
+/// Whether a result counts as true where an expression decides something:
+/// JavaScript truthiness, with `None` as `undefined` (spec §8.7).
+pub fn truthy(value: Option<&Value>) -> bool {
+    match value {
+        None | Some(Value::Nil) => false,
+        Some(Value::Boolean(b)) => *b,
+        Some(Value::Integer(i)) => i.as_i64() != Some(0),
+        Some(Value::F32(f)) => *f != 0.0 && !f.is_nan(),
+        Some(Value::F64(f)) => *f != 0.0 && !f.is_nan(),
+        Some(Value::String(s)) => !s.as_bytes().is_empty(),
+        Some(_) => true,
+    }
 }
 
 #[cfg(test)]

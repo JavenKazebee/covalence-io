@@ -5,6 +5,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use covalence_core::expr::QuickJs;
 use covalence_core::flow::{self, Context, Flow};
 use covalence_protocol::plugin::Manifest;
 use serde_json::{Value, json};
@@ -82,9 +83,11 @@ fn check(json: &Value) -> (Value, Value) {
     ]
     .into();
     let taken: BTreeSet<String> = ["taken".to_owned()].into();
+    let evaluator = QuickJs::default();
     let ctx = Context {
         conns: &conns,
         taken_slugs: &taken,
+        evaluator: &evaluator,
     };
     match Flow::parse(json) {
         Err(errors) => (summary(&errors), json!([])),
@@ -145,6 +148,7 @@ fn problems_say_what_is_wrong() {
         &Context {
             conns: &conns,
             taken_slugs: &BTreeSet::new(),
+            evaluator: &QuickJs::default(),
         },
     );
     let messages: Vec<&str> = report.errors.iter().map(|p| p.message.as_str()).collect();

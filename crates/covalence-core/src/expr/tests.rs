@@ -386,6 +386,30 @@ fn standard_library() {
 }
 
 #[test]
+fn names_aliases_cannot_take() {
+    for taken in [
+        "var",
+        "if",
+        "Math",
+        "JSON",
+        "clamp",
+        "mmss",
+        "trigger",
+        "steps",
+        "local",
+        "vars",
+        "sys",
+        "flow",
+        "undefined",
+    ] {
+        assert!(is_taken_name(taken), "{taken}");
+    }
+    for free in ["vh", "atem", "cam1", "Stage"] {
+        assert!(!is_taken_name(free), "{free}");
+    }
+}
+
+#[test]
 fn aliases_cannot_hide_globals() {
     let live = state();
     let aliases = BTreeMap::from([

@@ -1,6 +1,6 @@
 # Milestone 4: Expressions
 
-- **Status:** In progress (Phases 0–1 done)
+- **Status:** In progress (Phases 0–2 done)
 - **Started:** 2026-10-21
 
 Flows start reading data. QuickJS arrives in the core ([ADR 0004](../adr/0004-javascript-expressions-and-scripts.md)), and expressions can appear in action parameters, wait durations, trigger filters and the new steps. A flow can react to a state value changing, not just to a plugin event. It can see what earlier steps returned, branch on it, wait for a condition, and set run-local and user variables. Expressions can use any JavaScript syntax but can't change anything ([ADR 0021](../adr/0021-expressions-as-sandboxed-snippets.md)). Script steps, which can act, stay out, as do loops and the other blocks.
@@ -44,15 +44,20 @@ Flows start reading data. QuickJS arrives in the core ([ADR 0004](../adr/0004-ja
 - Carried to Phase 2: aliases that are JavaScript keywords or global names (`if`, `Math`, `clamp`, `steps`) can't be read in expressions. The engine leaves such names unbound rather than hiding a global; alias validation in the server should reject them.
 
 ### Phase 2: Flow model and runtime (Rust)
-- [ ] Flow types gain `{expr}` params, `wait.for` as an expression, `state` triggers, `event` `filter`, flow `conditions`, and the `branch`, `waitUntil` and `set` steps. `Flow::parse` still rejects everything else with its path.
-- [ ] Validation: expression syntax (by compiling it), `set` paths that aren't `local.<name>` or `vars.<name>`, duplicate step IDs across nested arms. Literal params are still checked against the schema; expression params are checked at run time. Step references aren't checked by the core.
-- [ ] Fixtures in `crates/covalence-core/fixtures/flows/` for each new shape, and `problems/` for each new error.
-- [ ] `steps.<id>` results `{status, result?, error?, startedAt, durationMs}` kept per run. `local` kept per run.
-- [ ] `branch`: positions become nested (`[branch1, route2]`). `run.step` entries for the branch itself and for its chosen arm's steps.
-- [ ] `waitUntil` subscribes to its read set, re-evaluates on change and wakes on cancel or timeout.
-- [ ] `set` on `vars` goes through the state store as a `state.patch` with origin `{flow, run, step}` and `cause` → its `run.step`.
-- [ ] Trigger matcher for `state` triggers: evaluate on load and whenever the read set changes, fire on the chosen edge, `cause` → the `state.patch` entry. Filters and conditions are evaluated with `trigger` in scope before the concurrency mode is applied.
-- [ ] The loop guard (§8.6) also covers `state` triggers.
+- [x] Flow types gain `{expr}` params, `wait.for` as an expression (`WaitFor`), `state` triggers (`Edge`), `event` `filter`, flow `conditions`, and the `branch`, `waitUntil` and `set` steps. `Flow::parse` still rejects everything else with its path, including inside `branch` arms.
+- [x] Validation: expressions are compiled through the `Evaluator` in `flow::Context` (`exprSyntax`, with `at`), `set` paths (`badPath`), branches without arms (`noArms`), step IDs unique across nested arms. Literal params are checked against the schema; expression params are skipped. A `waitUntil` without a `timeout` is a warning (`noTimeout`).
+- [x] Fixtures: `expressions.json` uses every new shape; `problems/expressions.json` has each new error; `problems/unsupported.json` now covers what's still later, including nested in a branch.
+- [x] `steps.<id>` results `{status, result?, error?, startedAt, durationMs}` and `local`, kept per run.
+- [x] `branch`: nested positions (`[pick, two]`), and the branch's `done` entry carries `arm`.
+- [x] `waitUntil` subscribes to the state feed, re-evaluates when its read set changes, and wakes on cancel or timeout.
+- [x] `set` on `vars` journals a `state.patch` with origin `{flow, run, step}` and `cause` → its `run.step`, then applies it.
+- [x] `state` triggers: a watcher task re-evaluates them once per batch of state changes that touches their read set, and fires on the edge, `cause` → the latest `state.patch` it read. Saving a flow sets a baseline that never fires. Filters and conditions are evaluated outside the runtime's lock, before the concurrency mode.
+- [x] The loop guard (§8.6) covers `state` triggers, including a flow that writes what it watches.
+- [x] Expression params are checked against the action's schema before the request (`invalidParams`), through a new `Actions::params_schema`.
+- [x] Aliases that are JavaScript keywords or names expressions already have (`var`, `if`, `Math`, `clamp`, `steps`) are rejected when a connection is created (`expr::is_taken_name`). The runtime gets aliases from the server through `Runtime::set_aliases`.
+- [x] Tests: `crates/covalence-core/tests/flow_runtime.rs` covers expression params, step results, `branch`, conditions, filters, `state` edges and their cause, the loop guard, `waitUntil` and cancelling it.
+- Known gap: a `timeout` on a `branch` stops the block by dropping it, so a step running inside it is journaled `started` with no end. Fix when blocks get proper cancellation (`group`, `loop`).
+- Known gap: evaluations run on the async worker that needs them and share one engine, so a slow expression (up to 50 ms) delays others. Fine for flows; revisit with bindings.
 
 ### Phase 3: HTTP API
 - [ ] The flow endpoints accept and return the new shapes; validation problems keep `{path, code, message}`, with expression errors pointing into the source.

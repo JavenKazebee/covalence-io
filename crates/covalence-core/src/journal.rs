@@ -245,6 +245,9 @@ pub struct TriggerMatchedRecord {
     pub blocked: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<BlockReason>,
+    /// With reason `condition`: the index of the first falsy condition.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub condition: Option<u32>,
 }
 
 /// Why a matched trigger started no run.
@@ -257,6 +260,8 @@ pub enum BlockReason {
     QueueFull,
     /// The trigger descends from a run of the same flow (flow spec §8.6).
     Loop,
+    /// One of the flow's conditions was falsy; `condition` says which.
+    Condition,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -289,6 +294,10 @@ pub enum StepStatus {
 pub struct StepDetail {
     /// Step IDs from the body down to this step (flow spec §5.1).
     pub position: Vec<String>,
+    /// On a `branch`'s `done` entry: the chosen arm's index, `"else"`, or
+    /// `null` when nothing ran (flow spec §8.5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arm: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<RunError>,
 }

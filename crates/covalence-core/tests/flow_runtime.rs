@@ -9,14 +9,16 @@ use std::time::Duration;
 
 use covalence_core::Shared;
 use covalence_core::engine::{ActionOutcome, ActionRequest, Actions, CoreError};
+use covalence_core::expr::QuickJs;
 use covalence_core::flow::runtime::{FireOutcome, QUEUE_LIMIT, RunInfo, RunPhase, STATE_ROOT};
 use covalence_core::flow::{Flow, Runtime};
 use covalence_core::gate::Verdict;
 use covalence_core::journal::{
-    ActionRequestedRecord, ActionResultRecord, BlockReason, Entry, EventRecord, Journal, NewEntry,
-    Origin, Record, Seq,
+    ActionRequestedRecord, ActionResultRecord, BlockReason, Entry, EventRecord, Journal, JournalOp,
+    NewEntry, Origin, Record, Seq, StatePatchRecord, StepDetail, StepStatus, TriggerMatchedRecord,
 };
-use covalence_core::state::{Source, StatePath};
+use covalence_core::state::{Meta, Quality, Source, StatePath};
+use covalence_protocol::Value;
 use covalence_protocol::state::PathSegment;
 use covalence_protocol::{ErrorCode, ProtocolError};
 use serde_json::json;
@@ -129,7 +131,7 @@ impl World {
             delay,
             failing: Mutex::new(BTreeSet::new()),
         });
-        let runtime = Runtime::start(shared.clone(), fake.clone());
+        let runtime = Runtime::start(shared.clone(), fake.clone(), Arc::new(QuickJs::default()));
         World {
             shared,
             fake,
@@ -685,4 +687,350 @@ async fn shutdown_cancels_active_runs() {
     let last = shared.journal.range(1, usize::MAX).unwrap().pop().unwrap();
     assert_eq!(describe(&last), "run.finished cancelled");
     assert_eq!(last.run.as_deref(), Some(run.as_str()));
+}
+
+// ---------------------------------------------------------------------------
+// Expressions (M4 Phase 2)
+
+impl World {
+    /// Sets a state leaf the way a plugin's patch does: journaled, then applied.
+    fn set_state(&self, conn: &str, path: &[&str], value: Value) -> Seq {
+        let at = StatePath::new(
+            conn,
+            path.iter()
+                .map(|s| match s.parse() {
+                    Ok(i) => PathSegment::Index(i),
+                    Err(_) => PathSegment::Key((*s).into()),
+                })
+                .collect(),
+        );
+        let journal = self.shared.journal.clone();
+        self.shared.state.mutate(|tree| {
+            let seq = journal
+                .append(NewEntry::new(
+                    Origin::conn(conn),
+                    Record::StatePatch(StatePatchRecord {
+                        ops: vec![JournalOp::Set {
+                            path: at.clone(),
+                            value: value.clone(),
+                        }],
+                        replaces: None,
+                    }),
+                ))
+                .unwrap()
+                .seq;
+            let meta = Meta {
+                ts: 1,
+                seq,
+                quality: Quality::Good,
+                source: Source::Conn(conn.into()),
+            };
+            (seq, tree.set(&at, &value, &meta))
+        })
+    }
+
+    fn var(&self, name: &str) -> Option<serde_json::Value> {
+        self.shared
+            .state
+            .value(&StatePath::new("vars", vec![PathSegment::Key(name.into())]))
+            .map(|v| serde_json::to_value(v).unwrap())
+    }
+
+    fn emit(&self, conn: &str, payload: serde_json::Value) {
+        self.shared
+            .journal
+            .append(NewEntry::new(
+                Origin::conn(conn),
+                Record::Event(EventRecord {
+                    source: Source::Conn(conn.into()),
+                    event: "routeChanged".into(),
+                    payload: Some(covalence_protocol::to_value(&payload).unwrap()),
+                }),
+            ))
+            .unwrap();
+    }
+
+    fn matched(&self) -> Vec<TriggerMatchedRecord> {
+        self.entries()
+            .iter()
+            .filter_map(|e| match &e.record {
+                Record::TriggerMatched(m) => Some(m.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn step_detail(&self, run: &str, step: &str, status: StepStatus) -> StepDetail {
+        self.entries()
+            .iter()
+            .find_map(|e| match &e.record {
+                Record::RunStep(s)
+                    if e.run.as_deref() == Some(run) && s.step == step && s.status == status =>
+                {
+                    s.detail.clone()
+                }
+                _ => None,
+            })
+            .expect("a matching run.step")
+    }
+
+    fn requested_params(&self) -> Vec<serde_json::Value> {
+        self.entries()
+            .iter()
+            .filter_map(|e| match &e.record {
+                Record::ActionRequested(r) => Some(serde_json::to_value(&r.params).unwrap()),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+fn set(id: &str, path: &str, value: &str) -> serde_json::Value {
+    json!({ "id": id, "kind": "set", "path": path, "value": value })
+}
+
+#[tokio::test(start_paused = true)]
+async fn expressions_read_vars_locals_and_earlier_steps() {
+    let world = World::new();
+    world.set_state("vars", &["nextSource"], Value::from(5));
+    world.add(api_flow(
+        "pick",
+        "parallel",
+        json!([
+            set("remember", "local.input", "vars.nextSource"),
+            {
+                "id": "route1", "kind": "action", "target": { "conn": VH },
+                "action": "route", "params": { "output": 1, "input": { "expr": "local.input" } },
+            },
+            set("note", "vars.lastStatus", "steps.route1.status + ':' + steps.remember.status"),
+            { "id": "pause", "kind": "wait", "for": { "expr": "steps.route1.durationMs + 250" } },
+        ]),
+    ));
+    let run = world.start("pick");
+    let info = world.finished(&run).await;
+    assert_eq!(info.status, RunPhase::Ok, "{info:?}");
+    assert_eq!(
+        world.requested_params(),
+        [json!({ "output": 1, "input": 5 })]
+    );
+    assert_eq!(world.var("lastStatus"), Some(json!("done:done")));
+
+    // The variable's patch walks back to the run.
+    let patch = world.last_of(|e| matches!(e.record, Record::StatePatch(_)) && e.run.is_some());
+    assert_eq!(
+        world.why(patch.seq),
+        ["state.patch", "run.step", "run.started", "trigger.matched"]
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_failing_expression_fails_its_step() {
+    let world = World::new();
+    world.add(api_flow(
+        "f",
+        "parallel",
+        json!([{
+            "id": "route1", "kind": "action", "target": { "conn": VH },
+            "action": "route", "params": { "output": 1, "input": { "expr": "nothing.here" } },
+        }]),
+    ));
+    let run = world.start("f");
+    let info = world.finished(&run).await;
+    assert_eq!(info.status, RunPhase::Failed);
+    let error = info.error.unwrap();
+    assert_eq!(error.code, "exprError", "{error:?}");
+    assert!(world.requested_params().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_branch_runs_the_first_truthy_arm() {
+    let world = World::new();
+    let flow = |id: &str| {
+        api_flow(
+            id,
+            "parallel",
+            json!([{
+                "id": "pick", "kind": "branch",
+                "arms": [
+                    { "when": "vars.n == 1", "steps": [route("one", VH, 1, 1)] },
+                    { "when": "vars.n == 2", "steps": [route("two", VH, 1, 2)] },
+                ],
+                "else": [wait("rest", "1s")],
+            }]),
+        )
+    };
+    world.add(flow("b"));
+    world.set_state("vars", &["n"], Value::from(2));
+    let run = world.start("b");
+    assert_eq!(world.finished(&run).await.status, RunPhase::Ok);
+    assert_eq!(
+        world.entries_of_run(&run),
+        [
+            "run.started",
+            "run.step pick started",
+            "run.step two started",
+            "action.requested",
+            "event",
+            "action.result",
+            "run.step two done",
+            "run.step pick done",
+            "run.finished ok",
+        ]
+    );
+    assert_eq!(
+        world.step_detail(&run, "two", StepStatus::Done).position,
+        ["pick", "two"]
+    );
+    assert_eq!(
+        world.step_detail(&run, "pick", StepStatus::Done).arm,
+        Some(json!(1))
+    );
+
+    world.set_state("vars", &["n"], Value::from(9));
+    let run = world.start("b");
+    world.finished(&run).await;
+    assert_eq!(
+        world.step_detail(&run, "pick", StepStatus::Done).arm,
+        Some(json!("else"))
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_falsy_condition_blocks_the_run() {
+    let world = World::new();
+    let mut flow = api_flow("c", "parallel", json!([wait("w", "1s")]));
+    flow["conditions"] = json!(["true", "vars.armed"]);
+    world.add(flow);
+    assert_eq!(
+        world.fire("c"),
+        FireOutcome::Blocked(BlockReason::Condition)
+    );
+    let matched = world.matched().pop().unwrap();
+    assert_eq!(
+        (matched.reason, matched.condition),
+        (Some(BlockReason::Condition), Some(1))
+    );
+
+    world.set_state("vars", &["armed"], Value::from(true));
+    assert!(matches!(world.fire("c"), FireOutcome::Started(_)));
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_event_filter_picks_events_and_a_false_one_journals_nothing() {
+    let world = World::new();
+    world.add(json!({
+        "id": "f", "name": "f", "slug": "f", "enabled": true,
+        "triggers": [{
+            "kind": "event", "source": { "conn": VH }, "event": "routeChanged",
+            "filter": "trigger.payload?.output == 1",
+        }],
+        "concurrency": "parallel",
+        "body": [wait("w", "1s")],
+    }));
+    world.emit(VH, json!({ "output": 2 }));
+    world.settle().await;
+    assert!(world.matched().is_empty());
+    world.emit(VH, json!({ "output": 1 }));
+    world.settle().await;
+    assert_eq!(world.matched().len(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_state_trigger_fires_on_its_edge_only() {
+    let world = World::new();
+    world
+        .runtime
+        .set_aliases([("vh".to_owned(), VH.to_owned())].into());
+    world.set_state(VH, &["outputs", "1", "source"], Value::from(3));
+    world.add(json!({
+        "id": "s", "name": "s", "slug": "s", "enabled": true,
+        "triggers": [{ "kind": "state", "when": "vh.outputs[1].source == 3", "edge": "rising" }],
+        "concurrency": "parallel",
+        "body": [{ "id": "seen", "kind": "set", "path": "local.v", "value": "trigger.value" }],
+    }));
+    // Already true when loaded: the baseline never fires.
+    world.settle().await;
+    assert!(world.matched().is_empty());
+
+    world.set_state(VH, &["outputs", "1", "source"], Value::from(4));
+    world.settle().await;
+    let patch = world.set_state(VH, &["outputs", "1", "source"], Value::from(3));
+    world.settle().await;
+    let matched = world.last_of(|e| matches!(e.record, Record::TriggerMatched(_)));
+    assert_eq!(matched.cause, Some(patch));
+    // An unrelated change, or the same value again, doesn't fire.
+    world.set_state(VH, &["outputs", "0", "source"], Value::from(9));
+    world.set_state(VH, &["outputs", "1", "source"], Value::from(3));
+    world.settle().await;
+    assert_eq!(world.matched().len(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_state_trigger_on_what_its_flow_writes_is_a_loop() {
+    let world = World::new();
+    world.add(json!({
+        "id": "l", "name": "l", "slug": "l", "enabled": true,
+        "triggers": [
+            { "kind": "state", "when": "vars.count", "edge": "change" },
+            { "kind": "api" },
+        ],
+        "concurrency": "parallel",
+        "body": [set("bump", "vars.count", "(vars.count ?? 0) + 1")],
+    }));
+    let run = world.start("l");
+    world.finished(&run).await;
+    world.settle().await;
+    let matched = world.matched();
+    assert_eq!(matched.len(), 2, "{matched:?}");
+    assert_eq!(matched[1].reason, Some(BlockReason::Loop));
+    assert_eq!(world.var("count"), Some(json!(1)));
+}
+
+#[tokio::test(start_paused = true)]
+async fn wait_until_waits_for_a_change_or_times_out() {
+    let world = World::new();
+    world.add(api_flow(
+        "w",
+        "parallel",
+        json!([
+            { "id": "ready", "kind": "waitUntil", "until": "vars.ready", "timeout": "10s" },
+            set("got", "local.v", "steps.ready.result.value"),
+        ]),
+    ));
+    let run = world.start("w");
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(world.runtime.run(&run).unwrap().status, RunPhase::Running);
+    world.set_state("vars", &["ready"], Value::from("yes"));
+    let info = world.finished(&run).await;
+    assert_eq!(info.status, RunPhase::Ok);
+    assert!(info.duration_ms.unwrap() < 3_000, "{info:?}");
+
+    // Already true: done at once. Never true: the timeout.
+    let run = world.start("w");
+    assert_eq!(world.finished(&run).await.status, RunPhase::Ok);
+    world.set_state("vars", &["ready"], Value::from(false));
+    let run = world.start("w");
+    let info = world.finished(&run).await;
+    assert_eq!(info.error.map(|e| e.code), Some("timeout".into()));
+}
+
+#[tokio::test(start_paused = true)]
+async fn cancelling_during_wait_until_stops_the_run() {
+    let world = World::new();
+    world.add(api_flow(
+        "w",
+        "parallel",
+        json!([{ "id": "ready", "kind": "waitUntil", "until": "vars.never" }]),
+    ));
+    let run = world.start("w");
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    world.runtime.cancel(&run).unwrap();
+    assert_eq!(world.finished(&run).await.status, RunPhase::Cancelled);
+    assert_eq!(
+        world
+            .step_detail(&run, "ready", StepStatus::Failed)
+            .error
+            .map(|e| e.code),
+        Some("cancelled".into())
+    );
 }
