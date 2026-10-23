@@ -431,6 +431,23 @@ async fn bindings_preview_with_their_look_and_image() {
     assert_eq!(&png[1..4], b"PNG");
     assert_eq!(png_size(&png), (KEY, KEY));
 
+    // A `map` picks from a list of colours: source 1 of 0–12 is the first.
+    let (status, body) = preview(json!({
+        "layer": id(&layer), "control": "k1",
+        "props": {
+            "label": { "kind": "value", "path": { "conn": vh, "path": ["outputs", 1, "source"] } },
+            "background": {
+                "kind": "map", "path": { "conn": vh, "path": ["outputs", 1, "source"] },
+                "from": [0, 12], "to": ["#00ff00", "#ffff00", "#ff0000"],
+            },
+        },
+    }))
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["look"]["label"], "1");
+    assert_eq!(body["look"]["background"], "#00ff00");
+    assert!(body["props"]["background"]["expr"].is_string(), "{body}");
+
     let (status, body) = server
         .post(
             "/control-bindings/preview",

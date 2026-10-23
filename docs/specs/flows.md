@@ -249,7 +249,7 @@ Keys appear in a fixed order. Fields that are always expressions (`when`, `until
 This section is what the core accepts today.
 - [Milestone 3](../milestones/m3-first-flows.md) implemented the Button-view shape (§6) without expressions.
 - [Milestone 4](../milestones/m4-expressions.md) adds expressions (§8.7), `state` triggers, `event` filters, flow conditions, and the `branch`, `waitUntil` and `set` steps. Rules that M4 adds or changes are marked **(M4)**.
-- [Milestone 5](../milestones/m5-surfaces-and-bindings.md) adds `gesture` triggers, marked **(M5)**. M5 Phase 5 replaces them with `control` triggers on input events ([ADR 0024](../adr/0024-surfaces-as-two-way-devices.md)), marked **(Now)**. Rules marked **(Later)** have no milestone yet.
+- [Milestone 5](../milestones/m5-surfaces-and-bindings.md) adds `gesture` triggers, marked **(M5)**. M5 Phase 5 replaced them with `control` triggers on input events ([ADR 0024](../adr/0024-surfaces-as-two-way-devices.md)), marked **(Now)** and implemented; the **(M5)** `gesture` rows describe what's gone. Rules marked **(Later)** have no milestone yet.
 
 **Anything outside this section is rejected on save with an error, never stored and ignored.** Types live in `covalence_core::flow` ([ADR 0020](../adr/0020-project-entity-types-in-the-core.md)).
 

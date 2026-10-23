@@ -3,15 +3,22 @@
 //! value, and dim when a value is stale.
 
 use std::collections::BTreeMap;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
 
 use covalence_core::Shared;
 use covalence_core::binding::{ControlBinding, Prop};
-use covalence_core::journal::Journal;
+use covalence_core::engine::{ActionOutcome, ActionRequest, Actions, CoreError};
+use covalence_core::expr::QuickJs;
+use covalence_core::flow::{Flow, Runtime};
+use covalence_core::journal::{InputKind, Journal};
 use covalence_core::state::{Meta, Quality, Source, StatePath};
 use covalence_core::surface::gesture::Timing;
 use covalence_core::surface::render::{Look, Renderer, Rgb};
 use covalence_core::surface::{
-    Attach, ControlDef, Draw, ImageDef, InputCap, Link, OutputCap, Placement, Surface, Surfaces,
+    Attach, ControlDef, Draw, ImageDef, Input, InputCap, Link, OutputCap, Placement, Surface,
+    Surfaces,
 };
 use covalence_protocol::Value;
 use covalence_protocol::state::PathSegment;
@@ -451,4 +458,92 @@ async fn bench_a_full_page_of_expr_bindings() {
             "{keys} keys at {size}px, 2 expr bindings each: median {median:?}, worst {worst:?}"
         );
     }
+}
+
+/// Notes when the flow runtime asks for its first action, and answers with
+/// an error so the run ends there.
+struct Timed(tokio::sync::mpsc::UnboundedSender<std::time::Instant>);
+
+impl Actions for Timed {
+    fn request_action(
+        &self,
+        req: ActionRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<ActionOutcome, CoreError>> + Send + '_>> {
+        let _ = self.0.send(std::time::Instant::now());
+        Box::pin(async move { Err(CoreError::UnknownConnection(req.conn)) })
+    }
+}
+
+/// Key down → first action requested by its flow, while a full layer of
+/// `expr` bindings redraws for a state change made just before (the M5
+/// budget is 5 ms for a local surface). Run with
+/// `cargo test --release -p covalence-core --test binding_worker bench -- --ignored --nocapture`.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "a benchmark: run it in release"]
+async fn bench_key_down_to_first_action() {
+    let w = world();
+    let (requested, mut requests) = tokio::sync::mpsc::unbounded_channel();
+    let runtime = Runtime::start(
+        w.shared.clone(),
+        Arc::new(Timed(requested)),
+        Arc::new(QuickJs::default()),
+    );
+    for i in 0..15 {
+        w.surfaces.set_binding(binding(
+            &format!("b{i}"),
+            CAMS,
+            &format!("k{i}"),
+            json!({
+                "label": { "kind": "expr", "source": format!("`Cam {i}: ${{mmss(vars.n + {i})}}`") },
+                "background": { "kind": "expr", "source": format!("vars.n % 2 ? hsl({i} * 20, 70, 40) : \"#202020\"") },
+            }),
+        ));
+    }
+    let flow: Flow = serde_json::from_value(json!({
+        "id": "01JC5FLOWBENCH000000000001",
+        "name": "Route on press",
+        "slug": "routeOnPress",
+        "enabled": true,
+        "triggers": [{ "kind": "control", "control": { "layer": CAMS, "control": "k0" }, "event": "press" }],
+        "concurrency": "parallel",
+        "body": [{
+            "id": "route", "kind": "action", "target": { "conn": VH },
+            "action": "route", "params": { "output": 1, "input": 2 },
+        }],
+    }))
+    .unwrap();
+    runtime.set_flow(flow);
+    set(&w.shared, path("vars", &["n"]), 0.into());
+    let mut link = w.surfaces.attach(DECK, deck()).unwrap();
+    w.surfaces.flush().await;
+    draws(&mut link);
+
+    let key = |kind, ts| Input {
+        control: "k0".into(),
+        kind,
+        value: None,
+        ts,
+    };
+    let mut times = Vec::new();
+    for n in 1..=40 {
+        set(&w.shared, path("vars", &["n"]), n.into());
+        let start = std::time::Instant::now();
+        let ts = f64::from(n) * 1_000.0;
+        link.input.send(key(InputKind::Down, ts)).await.unwrap();
+        let at = requests.recv().await.unwrap();
+        times.push(at - start);
+        link.input
+            .send(key(InputKind::Up, ts + 50.0))
+            .await
+            .unwrap();
+        w.surfaces.flush().await;
+        draws(&mut link);
+    }
+    times.sort();
+    println!(
+        "key down to first action, 15 keys of expr bindings redrawing: median {:?}, worst {:?}",
+        times[times.len() / 2],
+        times[times.len() - 1]
+    );
+    runtime.shutdown().await;
 }

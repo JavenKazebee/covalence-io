@@ -26,12 +26,20 @@ const layer = computed(() => surfaces.layer(props.id));
 const bindings = ref<ControlBinding[]>([]);
 const runtime = ref<RuntimeProblem[]>([]);
 const loadError = ref<string | null>(null);
+/**
+ * The layer whose bindings have loaded. The binding editor starts its draft
+ * from the stored binding when it mounts, so it waits for them.
+ */
+const loadedFor = ref<string | null>(null);
 
 async function load() {
+  const id = props.id;
   try {
-    const [b, r] = await Promise.all([api.bindings(props.id), api.bindingProblems()]);
+    const [b, r] = await Promise.all([api.bindings(id), api.bindingProblems()]);
+    if (id !== props.id) return;
     bindings.value = b;
     runtime.value = r;
+    loadedFor.value = id;
     loadError.value = null;
   } catch (e) {
     loadError.value = e instanceof Error ? e.message : String(e);
@@ -229,6 +237,12 @@ async function remove() {
           >
             {{ control }} has no image output on this layer, so there's nothing to bind on it yet. Flows can still
             trigger on it.
+          </p>
+          <p
+            v-else-if="control !== undefined && controls.includes(control) && loadedFor !== layer.id"
+            class="muted"
+          >
+            Loading…
           </p>
           <BindingEditor
             v-else-if="control !== undefined && controls.includes(control)"

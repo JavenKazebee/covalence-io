@@ -1,22 +1,22 @@
 # Milestone 5: Surfaces and bindings
 
-- **Status:** In progress
+- **Status:** Done
 - **Started:** 2026-10-22
 
 Covalence gets its first control surface. A virtual Stream Deck in the UI ([ADR 0012](../adr/0012-simulated-devices.md)) attaches to the core over the surface protocol ([plugin protocol §8](../specs/plugin-protocol.md)), the same way a hardware deck or an Orbital will later ([ADR 0010](../adr/0010-orbital-remote-nodes.md)). Pressing a key fires a flow through a `gesture` trigger (a `control` trigger after Phase 5). Keys show live state through display bindings ([bindings spec](../specs/bindings.md) §1–§4), evaluated in the core with the M4 expression engine and rendered by the core as key images. Before M5 closes, Phase 5 reshapes controls and triggers so that they aren't tied to a Stream Deck, makes control input device state with events derived from it, and renames pages to layers ([ADR 0024](../adr/0024-surfaces-as-two-way-devices.md)). Hardware surfaces, helpers, layer resolution beyond navigation, and layer parameters stay out.
 
 ## Done when
 
-- [ ] A virtual Stream Deck (15 keys) appears in the Surfaces tab, attached to the core through `surface.attach`, and shows up as `surface.<slug>.connected` in state. Closing the tab detaches it.
-- [ ] A layer navigated to on that surface shows its bound keys. Navigating through the API updates `surface.<slug>.current.main` (`surface.<slug>.page` before Phase 5) and the keys, and the new layer is fully evaluated before it's drawn.
-- [ ] A flow with a `control` trigger `{control: {layer, control: k0}, event: press}` routes `vh` when the key is pressed. `why` on its action walks back through `trigger.matched` and `input.event` to the input's `state.patch` on `surface.<slug>.controls.k0.pressed`. `double`, `long` and `hold` are recognised from the host's `ts`, so a double-press stays one gesture however the events arrive.
-- [ ] Each binding kind works on a key: `value` (`vh.outputs[1].source` as the label), `template` (`Out 1: {vh.outputs[1].source}`), `rules` (red when source is 3, else grey), `map` (a number to a list of colours) and `expr`. Each re-renders within one scheduler turn of the state it reads changing, and not when unrelated state changes.
-- [ ] A binding that throws or returns `undefined` falls back to its `fallback`, then the control's default, and reports the error in the editor and the log (rate-limited) without stopping other bindings. A binding that reads a `stale` value is dimmed.
-- [ ] Only keys whose look changed are sent as `surface.draw`. Bindings on layers no surface is showing aren't evaluated.
-- [ ] State change → redrawn key image in under 16 ms, and key down → first action dispatched in under 5 ms ([architecture](../architecture.md#performance-budgets-targets-to-test-against)), measured with a full layer of `expr` bindings changing at once.
-- [ ] The UI edits surfaces' layers and bindings: pick a key, choose a binding kind per property, with the same live preview as flow expressions. A "When pressed" shortcut creates a Button-view flow with that key's `control` trigger.
-- [ ] Controls are typed by capability and placed with `at`, and layers list their controls ([ADR 0024](../adr/0024-surfaces-as-two-way-devices.md)): the virtual deck attaches 15 `momentary` + `image` controls with no layout, a layer made from it fits it, and a layer that needs a control the surface lacks is refused with `doesNotFit`.
-- [ ] A Rust end-to-end test covers the above in CI against a simulated surface and simulated Videohubs, with no hardware.
+- [x] A virtual Stream Deck (15 keys) appears in the Surfaces tab, attached to the core through `surface.attach`, and shows up as `surface.<slug>.connected` in state. Closing the tab detaches it.
+- [x] A layer navigated to on that surface shows its bound keys. Navigating through the API updates `surface.<slug>.current.main` (`surface.<slug>.page` before Phase 5) and the keys, and the new layer is fully evaluated before it's drawn.
+- [x] A flow with a `control` trigger `{control: {layer, control: k0}, event: press}` routes `vh` when the key is pressed. `why` on its action walks back through `trigger.matched` and `input.event` to the input's `state.patch` on `surface.<slug>.controls.k0.pressed`. `double`, `long` and `hold` are recognised from the host's `ts`, so a double-press stays one gesture however the events arrive.
+- [x] Each binding kind works on a key: `value` (`vh.outputs[1].source` as the label), `template` (`Out 1: {vh.outputs[1].source}`), `rules` (red when source is 3, else grey), `map` (a number to a list of colours) and `expr`. Each re-renders within one scheduler turn of the state it reads changing, and not when unrelated state changes.
+- [x] A binding that throws or returns `undefined` falls back to its `fallback`, then the control's default, and reports the error in the editor and the log (rate-limited) without stopping other bindings. A binding that reads a `stale` value is dimmed.
+- [x] Only keys whose look changed are sent as `surface.draw`. Bindings on layers no surface is showing aren't evaluated.
+- [x] State change → redrawn key image in under 16 ms, and key down → first action dispatched in under 5 ms ([architecture](../architecture.md#performance-budgets-targets-to-test-against)), measured with a full layer of `expr` bindings changing at once.
+- [x] The UI edits surfaces' layers and bindings: pick a key, choose a binding kind per property, with the same live preview as flow expressions. A "When pressed" shortcut creates a Button-view flow with that key's `control` trigger.
+- [x] Controls are typed by capability and placed with `at`, and layers list their controls ([ADR 0024](../adr/0024-surfaces-as-two-way-devices.md)): the virtual deck attaches 15 `momentary` + `image` controls with no layout, a layer made from it fits it, and a layer that needs a control the surface lacks is refused with `doesNotFit`.
+- [x] A Rust end-to-end test covers the above in CI against a simulated surface and simulated Videohubs, with no hardware.
 
 ## Phases
 
@@ -126,8 +126,20 @@ The parts of ADR 0024 marked **Now**. They're the shape changes that would other
 - No migration: no saved projects use M5's shapes yet. A development database is reset.
 
 ### Phase 6: Acceptance
-- [ ] The Rust end-to-end tests run in the existing `cargo test` CI job.
-- [ ] Checked by hand in the browser: bind a key to a Videohub output, press another key to route it, and watch the first key change.
+- [x] The Rust end-to-end tests run in the existing `cargo test` CI job: `a_web_surface_presses_routes_and_redraws` and the rest of `surfaces_api.rs` run under `cargo test --workspace --locked`, with Deno for the plugin host. Every CI command passed locally on the branch.
+- [x] Checked by hand in the browser: `k0`'s label bound to `vh.outputs[1].source` (a `value` binding, made in the layer editor) showed `1`; pressing `k1`, whose `control` trigger routes input 3 to output 1, redrew it as `3`. `why` on the route's patch walks back to the `k1.pressed` patch.
+- [x] The `map` kind is now drawn in a test too: `bindings_preview_with_their_look_and_image` picks a background from a list of colours. `value` is drawn in the end-to-end test; `template`, `rules` and `expr` in the preview test.
+- [x] **Budgets, re-measured** on an Apple M3 in release, after Phase 5:
+
+  | Path | Budget | Median | Worst |
+  |---|---|---|---|
+  | State change → 15 keys at 144 px redrawn, 2 `expr` bindings each | 16 ms | 8.7 ms | 9.2 ms |
+  | The same at 72 px | 16 ms | 9.0 ms | 13.2 ms |
+  | Key down → first action requested, with that layer redrawing | 5 ms | 24.5 µs | 82 µs |
+
+  `bench_key_down_to_first_action` is new, beside `bench_a_full_page_of_expr_bindings`. It times from `surface.input` to the flow runtime's action request, so it leaves out the trip to the plugin host and back, which nothing measures yet. A 32-key layer of `expr` bindings still takes 18 ms, over budget, as in Phase 2.
+- [x] Found and fixed: the layer editor, opened straight onto a selected control (a link or a reload), started the binding editor before the layer's bindings had loaded. It showed the control as unbound, and saving would have unbound it. This was in the page editor since Phase 4. It now waits for them.
+- Carried forward: what a surface shows isn't kept across a server restart, so a surface without a start layer comes back showing nothing and its keys match no trigger until something navigates it.
 
 ## Ordering
 

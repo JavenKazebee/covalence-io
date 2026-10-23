@@ -8,7 +8,7 @@
 - [M2: First UI slice](milestones/m2-first-ui.md) (done)
 - [M3: First flows](milestones/m3-first-flows.md) (done)
 - [M4: Expressions](milestones/m4-expressions.md) (done)
-- [M5: Surfaces and bindings](milestones/m5-surfaces-and-bindings.md) (in progress)
+- [M5: Surfaces and bindings](milestones/m5-surfaces-and-bindings.md) (done)
 
 ## Specs (drafts)
 - [State model and event log](specs/state-and-event-log.md)

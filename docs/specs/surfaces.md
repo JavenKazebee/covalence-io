@@ -14,7 +14,7 @@ A device is a surface when it has controls the core interprets or renders for. A
 
 Shapes use TypeScript notation. The source of truth is the Rust types in `covalence-core` ([ADR 0020](../adr/0020-project-entity-types-in-the-core.md)).
 
-**Markers.** Unmarked rules are implemented (M5 Phases 1–4). **(Now)** is the reshaping in [M5 Phase 5](../milestones/m5-surfaces-and-bindings.md), which replaces pages, the `k`-grid, `input.raw` and the `gesture` shapes before M5 closes. **(Later)** has no milestone yet.
+**Markers.** Unmarked rules are implemented (M5 Phases 1–4). **(Now)** is the reshaping in [M5 Phase 5](../milestones/m5-surfaces-and-bindings.md), which replaced pages, the `k`-grid, `input.raw` and the `gesture` shapes; it's implemented too. **(Later)** has no milestone yet.
 
 ---
 
