@@ -157,7 +157,7 @@ type OutputKind = OutputCap["kind"];
 | `value` | `value` |
 | `touch` with 1 or 0 | `touched` |
 
-- **No lost edges.** Each `down`, `up`, `turn` and `touch` is applied in a scheduler turn of its own. A tap shorter than a turn still gives two changes, and `state` triggers and bindings see each one. `value` input may be coalesced within a turn, with the latest value winning (state spec §1.5).
+- **No lost edges.** Each `down`, `up`, `turn` and `touch` is applied in a scheduler turn of its own: the surface waits until `state` triggers and `waitUntil` steps have evaluated one change before it applies the next, for up to 50 ms. A tap shorter than a turn still gives two changes, and `state` triggers see each one. Bindings don't hold input back: they draw the latest state, since a key image can't show a change shorter than a frame. `value` input may be coalesced within a turn, with the latest value winning (state spec §1.5).
 - **Device time.** `deviceTs` is the host's `ts`: monotonic per surface session, and never compared with the core's clock. Gesture timing uses it (§4.2). Ordering is by `seq`.
 - **Volatile.**
   - **On attach,** input state is reset: every control released, `detents` at 0, and `value` absent until the device sends one.

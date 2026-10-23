@@ -121,10 +121,8 @@ pub enum Record {
     RunStep(RunStepRecord),
     #[serde(rename = "run.finished")]
     RunFinished(RunFinishedRecord),
-    #[serde(rename = "input.raw")]
-    InputRaw(InputRawRecord),
-    #[serde(rename = "input.gesture")]
-    InputGesture(InputGestureRecord),
+    #[serde(rename = "input.event")]
+    InputEvent(InputEventRecord),
 }
 
 impl Record {
@@ -143,8 +141,7 @@ impl Record {
             Record::RunStarted(_) => "run.started",
             Record::RunStep(_) => "run.step",
             Record::RunFinished(_) => "run.finished",
-            Record::InputRaw(_) => "input.raw",
-            Record::InputGesture(_) => "input.gesture",
+            Record::InputEvent(_) => "input.event",
         }
     }
 }
@@ -152,10 +149,15 @@ impl Record {
 /// `state.patch`. A `state.snapshot` is journaled as a patch with `replaces`
 /// set: the subtree was cleared, then `ops` applied.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StatePatchRecord {
     pub ops: Vec<JournalOp>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replaces: Option<StatePath>,
+    /// Control input: the host's timestamp, in milliseconds on its own
+    /// clock (surfaces spec §4.1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_ts: Option<f64>,
 }
 
 /// A patch op with its path in ID form.
@@ -344,35 +346,25 @@ impl RunError {
 }
 
 /// An entry before it gets its `seq`, `term` and timestamps.
-/// `input.raw`: one input from a surface, as it arrived (surfaces spec §3).
+/// `input.event`: an edge in a control's input state (surfaces spec §4.2).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct InputRawRecord {
+pub struct InputEventRecord {
     /// The surface's entity ID.
     pub surface: String,
-    pub control: String,
-    pub kind: InputKind,
+    /// The layer that controlled the control when the input arrived, by ID.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub value: Option<f64>,
-    /// The host's timestamp, in milliseconds on its own clock.
-    pub device_ts: f64,
+    pub layer: Option<String>,
+    pub control: String,
+    pub event: ControlEvent,
+    /// `hold`: the repeat count, from 1. `turn`: the change in detents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delta: Option<i64>,
+    /// `change`: the new value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<Value>,
 }
 
-/// `input.gesture`: what the core made of raw input (surfaces spec §3).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct InputGestureRecord {
-    /// The surface's entity ID.
-    pub surface: String,
-    /// The page shown on the surface when the input arrived, by ID.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub page: Option<String>,
-    pub control: String,
-    pub gesture: Gesture,
-    /// `hold`: the repeat count, from 1.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub delta: Option<u32>,
-}
-
+/// What a surface sends (plugin protocol §8).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum InputKind {
@@ -385,24 +377,30 @@ pub enum InputKind {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum Gesture {
+pub enum ControlEvent {
     Press,
     Release,
     Double,
     Long,
     Hold,
     Turn,
+    Change,
+    Touch,
+    Untouch,
 }
 
-impl Gesture {
+impl ControlEvent {
     pub fn as_str(self) -> &'static str {
         match self {
-            Gesture::Press => "press",
-            Gesture::Release => "release",
-            Gesture::Double => "double",
-            Gesture::Long => "long",
-            Gesture::Hold => "hold",
-            Gesture::Turn => "turn",
+            ControlEvent::Press => "press",
+            ControlEvent::Release => "release",
+            ControlEvent::Double => "double",
+            ControlEvent::Long => "long",
+            ControlEvent::Hold => "hold",
+            ControlEvent::Turn => "turn",
+            ControlEvent::Change => "change",
+            ControlEvent::Touch => "touch",
+            ControlEvent::Untouch => "untouch",
         }
     }
 }
@@ -782,6 +780,7 @@ mod tests {
                     },
                 ],
                 replaces: Some(StatePath::root("c1")),
+                device_ts: None,
             }),
             Record::StateQuality(StateQualityRecord {
                 subtree: StatePath::root("c1"),

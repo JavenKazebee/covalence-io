@@ -7,12 +7,14 @@
 //! changed: the dirty set the binding evaluator will consume (§1.5).
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
+use std::time::Duration;
 
 use covalence_protocol::Value;
 use covalence_protocol::state::{PatchOp, Path, PathSegment, PathValue};
 use serde::{Deserialize, Serialize};
-use tokio::sync::broadcast;
+use tokio::sync::{Notify, broadcast};
 
 use crate::journal::Seq;
 
@@ -285,6 +287,17 @@ impl StateTree {
 pub struct LiveState {
     tree: Mutex<StateTree>,
     dirty: broadcast::Sender<Arc<Dirty>>,
+    turns: Arc<Turns>,
+}
+
+/// How far each [`TurnFeed`] has got, so that a writer can wait for a change
+/// to be seen on its own (§1.5): control input's edges (surfaces spec §4.1).
+#[derive(Default)]
+struct Turns {
+    /// Dirty sets published so far. Only changed with the tree locked.
+    published: AtomicU64,
+    feeds: Mutex<Vec<Weak<AtomicU64>>>,
+    done: Notify,
 }
 
 impl Default for LiveState {
@@ -293,6 +306,7 @@ impl Default for LiveState {
         LiveState {
             tree: Mutex::new(StateTree::new()),
             dirty,
+            turns: Arc::default(),
         }
     }
 }
@@ -322,16 +336,112 @@ impl LiveState {
     /// Mutates the tree; `f` returns its result and the paths it changed,
     /// which are published to subscribers if there are any.
     pub fn mutate<R>(&self, f: impl FnOnce(&mut StateTree) -> (R, Dirty)) -> R {
-        let (result, dirty) = f(&mut self.lock());
+        self.mutate_turn(f).0
+    }
+
+    /// [`mutate`](Self::mutate), and the turn it published, for
+    /// [`seen`](Self::seen).
+    pub fn mutate_turn<R>(&self, f: impl FnOnce(&mut StateTree) -> (R, Dirty)) -> (R, u64) {
+        let mut tree = self.lock();
+        let (result, dirty) = f(&mut tree);
         if !dirty.is_empty() {
+            self.turns.published.fetch_add(1, Ordering::SeqCst);
             let _ = self.dirty.send(Arc::new(dirty));
         }
-        result
+        (result, self.turns.published.load(Ordering::SeqCst))
     }
 
     /// Dirty sets, one per mutation, in order (§1.5).
     pub fn subscribe(&self) -> broadcast::Receiver<Arc<Dirty>> {
         self.dirty.subscribe()
+    }
+
+    /// Dirty sets for a consumer that says when it's done with them, so a
+    /// writer can wait with [`seen`](Self::seen).
+    pub fn subscribe_turns(&self) -> TurnFeed {
+        let _tree = self.lock();
+        let received = self.turns.published.load(Ordering::SeqCst);
+        let done = Arc::new(AtomicU64::new(received));
+        let mut feeds = self.turns.feeds.lock().unwrap_or_else(|e| e.into_inner());
+        feeds.retain(|f| f.strong_count() > 0);
+        feeds.push(Arc::downgrade(&done));
+        TurnFeed {
+            feed: self.dirty.subscribe(),
+            received,
+            done,
+            turns: self.turns.clone(),
+        }
+    }
+
+    /// Waits until every [`TurnFeed`] is done with `turn` and what came
+    /// before it, or for `limit`. Whether they all were.
+    pub async fn seen(&self, turn: u64, limit: Duration) -> bool {
+        let deadline = tokio::time::Instant::now() + limit;
+        loop {
+            let done = self.turns.done.notified();
+            tokio::pin!(done);
+            done.as_mut().enable();
+            let behind = {
+                let feeds = self.turns.feeds.lock().unwrap_or_else(|e| e.into_inner());
+                feeds
+                    .iter()
+                    .filter_map(Weak::upgrade)
+                    .any(|f| f.load(Ordering::SeqCst) < turn)
+            };
+            if !behind {
+                return true;
+            }
+            tokio::select! {
+                () = done => {}
+                () = tokio::time::sleep_until(deadline) => return false,
+            }
+        }
+    }
+}
+
+/// A [`LiveState`] feed whose consumer calls [`done`](Self::done) after
+/// acting on what it received.
+pub struct TurnFeed {
+    feed: broadcast::Receiver<Arc<Dirty>>,
+    /// Turns received so far, skipped ones included.
+    received: u64,
+    done: Arc<AtomicU64>,
+    turns: Arc<Turns>,
+}
+
+impl TurnFeed {
+    pub async fn recv(&mut self) -> Result<Arc<Dirty>, broadcast::error::RecvError> {
+        let next = self.feed.recv().await;
+        self.count(
+            next.as_ref().err().and_then(|e| match e {
+                broadcast::error::RecvError::Lagged(n) => Some(*n),
+                broadcast::error::RecvError::Closed => None,
+            }),
+            next.is_ok(),
+        );
+        next
+    }
+
+    pub fn try_recv(&mut self) -> Result<Arc<Dirty>, broadcast::error::TryRecvError> {
+        let next = self.feed.try_recv();
+        self.count(
+            next.as_ref().err().and_then(|e| match e {
+                broadcast::error::TryRecvError::Lagged(n) => Some(*n),
+                _ => None,
+            }),
+            next.is_ok(),
+        );
+        next
+    }
+
+    fn count(&mut self, lagged: Option<u64>, received: bool) {
+        self.received += lagged.unwrap_or(0) + u64::from(received);
+    }
+
+    /// Done with everything received so far.
+    pub fn done(&self) {
+        self.done.store(self.received, Ordering::SeqCst);
+        self.turns.done.notify_waiters();
     }
 }
 

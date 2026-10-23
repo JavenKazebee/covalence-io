@@ -60,10 +60,15 @@ describe("virtual deck", () => {
     const attach = sockets[0]!.sent[0] as { method: string; params: { controls: { id: string; x: number; y: number }[] } };
     expect(attach).toMatchObject({
       method: "surface.attach",
-      params: { surface: "foh", model: "virtual.deck15", name: "FOH deck", layout: { cols: 5, rows: 3 } },
+      params: { surface: "foh", model: "virtual.deck15", name: "FOH deck" },
     });
     expect(attach.params.controls).toHaveLength(15);
-    expect(attach.params.controls[7]).toEqual({ id: "k7", kind: "button", x: 2, y: 1, image: { w: 144, h: 144, format: "png" } });
+    expect(attach.params.controls[7]).toEqual({
+      id: "k7",
+      at: { x: 2, y: 1 },
+      inputs: [{ kind: "momentary" }],
+      outputs: [{ kind: "image", w: 144, h: 144, format: "png" }],
+    });
   });
 
   it("shows what the core draws", () => {

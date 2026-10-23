@@ -271,9 +271,44 @@ async fn surfaces_pages_and_bindings_survive_a_restart() {
             None,
         )
         .unwrap();
+    // A key held when the server stops.
+    let attach: covalence_core::surface::Attach = {
+        let mut params = attach("fohDeck")["params"].clone();
+        params.as_object_mut().unwrap().remove("surface");
+        serde_json::from_value(params).unwrap()
+    };
+    let link = app.surfaces().attach(&surface.id, attach).unwrap();
+    link.input
+        .send(covalence_core::surface::Input {
+            control: "k0".into(),
+            kind: covalence_core::journal::InputKind::Down,
+            value: None,
+            ts: 1.0,
+        })
+        .await
+        .unwrap();
+    let pressed = covalence_core::state::StatePath::new(
+        "surface",
+        ["fohDeck", "controls", "k0", "pressed"]
+            .into_iter()
+            .map(|k| covalence_protocol::state::PathSegment::Key(k.into()))
+            .collect(),
+    );
+    let held = async {
+        while app.core().shared().state.value(&pressed) != Some(true.into()) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    };
+    tokio::time::timeout(WAIT, held).await.unwrap();
     app.shutdown().await;
+    drop(link);
 
     let app = start();
+    assert_eq!(
+        app.core().shared().state.value(&pressed),
+        None,
+        "input state isn't restored"
+    );
     assert_eq!(
         app.pages(),
         BTreeMap::from([(page.id.clone(), page.clone())])
@@ -371,8 +406,9 @@ fn attach(slug: &str) -> Value {
     let controls: Vec<Value> = (0..15)
         .map(|k| {
             json!({
-                "id": format!("k{k}"), "kind": "button", "x": k % 5, "y": k / 5,
-                "image": { "w": KEY, "h": KEY, "format": "png" },
+                "id": format!("k{k}"), "at": { "x": k % 5, "y": k / 5 },
+                "inputs": [{ "kind": "momentary" }],
+                "outputs": [{ "kind": "image", "w": KEY, "h": KEY, "format": "png" }],
             })
         })
         .collect();
@@ -380,7 +416,7 @@ fn attach(slug: &str) -> Value {
         "method": "surface.attach",
         "params": {
             "surface": slug, "model": "virtual.deck15", "name": "Virtual deck",
-            "controls": controls, "layout": { "cols": 5, "rows": 3 },
+            "controls": controls,
         },
     })
 }
@@ -533,7 +569,7 @@ async fn a_web_surface_presses_routes_and_redraws() {
     assert_eq!(label, "3");
     assert_eq!(image, previewed_image);
 
-    // `why` on the route's state change walks back to the raw input.
+    // `why` on the route's state change walks back to the input's patch.
     let leaves = server
         .get(&format!(
             "/state?path={}",
@@ -552,11 +588,16 @@ async fn a_web_surface_presses_routes_and_redraws() {
     let tail = &kinds[kinds.len() - 3..];
     assert_eq!(
         tail,
-        ["trigger.matched", "input.gesture", "input.raw"],
+        ["trigger.matched", "input.event", "state.patch"],
         "{kinds:?}"
     );
-    let raw = chain.as_array().unwrap().last().unwrap();
-    assert_eq!(raw["data"]["control"], "k1", "{raw}");
+    let input = chain.as_array().unwrap().last().unwrap();
+    assert_eq!(input["data"]["deviceTs"], json!(1000.0), "{input}");
+    assert_eq!(
+        input["data"]["ops"][0]["path"]["path"],
+        json!(["fohDeck", "controls", "k1", "pressed"]),
+        "{input}"
+    );
 
     // State k0 doesn't read redraws only the key that reads it.
     let (status, body) = server
@@ -610,6 +651,24 @@ async fn a_web_surface_presses_routes_and_redraws() {
         Some(json!("empty"))
     );
 
+    // A page with keys the deck lacks doesn't fit.
+    let wide = create(
+        &server,
+        "/pages",
+        "page",
+        json!({ "name": "Wide", "layout": { "cols": 4, "rows": 4 } }),
+    )
+    .await;
+    let (status, body) = server
+        .post(
+            &format!("/surfaces/{}/page", id(&deck)),
+            json!({ "page": id(&wide) }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["code"], "doesNotFit");
+    assert_eq!(body["controls"], json!(["k15"]));
+
     // Closing the socket detaches the surface.
     ws.close(None).await.unwrap();
     server
@@ -638,7 +697,7 @@ async fn a_web_surface_must_attach_as_itself() {
     let refused = tokio_tungstenite::connect_async(format!("ws://{addr}/surface/nope")).await;
     assert!(refused.is_err());
 
-    // Another surface's slug, input before attaching, a bad layout.
+    // Another surface's slug, input before attaching, overlapping keys.
     for (message, reason) in [
         (attach("other"), "not \"other\""),
         (
@@ -654,7 +713,7 @@ async fn a_web_surface_must_attach_as_itself() {
         assert!(why.contains(reason), "{why:?} should say {reason:?}");
     }
     let mut bad = attach("fohDeck");
-    bad["params"]["layout"] = json!({ "cols": 2, "rows": 2 });
+    bad["params"]["controls"][1]["at"] = json!({ "x": 0, "y": 0 });
     let mut ws = connect(&addr, id(&deck)).await;
     send(&mut ws, bad).await;
     let (code, why) = closed(&mut ws).await;

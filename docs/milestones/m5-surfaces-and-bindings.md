@@ -78,17 +78,21 @@ Covalence gets its first control surface. A virtual Stream Deck in the UI ([ADR 
 
 ### Phase 5: Device model ([ADR 0024](../adr/0024-surfaces-as-two-way-devices.md))
 The parts of ADR 0024 marked **Now**. They're the shape changes that would otherwise break saved projects, plus the input state and events everything Later builds on. Capabilities beyond M5's keys are accepted and stored; their outputs do nothing yet.
-- [ ] **Capability-typed controls** ([surfaces spec §2](../specs/surfaces.md), [plugin protocol §8](../specs/plugin-protocol.md)):
+- [x] **Capability-typed controls** ([surfaces spec §2](../specs/surfaces.md), [plugin protocol §8](../specs/plugin-protocol.md)):
   - `ControlDef` gets `label?`, a required `at`, `inputs` and `outputs`, replacing `kind`, `x`/`y`/`w`/`h`, `image` and `pressable`.
   - IDs are free-form, and the attach has no `layout`.
   - `check_attach` refuses duplicate IDs, a missing `at`, overlapping controls, and controls with no capabilities.
   - Input that doesn't match a control's capabilities is dropped and logged.
   - Only the `image` output does anything.
-- [ ] **Input state** (surfaces spec §3, §4.1):
+  - Done: `ControlDef` with `Placement`, `InputCap` and `OutputCap`. `check_attach` also refuses a control with no size, two inputs or outputs of one kind, an image outside 1 to 1024 px, and more than 1024 controls. Until pages become layers, a page fits a surface that has each of its `k` controls with `momentary` and `image`, and `show` answers `DoesNotFit` with the missing ones (`409 doesNotFit` with `controls`).
+- [x] **Input state** (surfaces spec §3, §4.1):
   - `surface.input` becomes a `state.patch` on `surface.<slug>.controls.<id>.{pressed, velocity, detents, value, touched}`, with the surface as origin and `deviceTs`, replacing `input.raw`.
   - Key, touch and encoder input each get a scheduler turn of their own; `value` input may coalesce.
   - The state is volatile: reset on attach, released on detach with `cause` → the `connected: false` patch, not restored after a restart.
-- [ ] **Events** (surfaces spec §4.2): the gesture recogniser reads input state and journals `input.event` (`press`, `release`, `double`, `long`, `hold`, `turn`, `change`, `touch`, `untouch`) with `cause` → the patch and the controlling `layer`, replacing `input.gesture`.
+  - Done: `state.patch` has `deviceTs`. A scheduler turn of its own is `LiveState::subscribe_turns` and `seen`: the flow runtime's `state` triggers and `waitUntil` say when they've evaluated a change, and the surface waits for that (up to 50 ms) before the next edge. A `down` while pressed is a release, then a press. Bindings aren't waited for. `velocity` is written with the `down`; `turn` must be whole detents; `value` is clamped to 0 to 1.
+- [x] **Events** (surfaces spec §4.2): the gesture recogniser reads input state and journals `input.event` (`press`, `release`, `double`, `long`, `hold`, `turn`, `change`, `touch`, `untouch`) with `cause` → the patch and the controlling `layer`, replacing `input.gesture`.
+  - Done: `gesture::Change` in, `ControlEvent` out. A `release` carries its press's layer, even after the page changes. Until pages become layers, `layer` is the shown page's ID and `gesture` triggers match on it; `turn`, `change`, `touch` and `untouch` gestures are `unsupported`. The UI's deck attaches with capabilities and `at`, and the journal summarises `input.event`.
+
 - [ ] **Pages become layers** (surfaces spec §1, §5):
   - The `page` entity becomes `layer`, with `controls` replacing `layout`, and `Layout` goes. Routes move from `/pages` to `/layers`.
   - The `page` state root becomes `layer`, and `startPage` becomes `startLayer`.

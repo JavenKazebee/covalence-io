@@ -11,7 +11,7 @@ use std::time::Duration as StdDuration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::journal::Gesture;
+use crate::journal::ControlEvent;
 use crate::state::ConnId;
 use crate::surface::PageId;
 
@@ -97,7 +97,7 @@ pub enum Trigger {
     /// (surfaces spec §3.1).
     Gesture {
         control: ControlRef,
-        gesture: Gesture,
+        gesture: ControlEvent,
     },
 }
 

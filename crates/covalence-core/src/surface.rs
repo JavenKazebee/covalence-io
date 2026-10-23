@@ -10,11 +10,15 @@
 //! ([`crate::binding::worker`]), which evaluates the bindings of the page it
 //! shows.
 //!
-//! Each attached surface has a task that journals its raw input as
-//! `input.raw`, turns it into gestures ([`gesture`]) and journals those as
-//! `input.gesture`, with `cause` → the raw input that completed them. Flows
-//! match `gesture` triggers on those entries. The surface's state,
-//! `surface.<slug>.*`, is written through the journal as `state.patch`.
+//! Each attached surface has a task that applies its input to the controls'
+//! input state, `surface.<slug>.controls.<id>.*`, as `state.patch`es with the
+//! surface as origin (surfaces spec §4.1). Each change gives its edge events
+//! ([`gesture`]), journaled as `input.event` with `cause` → the patch. Flows
+//! match `gesture` triggers on those entries. Key, touch and encoder changes
+//! each get a scheduler turn of their own: the task waits for the state's
+//! consumers to see one before it applies the next. The rest of the
+//! surface's state, `surface.<slug>.*`, is written through the journal as
+//! `state.patch` too.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -23,12 +27,13 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use covalence_protocol::state::PathSegment;
 use covalence_protocol::{True, Value};
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
 
 use crate::journal::{
-    InputGestureRecord, InputKind, InputRawRecord, JournalError, JournalOp, NewEntry, Origin,
-    Record, Seq, StatePatchRecord,
+    ControlEvent, InputEventRecord, InputKind, JournalError, JournalOp, NewEntry, Origin, Record,
+    Seq, StatePatchRecord,
 };
 use crate::state::{Meta, Quality, Source, StatePath};
 use crate::{Shared, clock};
@@ -39,7 +44,7 @@ pub mod render;
 use crate::binding::ControlBinding;
 use crate::binding::worker::{Bindings, Problems};
 use crate::flow::{Code, Problem, Report, is_identifier};
-use gesture::{Detected, Recogniser, Timing};
+use gesture::{Change, Detected, Recogniser, Timing};
 
 /// Entity types in the store.
 pub const SURFACE_ENTITY: &str = "surface";
@@ -50,6 +55,15 @@ pub const STATE_ROOT: &str = "surface";
 const DRAW_BACKLOG: usize = 256;
 /// How much input waits for a busy core.
 const INPUT_BACKLOG: usize = 256;
+/// The most controls a surface can declare.
+const MAX_CONTROLS: usize = 1024;
+/// The largest image output, in pixels per side.
+const MAX_IMAGE: u32 = 1024;
+/// How long an input edge waits for the state's consumers to see the one
+/// before it, so that a stuck consumer can't stop a surface.
+const TURN_LIMIT: Duration = Duration::from_millis(50);
+/// How often dropped input is logged.
+const DROP_LOG_EVERY: Duration = Duration::from_secs(1);
 
 pub type SurfaceId = String;
 pub type PageId = String;
@@ -106,40 +120,137 @@ impl Layout {
             && n.parse::<u64>()
                 .is_ok_and(|n| n < u64::from(self.cols) * u64::from(self.rows))
     }
+
+    /// Its buttons, `k0` to `k<cols × rows - 1>`.
+    pub fn controls(&self) -> impl Iterator<Item = String> + use<> {
+        (0..u64::from(self.cols) * u64::from(self.rows)).map(|n| format!("k{n}"))
+    }
 }
 
-/// One input or output on a surface (plugin protocol §8).
+/// One control on a surface, typed by what it can do (surfaces spec §2,
+/// plugin protocol §8).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ControlDef {
+    /// Unique on the surface: `k0`, `dial1`, `pad.36`.
     pub id: String,
-    pub kind: ControlKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    pub at: Placement,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<InputCap>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outputs: Vec<OutputCap>,
+}
+
+/// Where a control is, in grid cells.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Placement {
     pub x: u32,
     pub y: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub w: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub h: Option<u32>,
-    /// The image the control shows, if it shows one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub image: Option<ImageDef>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pressable: Option<bool>,
 }
 
+impl Placement {
+    pub fn at(x: u32, y: u32) -> Self {
+        Placement {
+            x,
+            y,
+            w: None,
+            h: None,
+        }
+    }
+
+    fn w(&self) -> u32 {
+        self.w.unwrap_or(1)
+    }
+
+    fn h(&self) -> u32 {
+        self.h.unwrap_or(1)
+    }
+
+    fn overlaps(&self, other: &Placement) -> bool {
+        let (ax, ay, bx, by) = (
+            u64::from(self.x),
+            u64::from(self.y),
+            u64::from(other.x),
+            u64::from(other.y),
+        );
+        ax < bx + u64::from(other.w())
+            && bx < ax + u64::from(self.w())
+            && ay < by + u64::from(other.h())
+            && by < ay + u64::from(self.h())
+    }
+}
+
+/// What a control can send.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ControlKind {
-    Button,
-    Encoder,
-    Fader,
-    Touchstrip,
-    Lcd,
-    Led,
+#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
+pub enum InputCap {
+    /// `down` and `up`.
+    Momentary {
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        velocity: bool,
+    },
+    /// `turn`: signed detents.
+    Relative,
+    /// `value`: 0 to 1, or `[x, y]` with two axes.
+    Absolute {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        axes: Option<u8>,
+    },
+    /// `touch`: 1 or 0.
+    Touch,
+}
+
+impl InputCap {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            InputCap::Momentary { .. } => "momentary",
+            InputCap::Relative => "relative",
+            InputCap::Absolute { .. } => "absolute",
+            InputCap::Touch => "touch",
+        }
+    }
+}
+
+/// What the core can set on a control. Only `image` does anything yet.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
+pub enum OutputCap {
+    Image(ImageDef),
+    Led {
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        rgb: bool,
+    },
+    Level {
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        motor: bool,
+    },
+    Text {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        chars: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lines: Option<u32>,
+    },
+}
+
+impl OutputCap {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            OutputCap::Image(_) => "image",
+            OutputCap::Led { .. } => "led",
+            OutputCap::Level { .. } => "level",
+            OutputCap::Text { .. } => "text",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ImageDef {
     pub w: u32,
     pub h: u32,
@@ -152,6 +263,20 @@ fn is_zero(n: &u16) -> bool {
     *n == 0
 }
 
+impl ControlDef {
+    /// The image the control shows, if it shows one.
+    pub fn image(&self) -> Option<&ImageDef> {
+        self.outputs.iter().find_map(|o| match o {
+            OutputCap::Image(image) => Some(image),
+            _ => None,
+        })
+    }
+
+    fn input(&self, kind: &str) -> Option<&InputCap> {
+        self.inputs.iter().find(|i| i.kind() == kind)
+    }
+}
+
 /// `surface.attach`, without the surface: the transport knows which it is.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -161,7 +286,6 @@ pub struct Attach {
     pub serial: Option<String>,
     pub name: String,
     pub controls: Vec<ControlDef>,
-    pub layout: Layout,
 }
 
 /// `surface.input`.
@@ -171,9 +295,23 @@ pub struct Input {
     pub control: String,
     pub kind: InputKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub value: Option<f64>,
+    pub value: Option<InputValue>,
     /// The host's timestamp, in milliseconds on its own clock.
     pub ts: f64,
+}
+
+/// An input's `value`: velocity, detents, a position or a touch.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum InputValue {
+    One(f64),
+    Two([f64; 2]),
+}
+
+impl From<f64> for InputValue {
+    fn from(v: f64) -> Self {
+        InputValue::One(v)
+    }
 }
 
 /// `surface.draw`.
@@ -209,14 +347,8 @@ pub enum ShowError {
     UnknownSurface(SurfaceId),
     #[error("no page {0}")]
     UnknownPage(PageId),
-    #[error("page {page} is {page_cols}×{page_rows}, but the surface is {cols}×{rows}")]
-    LayoutMismatch {
-        page: PageId,
-        page_cols: u32,
-        page_rows: u32,
-        cols: u32,
-        rows: u32,
-    },
+    #[error("page {page} doesn't fit: the surface has no key for {}", missing.join(", "))]
+    DoesNotFit { page: PageId, missing: Vec<String> },
     #[error(transparent)]
     Journal(#[from] JournalError),
 }
@@ -311,7 +443,7 @@ impl Surfaces {
             let fits = book
                 .attached
                 .get(&surface)
-                .is_none_or(|a| a.attach.layout == page.layout);
+                .is_none_or(|a| missing(&page, &a.attach.controls).is_empty());
             if !fits {
                 book.shown.insert(surface.clone(), None);
             }
@@ -383,8 +515,8 @@ impl Surfaces {
         self.inner.book().attached.contains_key(surface)
     }
 
-    /// Shows a page on a surface, or nothing (surfaces spec §5). An attached
-    /// surface must have the page's layout.
+    /// Shows a page on a surface, or nothing (surfaces spec §5). It must fit
+    /// an attached surface (§5.4).
     pub fn show(&self, surface: &str, page: Option<&str>, origin: Origin) -> Result<(), ShowError> {
         let inner = &self.inner;
         let mut book = inner.book();
@@ -396,17 +528,14 @@ impl Surfaces {
                 .pages
                 .get(id)
                 .ok_or_else(|| ShowError::UnknownPage(id.to_owned()))?;
-            if let Some(attached) = book.attached.get(surface)
-                && attached.attach.layout != page.layout
-            {
-                let Layout { cols, rows } = attached.attach.layout;
-                return Err(ShowError::LayoutMismatch {
-                    page: id.to_owned(),
-                    page_cols: page.layout.cols,
-                    page_rows: page.layout.rows,
-                    cols,
-                    rows,
-                });
+            if let Some(attached) = book.attached.get(surface) {
+                let missing = missing(page, &attached.attach.controls);
+                if !missing.is_empty() {
+                    return Err(ShowError::DoesNotFit {
+                        page: id.to_owned(),
+                        missing,
+                    });
+                }
             }
         }
         book.shown
@@ -436,7 +565,11 @@ impl Surfaces {
             Some(page) => page.clone(),
             None => entity.start_page.clone(),
         }
-        .filter(|p| book.pages.get(p).is_some_and(|p| p.layout == attach.layout));
+        .filter(|p| {
+            book.pages
+                .get(p)
+                .is_some_and(|p| missing(p, &attach.controls).is_empty())
+        });
         book.shown.insert(surface.to_owned(), page);
         book.attached.insert(
             surface.to_owned(),
@@ -447,7 +580,8 @@ impl Surfaces {
                 _stop: stop_tx,
             },
         );
-        let ops = inner.surface_state(&book, surface);
+        let mut ops = inner.surface_state(&book, surface);
+        ops.extend(Inner::input_reset(&book, surface));
         inner.patch(surface_origin(surface), None, ops)?;
         inner.show_on(&book, surface);
         drop(book);
@@ -466,28 +600,77 @@ impl Surfaces {
     }
 }
 
-/// What makes an attach unusable: no controls, a duplicate control, or a
-/// button that isn't in the layout.
+/// What makes an attach unusable (surfaces spec §2): too many controls, a
+/// duplicate ID, a control that's empty, overlaps another or can do
+/// nothing, or an image the renderer can't draw.
 fn check_attach(attach: &Attach) -> Result<(), AttachError> {
     let invalid = |m: String| Err(AttachError::Invalid(m));
-    let Layout { cols, rows } = attach.layout;
-    if cols == 0 || rows == 0 || cols > 32 || rows > 32 {
-        return invalid(format!("a {cols}×{rows} layout isn't supported"));
+    if attach.controls.len() > MAX_CONTROLS {
+        return invalid(format!(
+            "a surface can have at most {MAX_CONTROLS} controls"
+        ));
     }
-    let mut seen = std::collections::BTreeSet::new();
-    for control in &attach.controls {
-        if !seen.insert(&control.id) {
-            return invalid(format!("control {:?} appears twice", control.id));
+    let mut seen = BTreeSet::new();
+    for (i, control) in attach.controls.iter().enumerate() {
+        let id = &control.id;
+        if id.is_empty() {
+            return invalid("a control has no id".into());
         }
-        if control.kind == ControlKind::Button && !attach.layout.contains(&control.id) {
-            return invalid(format!(
-                "button {:?} must be k0 to k{} in a {cols}×{rows} layout",
-                control.id,
-                cols * rows - 1
-            ));
+        if !seen.insert(id) {
+            return invalid(format!("control {id:?} appears twice"));
+        }
+        if control.at.w() == 0 || control.at.h() == 0 {
+            return invalid(format!("control {id:?} has no size"));
+        }
+        if control.inputs.is_empty() && control.outputs.is_empty() {
+            return invalid(format!("control {id:?} has no inputs or outputs"));
+        }
+        let mut kinds = BTreeSet::new();
+        for kind in control.inputs.iter().map(InputCap::kind) {
+            if !kinds.insert(kind) {
+                return invalid(format!("control {id:?} has two {kind} inputs"));
+            }
+        }
+        if let Some(InputCap::Absolute { axes: Some(axes) }) = control.input("absolute")
+            && !(1..=2).contains(axes)
+        {
+            return invalid(format!("control {id:?} has {axes} axes: use 1 or 2"));
+        }
+        let mut kinds = BTreeSet::new();
+        for output in &control.outputs {
+            if !kinds.insert(output.kind()) {
+                return invalid(format!("control {id:?} has two {} outputs", output.kind()));
+            }
+            if let OutputCap::Image(image) = output
+                && !((1..=MAX_IMAGE).contains(&image.w) && (1..=MAX_IMAGE).contains(&image.h))
+            {
+                return invalid(format!(
+                    "control {id:?} has a {}×{} image: use 1 to {MAX_IMAGE} pixels a side",
+                    image.w, image.h
+                ));
+            }
+        }
+        if let Some(other) = attach.controls[..i]
+            .iter()
+            .find(|o| o.at.overlaps(&control.at))
+        {
+            return invalid(format!("controls {:?} and {id:?} overlap", other.id));
         }
     }
     Ok(())
+}
+
+/// The page's controls the surface lacks (surfaces spec §5.4): each must be
+/// a key there, with a `momentary` input and an `image` output.
+fn missing(page: &Page, controls: &[ControlDef]) -> Vec<String> {
+    page.layout
+        .controls()
+        .filter(|id| {
+            !controls
+                .iter()
+                .any(|c| &c.id == id && c.input("momentary").is_some() && c.image().is_some())
+        })
+        .collect()
 }
 
 impl Surface {
@@ -621,33 +804,396 @@ async fn run(
     mut input: mpsc::Receiver<Input>,
     mut stop: oneshot::Receiver<()>,
 ) {
-    let mut recogniser = Recogniser::new(inner.timing);
-    // The `input.raw` of each control's last `down`, the cause of a timed
-    // `long` or `hold`.
-    let mut downs: BTreeMap<String, Seq> = BTreeMap::new();
+    let mut task = Task {
+        recogniser: Recogniser::new(inner.timing),
+        inner,
+        surface,
+        session,
+        controls: BTreeMap::new(),
+        downs: BTreeMap::new(),
+        drops: Drops::default(),
+    };
     loop {
-        let deadline = recogniser.deadline();
+        let deadline = task.recogniser.deadline();
         tokio::select! {
             _ = &mut stop => {
                 // Replaced or deleted: whoever did that owns the state now.
-                inner.journal_gestures(&surface, None, recogniser.release_all(), None);
+                let released = task.recogniser.release_all();
+                task.journal_events(None, released, None);
                 return;
             }
             next = input.recv() => match next {
-                Some(i) => inner.input(&surface, session, &mut recogniser, &mut downs, i),
+                Some(i) => task.input(i).await,
                 None => {
-                    inner.detach(&surface, session, recogniser.release_all());
+                    task.detach();
                     return;
                 }
             },
             _ = tokio::time::sleep_until(deadline.unwrap_or_else(Instant::now)), if deadline.is_some() => {
-                let page = inner.book().shown.get(&surface).cloned().flatten();
-                for found in recogniser.tick(Instant::now()) {
-                    let cause = downs.get(&found.control).copied();
-                    inner.journal_gestures(&surface, page.as_deref(), vec![found], cause);
+                for found in task.recogniser.tick(Instant::now()) {
+                    let (cause, layer) = task.downs.get(&found.control).cloned().unzip();
+                    task.journal_events(layer.flatten().as_deref(), vec![found], cause);
                 }
             }
         }
+    }
+}
+
+/// An attached surface's input, as its task sees it.
+struct Task {
+    inner: Arc<Inner>,
+    surface: SurfaceId,
+    session: u64,
+    recogniser: Recogniser,
+    /// Each control's input state, as last written.
+    controls: BTreeMap<String, InputState>,
+    /// The patch of each pressed control's press, and the page shown then:
+    /// the cause and layer of its `long`, `hold` and `release`.
+    downs: BTreeMap<String, (Seq, Option<PageId>)>,
+    drops: Drops,
+}
+
+#[derive(Default)]
+struct InputState {
+    pressed: bool,
+    detents: i64,
+    value: Option<Value>,
+    touched: bool,
+}
+
+/// Dropped input, logged at most once every [`DROP_LOG_EVERY`].
+#[derive(Default)]
+struct Drops {
+    logged: Option<Instant>,
+    since: u32,
+}
+
+impl Drops {
+    fn drop(&mut self, surface: &str, input: &Input, why: &str) {
+        let now = Instant::now();
+        if self.logged.is_some_and(|t| now < t + DROP_LOG_EVERY) {
+            self.since += 1;
+            return;
+        }
+        let also = std::mem::take(&mut self.since);
+        tracing::warn!(%surface, control = %input.control, kind = ?input.kind, also, "dropped input: {why}");
+        self.logged = Some(now);
+    }
+}
+
+/// One change to a control's input state, ready to write.
+struct Write {
+    change: Change,
+    ops: Vec<(String, Value)>,
+    /// Whether it needs a scheduler turn of its own (surfaces spec §4.1).
+    edge: bool,
+}
+
+impl Task {
+    /// Applies one input to its control's input state, a turn at a time,
+    /// and journals the events each change gives.
+    async fn input(&mut self, input: Input) {
+        let control = {
+            let book = self.inner.book();
+            let Some(attached) = book
+                .attached
+                .get(&self.surface)
+                .filter(|a| a.session == self.session)
+            else {
+                return;
+            };
+            match attached
+                .attach
+                .controls
+                .iter()
+                .find(|c| c.id == input.control)
+            {
+                Some(control) => control.clone(),
+                None => {
+                    self.drops.drop(&self.surface, &input, "no such control");
+                    return;
+                }
+            }
+        };
+        let writes = match self.writes(&control, &input) {
+            Ok(writes) => writes,
+            Err(why) => {
+                self.drops.drop(&self.surface, &input, &why);
+                return;
+            }
+        };
+        for write in writes {
+            let Some(turn) = self.write(&input, write) else {
+                return;
+            };
+            if let Some(turn) = turn
+                && !self.inner.shared.state.seen(turn, TURN_LIMIT).await
+            {
+                tracing::debug!(surface = %self.surface, "input went ahead of a slow state consumer");
+            }
+        }
+    }
+
+    /// What an input changes, or why it doesn't fit the control (plugin
+    /// protocol §8).
+    fn writes(&self, control: &ControlDef, input: &Input) -> Result<Vec<Write>, String> {
+        let state = self.controls.get(&control.id);
+        let needs = |kind: &str| {
+            control
+                .input(kind)
+                .ok_or_else(|| format!("{:?} has no {kind} input", control.id))
+        };
+        let one = || match input.value {
+            Some(InputValue::One(v)) if v.is_finite() => Ok(v),
+            _ => Err("value must be a number".to_owned()),
+        };
+        let pressed = |down: bool, velocity: Option<f64>| {
+            let mut ops = vec![("pressed".to_owned(), down.into())];
+            if let Some(v) = velocity {
+                ops.push(("velocity".to_owned(), v.clamp(0.0, 1.0).into()));
+            }
+            Write {
+                change: Change::Pressed(down),
+                ops,
+                edge: true,
+            }
+        };
+        let was_pressed = state.is_some_and(|s| s.pressed);
+        Ok(match input.kind {
+            InputKind::Down => {
+                let InputCap::Momentary { velocity } = needs("momentary")? else {
+                    unreachable!()
+                };
+                let velocity = if *velocity { Some(one()?) } else { None };
+                let mut writes = Vec::new();
+                // A missed `up`: release before pressing again.
+                if was_pressed {
+                    writes.push(pressed(false, None));
+                }
+                writes.push(pressed(true, velocity));
+                writes
+            }
+            InputKind::Up => {
+                needs("momentary")?;
+                if was_pressed {
+                    vec![pressed(false, None)]
+                } else {
+                    Vec::new()
+                }
+            }
+            InputKind::Turn => {
+                needs("relative")?;
+                let n = one()?;
+                if n.fract() != 0.0 || n.abs() > 1e9 {
+                    return Err("a turn must be a whole number of detents".into());
+                }
+                let n = n as i64;
+                if n == 0 {
+                    return Ok(Vec::new());
+                }
+                let detents = state.map_or(0, |s| s.detents) + n;
+                vec![Write {
+                    change: Change::Turned(n),
+                    ops: vec![("detents".to_owned(), detents.into())],
+                    edge: true,
+                }]
+            }
+            InputKind::Value => {
+                let InputCap::Absolute { axes } = needs("absolute")? else {
+                    unreachable!()
+                };
+                let unit = |v: f64| v.is_finite().then(|| v.clamp(0.0, 1.0));
+                let value: Value = match (axes.unwrap_or(1), input.value) {
+                    (1, Some(InputValue::One(v))) => unit(v).map(Value::from),
+                    (2, Some(InputValue::Two([x, y]))) => unit(x)
+                        .zip(unit(y))
+                        .map(|(x, y)| Value::Array(vec![x.into(), y.into()])),
+                    _ => None,
+                }
+                .ok_or_else(|| match axes {
+                    Some(2) => "value must be [x, y], each 0 to 1".to_owned(),
+                    _ => "value must be a number from 0 to 1".to_owned(),
+                })?;
+                if state.and_then(|s| s.value.as_ref()) == Some(&value) {
+                    return Ok(Vec::new());
+                }
+                vec![Write {
+                    change: Change::Value(value.clone()),
+                    ops: vec![("value".to_owned(), value)],
+                    edge: false,
+                }]
+            }
+            InputKind::Touch => {
+                needs("touch")?;
+                let touched = one()? != 0.0;
+                if state.is_some_and(|s| s.touched) == touched {
+                    return Ok(Vec::new());
+                }
+                vec![Write {
+                    change: Change::Touched(touched),
+                    ops: vec![("touched".to_owned(), touched.into())],
+                    edge: true,
+                }]
+            }
+        })
+    }
+
+    /// Writes one change and journals its events. `None` if the surface is
+    /// no longer this task's, else the turn to wait for, if it's an edge.
+    fn write(&mut self, input: &Input, write: Write) -> Option<Option<u64>> {
+        let (slug, page) = {
+            let book = self.inner.book();
+            book.attached
+                .get(&self.surface)
+                .filter(|a| a.session == self.session)?;
+            (
+                book.surfaces[&self.surface].slug.clone(),
+                book.shown.get(&self.surface).cloned().flatten(),
+            )
+        };
+        let ops = write
+            .ops
+            .into_iter()
+            .map(|(leaf, value)| {
+                (
+                    Inner::control_path(&slug, &input.control, &leaf),
+                    Some(value),
+                )
+            })
+            .collect();
+        let (seq, turn) =
+            match self
+                .inner
+                .patch_turn(surface_origin(&self.surface), None, ops, Some(input.ts))
+            {
+                Ok(written) => written,
+                Err(e) => {
+                    tracing::error!(surface = %self.surface, "cannot journal input: {e}");
+                    return None;
+                }
+            };
+        let state = self.controls.entry(input.control.clone()).or_default();
+        // The layer of a release is its press's; of anything else, the page
+        // shown now.
+        let layer = match &write.change {
+            Change::Pressed(true) => {
+                state.pressed = true;
+                self.downs
+                    .insert(input.control.clone(), (seq, page.clone()));
+                page
+            }
+            Change::Pressed(false) => {
+                state.pressed = false;
+                self.downs
+                    .remove(&input.control)
+                    .map_or(page, |(_, layer)| layer)
+            }
+            Change::Turned(n) => {
+                state.detents += n;
+                page
+            }
+            Change::Value(v) => {
+                state.value = Some(v.clone());
+                page
+            }
+            Change::Touched(t) => {
+                state.touched = *t;
+                page
+            }
+        };
+        let found = self
+            .recogniser
+            .change(&input.control, write.change, input.ts, Instant::now());
+        self.journal_events(layer.as_deref(), found, Some(seq));
+        Some(write.edge.then_some(turn))
+    }
+
+    fn journal_events(&self, layer: Option<&str>, found: Vec<Detected>, cause: Option<Seq>) {
+        for Detected {
+            control,
+            event,
+            delta,
+            value,
+        } in found
+        {
+            // A release from a timer or detach carries its press's layer.
+            let layer = match (event, self.downs.get(&control)) {
+                (ControlEvent::Release, Some((_, pressed_on))) => pressed_on.as_deref(),
+                _ => layer,
+            };
+            let entry = NewEntry::new(
+                surface_origin(&self.surface),
+                Record::InputEvent(InputEventRecord {
+                    surface: self.surface.clone(),
+                    layer: layer.map(str::to_owned),
+                    control,
+                    event,
+                    delta,
+                    value,
+                }),
+            )
+            .cause(cause);
+            if let Err(e) = self.inner.shared.journal.append(entry) {
+                tracing::error!(surface = %self.surface, "cannot journal an event: {e}");
+            }
+        }
+    }
+
+    /// The transport went away: `connected` becomes `false`, then whatever
+    /// was pressed or touched is released with `cause` → that change, and
+    /// its events with `cause` → the release.
+    fn detach(&mut self) {
+        let inner = &self.inner;
+        let mut book = inner.book();
+        if book
+            .attached
+            .get(&self.surface)
+            .is_none_or(|a| a.session != self.session)
+        {
+            return;
+        }
+        book.attached.remove(&self.surface);
+        inner.bindings.hide(&self.surface);
+        let page = book.shown.get(&self.surface).cloned().flatten();
+        let slug = book.surfaces[&self.surface].slug.clone();
+        drop(book);
+        let origin = surface_origin(&self.surface);
+        let path = Inner::path(&slug, "connected");
+        let connected = match inner.patch(origin.clone(), None, vec![(path, Some(false.into()))]) {
+            Ok(seq) => seq,
+            Err(e) => {
+                tracing::error!(surface = %self.surface, "cannot journal a detach: {e}");
+                return;
+            }
+        };
+        let mut ops = Vec::new();
+        for (id, state) in &self.controls {
+            if state.pressed {
+                ops.push((
+                    Inner::control_path(&slug, id, "pressed"),
+                    Some(false.into()),
+                ));
+            }
+            if state.touched {
+                ops.push((
+                    Inner::control_path(&slug, id, "touched"),
+                    Some(false.into()),
+                ));
+            }
+        }
+        let cause = if ops.is_empty() {
+            connected
+        } else {
+            match inner.patch(origin, Some(connected), ops) {
+                Ok(seq) => seq,
+                Err(e) => {
+                    tracing::error!(surface = %self.surface, "cannot journal a release: {e}");
+                    return;
+                }
+            }
+        };
+        let released = self.recogniser.release_all();
+        self.journal_events(page.as_deref(), released, Some(cause));
     }
 }
 
@@ -672,6 +1218,19 @@ impl Inner {
         cause: Option<Seq>,
         ops: Vec<(StatePath, Option<Value>)>,
     ) -> Result<Seq, JournalError> {
+        self.patch_turn(origin, cause, ops, None)
+            .map(|(seq, _)| seq)
+    }
+
+    /// [`patch`](Self::patch), with control input's `deviceTs`, and the
+    /// state turn it published.
+    fn patch_turn(
+        &self,
+        origin: Origin,
+        cause: Option<Seq>,
+        ops: Vec<(StatePath, Option<Value>)>,
+        device_ts: Option<f64>,
+    ) -> Result<(Seq, u64), JournalError> {
         let record = Record::StatePatch(StatePatchRecord {
             ops: ops
                 .iter()
@@ -687,9 +1246,10 @@ impl Inner {
                 })
                 .collect(),
             replaces: None,
+            device_ts,
         });
         let journal = &self.shared.journal;
-        self.shared.state.mutate(|tree| {
+        let (seq, turn) = self.shared.state.mutate_turn(|tree| {
             let seq = match journal.append(NewEntry::new(origin, record).cause(cause)) {
                 Ok(e) => e.seq,
                 Err(e) => return (Err(e), Default::default()),
@@ -702,11 +1262,48 @@ impl Inner {
                 });
             }
             (Ok(seq), dirty)
-        })
+        });
+        Ok((seq?, turn))
     }
 
     fn path(slug: &str, leaf: &str) -> StatePath {
         StatePath::new(STATE_ROOT, vec![key(slug), key(leaf)])
+    }
+
+    /// `surface.<slug>.controls.<id>.<leaf>`.
+    fn control_path(slug: &str, control: &str, leaf: &str) -> StatePath {
+        StatePath::new(
+            STATE_ROOT,
+            vec![key(slug), key("controls"), key(control), key(leaf)],
+        )
+    }
+
+    /// A fresh attach's input state (surfaces spec §4.1): every control
+    /// released, untouched and at 0 detents, with no `value` until the
+    /// device sends one.
+    fn input_reset(book: &Book, surface: &str) -> Vec<(StatePath, Option<Value>)> {
+        let (Some(entity), Some(attached)) =
+            (book.surfaces.get(surface), book.attached.get(surface))
+        else {
+            return Vec::new();
+        };
+        let slug = &entity.slug;
+        let mut ops = vec![(
+            StatePath::new(STATE_ROOT, vec![key(slug), key("controls")]),
+            None,
+        )];
+        for control in &attached.attach.controls {
+            for input in &control.inputs {
+                let (leaf, value): (&str, Value) = match input {
+                    InputCap::Momentary { .. } => ("pressed", false.into()),
+                    InputCap::Relative => ("detents", 0.into()),
+                    InputCap::Absolute { .. } => continue,
+                    InputCap::Touch => ("touched", false.into()),
+                };
+                ops.push((Self::control_path(slug, &control.id, leaf), Some(value)));
+            }
+        }
+        ops
     }
 
     /// `connected`, `page` and, while attached, `model`.
@@ -763,112 +1360,6 @@ impl Inner {
                 attached.attach.controls.clone(),
                 attached.draws.clone(),
             );
-        }
-    }
-
-    /// Journals one input and the gestures it completes.
-    fn input(
-        &self,
-        surface: &str,
-        session: u64,
-        recogniser: &mut Recogniser,
-        downs: &mut BTreeMap<String, Seq>,
-        input: Input,
-    ) {
-        let page = {
-            let book = self.book();
-            let Some(attached) = book.attached.get(surface).filter(|a| a.session == session) else {
-                return;
-            };
-            if !attached
-                .attach
-                .controls
-                .iter()
-                .any(|c| c.id == input.control)
-            {
-                tracing::warn!(%surface, control = %input.control, "input from an unknown control");
-                return;
-            }
-            book.shown.get(surface).cloned().flatten()
-        };
-        let raw = self.shared.journal.append(NewEntry::new(
-            surface_origin(surface),
-            Record::InputRaw(InputRawRecord {
-                surface: surface.to_owned(),
-                control: input.control.clone(),
-                kind: input.kind,
-                value: input.value,
-                device_ts: input.ts,
-            }),
-        ));
-        let raw = match raw {
-            Ok(entry) => entry.seq,
-            Err(e) => {
-                tracing::error!(%surface, "cannot journal input: {e}");
-                return;
-            }
-        };
-        if input.kind == InputKind::Down {
-            downs.insert(input.control.clone(), raw);
-        }
-        let found = recogniser.input(&input.control, input.kind, input.ts, Instant::now());
-        self.journal_gestures(surface, page.as_deref(), found, Some(raw));
-    }
-
-    fn journal_gestures(
-        &self,
-        surface: &str,
-        page: Option<&str>,
-        found: Vec<Detected>,
-        cause: Option<Seq>,
-    ) {
-        for Detected {
-            control,
-            gesture,
-            delta,
-        } in found
-        {
-            let entry = NewEntry::new(
-                surface_origin(surface),
-                Record::InputGesture(InputGestureRecord {
-                    surface: surface.to_owned(),
-                    page: page.map(str::to_owned),
-                    control,
-                    gesture,
-                    delta,
-                }),
-            )
-            .cause(cause);
-            if let Err(e) = self.shared.journal.append(entry) {
-                tracing::error!(%surface, "cannot journal a gesture: {e}");
-            }
-        }
-    }
-
-    /// The transport went away: `connected` becomes `false`, then whatever
-    /// was down is released, with `cause` → that change.
-    fn detach(&self, surface: &str, session: u64, released: Vec<Detected>) {
-        let mut book = self.book();
-        if book
-            .attached
-            .get(surface)
-            .is_none_or(|a| a.session != session)
-        {
-            return;
-        }
-        book.attached.remove(surface);
-        self.bindings.hide(surface);
-        let page = book.shown.get(surface).cloned().flatten();
-        let slug = book.surfaces[surface].slug.clone();
-        drop(book);
-        let path = Self::path(&slug, "connected");
-        match self.patch(
-            surface_origin(surface),
-            None,
-            vec![(path, Some(false.into()))],
-        ) {
-            Ok(seq) => self.journal_gestures(surface, page.as_deref(), released, Some(seq)),
-            Err(e) => tracing::error!(%surface, "cannot journal a detach: {e}"),
         }
     }
 }

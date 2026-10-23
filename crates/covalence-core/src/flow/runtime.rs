@@ -32,7 +32,7 @@ use crate::journal::{
     RunStartedRecord, RunStatus, RunStepRecord, Seq, StatePatchRecord, StepDetail, StepStatus,
     TriggerMatchedRecord,
 };
-use crate::state::{ConnId, Dirty, Meta, Quality, Source, StatePath};
+use crate::state::{ConnId, Dirty, Meta, Quality, Source, StatePath, TurnFeed};
 use crate::{Shared, clock, schema};
 
 /// The most runs a `queue` flow holds waiting (flow spec §8.5).
@@ -216,7 +216,7 @@ impl Runtime {
             watches: Mutex::new(BTreeMap::new()),
         });
         let matcher = tokio::spawn(match_events(inner.clone()));
-        let feed = inner.shared.state.subscribe();
+        let feed = inner.shared.state.subscribe_turns();
         let watcher = tokio::spawn(watch_state(inner.clone(), feed));
         Runtime {
             inner,
@@ -427,19 +427,19 @@ async fn match_events(inner: Arc<Inner>) {
                 }
                 (candidates, Value::Map(payload), Origin::system())
             }
-            Record::InputGesture(input) => {
-                let Some(page) = &input.page else { continue };
+            Record::InputEvent(input) => {
+                let Some(page) = &input.layer else { continue };
                 let candidates = inner.candidates(|t| {
                     matches!(t, Trigger::Gesture { control, gesture }
                         if &control.page == page
                             && control.control == input.control
-                            && *gesture == input.gesture)
+                            && *gesture == input.event)
                 });
                 let mut payload = vec![
                     ("surface".into(), input.surface.as_str().into()),
                     ("page".into(), page.as_str().into()),
                     ("control".into(), input.control.as_str().into()),
-                    ("gesture".into(), input.gesture.as_str().into()),
+                    ("gesture".into(), input.event.as_str().into()),
                 ];
                 if let Some(delta) = input.delta {
                     payload.push(("delta".into(), delta.into()));
@@ -477,7 +477,7 @@ async fn match_events(inner: Arc<Inner>) {
 }
 
 /// Re-evaluates `state` triggers when what they read changes (spec §8.2).
-async fn watch_state(inner: Arc<Inner>, mut feed: broadcast::Receiver<Arc<Dirty>>) {
+async fn watch_state(inner: Arc<Inner>, mut feed: TurnFeed) {
     loop {
         // Everything that changed since the last look, as one batch.
         let mut dirty = match feed.recv().await {
@@ -498,6 +498,7 @@ async fn watch_state(inner: Arc<Inner>, mut feed: broadcast::Receiver<Arc<Dirty>
         }
         // After a lag every state trigger is evaluated again.
         inner.check_watches(dirty.as_ref());
+        feed.done();
     }
 }
 
@@ -1435,7 +1436,7 @@ impl RunTask {
     /// Done as soon as `until` is truthy: now, or after a change to what it
     /// reads (spec §8.3).
     async fn wait_until(&mut self, until: &str) -> Result<Done, RunError> {
-        let mut feed = self.inner.shared.state.subscribe();
+        let mut feed = self.inner.shared.state.subscribe_turns();
         loop {
             let Evaluation { value, reads } =
                 self.inner
@@ -1458,6 +1459,7 @@ impl RunTask {
                 });
             }
             // Wait for a change it read, or a cancel.
+            feed.done();
             loop {
                 let cancel = &mut self.cancel;
                 let interrupted = async {
@@ -1470,7 +1472,7 @@ impl RunTask {
                     () = interrupted => return Err(cancelled_error()),
                 };
                 match changed {
-                    Ok(dirty) if !reads.touched_by(&dirty) => continue,
+                    Ok(dirty) if !reads.touched_by(&dirty) => feed.done(),
                     Err(broadcast::error::RecvError::Closed) => {
                         return Err(RunError::new("internal", "state feed closed"));
                     }
@@ -1523,6 +1525,7 @@ impl RunTask {
                     Record::StatePatch(StatePatchRecord {
                         ops: vec![op],
                         replaces: None,
+                        device_ts: None,
                     }),
                 )
                 .cause(step_started)

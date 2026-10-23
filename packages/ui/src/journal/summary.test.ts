@@ -96,12 +96,15 @@ group("journal summaries", () => {
     expect(describeOrigin({ core: "system" }, ctx)).toBe("core system");
   });
 
-  it("names surface input by surface, control and page", () => {
-    expect(describe(entry("input.raw", { surface: SURFACE, control: "k3", kind: "down", deviceTs: 12.5 }), ctx)).toBe("FOH deck k3 down");
-    expect(describe(entry("input.gesture", { surface: SURFACE, page: PAGE, control: "k3", gesture: "press" }), ctx)).toBe(
+  it("names control events by surface, control and page", () => {
+    expect(describe(entry("input.event", { surface: SURFACE, layer: PAGE, control: "k3", event: "press" }), ctx)).toBe(
       "FOH deck k3 press on Cameras",
     );
-    expect(describe(entry("input.gesture", { surface: SURFACE, control: "k0", gesture: "hold", delta: 2 }), ctx)).toBe("FOH deck k0 hold ×2");
+    expect(describe(entry("input.event", { surface: SURFACE, control: "k0", event: "hold", delta: 2 }), ctx)).toBe("FOH deck k0 hold ×2");
+    expect(describe(entry("input.event", { surface: SURFACE, control: "dial", event: "turn", delta: 3 }), ctx)).toBe("FOH deck dial turn +3");
+    expect(describe(entry("input.event", { surface: SURFACE, control: "fader", event: "change", value: 0.5 }), ctx)).toBe(
+      "FOH deck fader change 0.5",
+    );
     expect(describeOrigin({ surface: SURFACE }, ctx)).toBe("surface FOH deck");
   });
 });

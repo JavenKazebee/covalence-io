@@ -183,8 +183,11 @@ fn find_unsupported(json: &Value) -> Vec<Problem> {
             Some(kind) if LATER_TRIGGERS.contains(&kind) => {
                 not_yet(at("kind"), &format!("{kind:?} triggers"))
             }
-            Some("gesture") if trigger.get("gesture").and_then(Value::as_str) == Some("turn") => {
-                not_yet(at("gesture"), "\"turn\" gestures")
+            Some("gesture")
+                if let Some(event @ ("turn" | "change" | "touch" | "untouch")) =
+                    trigger.get("gesture").and_then(Value::as_str) =>
+            {
+                not_yet(at("gesture"), &format!("{event:?} gestures"))
             }
             Some("event") => {
                 let source = trigger.get("source");

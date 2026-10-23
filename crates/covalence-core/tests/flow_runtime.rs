@@ -715,6 +715,7 @@ impl World {
                             value: value.clone(),
                         }],
                         replaces: None,
+                        device_ts: None,
                     }),
                 ))
                 .unwrap()

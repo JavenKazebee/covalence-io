@@ -501,7 +501,7 @@ impl Worker {
             return;
         };
         for control in &shown.controls {
-            let Some(image) = &control.image else {
+            let Some(image) = control.image() else {
                 continue;
             };
             let look = shown

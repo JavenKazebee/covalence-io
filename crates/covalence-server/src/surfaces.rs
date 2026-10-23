@@ -316,8 +316,14 @@ async fn show_page(
             "unknownPage",
             e.to_string(),
         ),
-        Err(e @ ShowError::LayoutMismatch { .. }) => {
-            problem(StatusCode::CONFLICT, "layoutMismatch", e.to_string())
+        Err(ShowError::DoesNotFit { page, missing }) => {
+            let message = ShowError::DoesNotFit {
+                page,
+                missing: missing.clone(),
+            }
+            .to_string();
+            let body = json!({ "error": message, "code": "doesNotFit", "controls": missing });
+            (StatusCode::CONFLICT, Json(body)).into_response()
         }
         Err(ShowError::Journal(e)) => ApiError::internal(e).into_response(),
     }

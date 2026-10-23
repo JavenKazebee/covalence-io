@@ -799,6 +799,7 @@ fn route(inner: &Inner, ntf: Notification) {
             let record = StatePatchRecord {
                 ops,
                 replaces: Some(StatePath::root(conn.clone())),
+                device_ts: None,
             };
             let entry = NewEntry::new(origin, Record::StatePatch(record));
             apply_state(inner, &conn, entry, None, |tree, meta| {
@@ -823,6 +824,7 @@ fn route(inner: &Inner, ntf: Notification) {
             let record = StatePatchRecord {
                 ops,
                 replaces: None,
+                device_ts: None,
             };
             let (cause, run) = inner.caused_by(&conn, patch.call.as_deref());
             let entry = NewEntry::new(origin, Record::StatePatch(record))

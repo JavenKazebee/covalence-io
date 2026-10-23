@@ -117,15 +117,13 @@ export function describe(entry: JournalEntry, ctx: SummaryContext): string {
     }
     case "run.finished":
       return `${shortRun(d.run)} ${String(d.status)}${d.error === undefined ? "" : `: ${errorText(d.error)}`}`;
-    // Surface input (surfaces spec §3).
-    case "input.raw": {
-      const value = typeof d.value === "number" ? ` ${d.value}` : "";
-      return `${surface(d.surface)} ${String(d.control)} ${String(d.kind)}${value}`;
-    }
-    case "input.gesture": {
-      const page = d.page === undefined ? "" : ` on ${ctx.pageName?.(String(d.page)) ?? String(d.page)}`;
-      const delta = typeof d.delta === "number" ? ` ×${d.delta}` : "";
-      return `${surface(d.surface)} ${String(d.control)} ${String(d.gesture)}${delta}${page}`;
+    // Control events (surfaces spec §4.2). Input itself is a `state.patch`.
+    case "input.event": {
+      const page = d.layer === undefined ? "" : ` on ${ctx.pageName?.(String(d.layer)) ?? String(d.layer)}`;
+      const delta =
+        typeof d.delta !== "number" ? "" : d.event === "turn" ? ` ${d.delta > 0 ? "+" : ""}${d.delta}` : ` ×${d.delta}`;
+      const value = d.value === undefined ? "" : ` ${json(d.value, 20)}`;
+      return `${surface(d.surface)} ${String(d.control)} ${String(d.event)}${delta}${value}${page}`;
     }
     default:
       return json(entry.data);

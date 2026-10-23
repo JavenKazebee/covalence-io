@@ -11,7 +11,8 @@ use covalence_core::state::{Meta, Quality, Source, StatePath};
 use covalence_core::surface::gesture::Timing;
 use covalence_core::surface::render::{Look, Renderer, Rgb};
 use covalence_core::surface::{
-    Attach, ControlDef, ControlKind, Draw, ImageDef, Layout, Link, Page, Surface, Surfaces,
+    Attach, ControlDef, Draw, ImageDef, InputCap, Layout, Link, OutputCap, Page, Placement,
+    Surface, Surfaces,
 };
 use covalence_protocol::Value;
 use covalence_protocol::state::PathSegment;
@@ -63,24 +64,25 @@ fn deck() -> Attach {
         model: "virtual.deck15".into(),
         serial: None,
         name: "Virtual deck".into(),
-        controls: (0..15)
-            .map(|i| ControlDef {
-                id: format!("k{i}"),
-                kind: ControlKind::Button,
-                x: i % 5,
-                y: i / 5,
-                w: None,
-                h: None,
-                image: Some(ImageDef {
-                    w: 72,
-                    h: 72,
-                    format: "png".into(),
-                    rotation: 0,
-                }),
-                pressable: None,
-            })
+        controls: (0..LAYOUT.cols * LAYOUT.rows)
+            .map(|i| key(i, LAYOUT.cols, 72))
             .collect(),
-        layout: LAYOUT,
+    }
+}
+
+/// Key `k<i>` of a deck `cols` wide, with `size`px images.
+fn key(i: u32, cols: u32, size: u32) -> ControlDef {
+    ControlDef {
+        id: format!("k{i}"),
+        label: None,
+        at: Placement::at(i % cols, i / cols),
+        inputs: vec![InputCap::Momentary { velocity: false }],
+        outputs: vec![OutputCap::Image(ImageDef {
+            w: size,
+            h: size,
+            format: "png".into(),
+            rotation: 0,
+        })],
     }
 }
 
@@ -433,24 +435,7 @@ async fn bench_a_full_page_of_expr_bindings() {
             ));
         }
         let mut attach = deck();
-        attach.layout = layout;
-        attach.controls = (0..keys)
-            .map(|i| ControlDef {
-                id: format!("k{i}"),
-                kind: ControlKind::Button,
-                x: i % cols,
-                y: i / cols,
-                w: None,
-                h: None,
-                image: Some(ImageDef {
-                    w: size,
-                    h: size,
-                    format: "png".into(),
-                    rotation: 0,
-                }),
-                pressable: None,
-            })
-            .collect();
+        attach.controls = (0..keys).map(|i| key(i, cols, size)).collect();
         set(&w.shared, path("vars", &["n"]), 0.into());
         let mut link = w.surfaces.attach(&surface, attach).unwrap();
         w.surfaces.flush().await;

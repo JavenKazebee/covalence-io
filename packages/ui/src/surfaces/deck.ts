@@ -30,7 +30,10 @@ export function newDeckState(): DeckState {
   return { status: "connecting", reason: null, retrying: false, images: {}, down: {} };
 }
 
-/** `surface.attach` for a deck of `model`: one button per key, each with an image. */
+/**
+ * `surface.attach` for a deck of `model` (plugin protocol §8): one key per
+ * cell, each `momentary` with an `image`, placed with `at`.
+ */
 export function attachMessage(slug: string, name: string, modelId: string, model: Model) {
   const { cols } = model.layout;
   return {
@@ -41,12 +44,10 @@ export function attachMessage(slug: string, name: string, modelId: string, model
       name,
       controls: controlsOf(model.layout).map((id, i) => ({
         id,
-        kind: "button",
-        x: i % cols,
-        y: Math.floor(i / cols),
-        image: { w: model.key, h: model.key, format: "png" },
+        at: { x: i % cols, y: Math.floor(i / cols) },
+        inputs: [{ kind: "momentary" }],
+        outputs: [{ kind: "image", w: model.key, h: model.key, format: "png" }],
       })),
-      layout: model.layout,
     },
   };
 }
