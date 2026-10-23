@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deckControls, gridOf, missingControls, neighbour, toLayerControl, virtualDeck, type Layer } from "./model";
+import { deckControls, eventsFor, gridOf, missingControls, neighbour, toLayerControl, virtualDeck, type Layer } from "./model";
 
 const layer = (controls: Layer["controls"]): Layer => ({ id: "l", name: "L", slug: "l", controls });
 
@@ -41,5 +41,12 @@ describe("layers", () => {
     expect(neighbour(cells, "k0", 0, 1)).toBe("k5");
     expect(neighbour(cells, "k0", -1, 0)).toBeUndefined();
     expect(neighbour(cells, "k14", 0, -1)).toBe("k9");
+  });
+
+  it("offer the events a control's inputs can give", () => {
+    expect(eventsFor({ id: "k0", inputs: ["momentary"] })).toEqual(["press", "release", "double", "long", "hold"]);
+    expect(eventsFor({ id: "dial", inputs: ["relative", "momentary"] })).toContain("turn");
+    expect(eventsFor({ id: "fader", inputs: ["absolute", "touch"] })).toEqual(["change", "touch", "untouch"]);
+    expect(eventsFor({ id: "led" })).toEqual([]);
   });
 });

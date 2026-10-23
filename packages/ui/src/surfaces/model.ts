@@ -167,13 +167,37 @@ export function neighbour(cells: Cell[], from: string, dx: number, dy: number): 
   return best?.id;
 }
 
-export const gestures = ["press", "release", "double", "long", "hold"] as const;
-export type Gesture = (typeof gestures)[number] | "turn";
+/** What a control trigger can listen for (surfaces spec §4.2). */
+export const controlEvents = ["press", "release", "double", "long", "hold", "turn", "change", "touch", "untouch"] as const;
+export type ControlEvent = (typeof controlEvents)[number];
 
-export const gestureHelp: Record<(typeof gestures)[number], string> = {
+export const eventHelp: Record<ControlEvent, string> = {
   press: "Pressed",
   release: "Released",
   double: "Double-pressed",
   long: "Held for half a second",
   hold: "Held, repeating",
+  turn: "Turned",
+  change: "Moved",
+  touch: "Touched",
+  untouch: "Let go",
 };
+
+/** The input a control needs to give each event. */
+const eventInput: Record<ControlEvent, InputKind> = {
+  press: "momentary",
+  release: "momentary",
+  double: "momentary",
+  long: "momentary",
+  hold: "momentary",
+  turn: "relative",
+  change: "absolute",
+  touch: "touch",
+  untouch: "touch",
+};
+
+/** The events a layer's control can give, from the inputs the layer lists for it. */
+export function eventsFor(control: LayerControl | undefined): ControlEvent[] {
+  const inputs = new Set(control?.inputs ?? []);
+  return controlEvents.filter((e) => inputs.has(eventInput[e]));
+}

@@ -102,18 +102,19 @@ The parts of ADR 0024 marked **Now**. They're the shape changes that would other
   - Layer validation: unique control IDs, at most 256, bound controls still present. `unknownPage` becomes `unknownLayer`.
   - Every layer is in the `main` navigation group, which is M5's behaviour.
   - Done: `Layer` and `LayerControl`, with `InputCapKind` and `OutputCapKind` for what a layer needs (the journal's `InputKind` is still what a surface sends). `POST /current` takes `{group?, layer}` and refuses any group but `main`. `Surfaces::controls` is kept in memory, so `/controls` answers `404` until the surface attaches after a restart. A layer that loses a bound control's output is `noOutput` at `controls`. `gesture` triggers already name `{layer, control}`, which is the `control` trigger's `ControlRef`.
-- [ ] **`control` triggers** (surfaces spec §7, [flow spec §8.2](../specs/flows.md)):
+- [x] **`control` triggers** (surfaces spec §7, [flow spec §8.2](../specs/flows.md)):
   - `gesture` triggers become `{kind: "control", control: {layer, control}, event}`.
   - An event the control's inputs can't give is `unsupported`.
   - A `state` trigger over `pressed` sees every press, however short.
   - Fixtures renamed and updated.
+  - Done: `Trigger::Control`, matched on `input.event` with `trigger.event`, and `delta` and `value` when the event has them. `surface::input_for` gives the input each event needs, checked against the inputs the layer lists for the control. `echo`, and refs other than `{layer, control}`, are `unsupported`. Fixtures: `control.json` and `problems/controls.json`, which adds a `turn` on a key; `problems/unsupported.json` now has `echo` and a `{surface, control}` ref.
 - [x] **Bindings** ([bindings spec §1](../specs/bindings.md)): `page` becomes `layer`. A property can only be bound on a layer control that declares its output (`noOutput`). M5's three properties need `image`.
   - Done: `Prop::output` and `ControlBinding::outputs`; `problems/outputs.json` binds `k13`, which the fixtures' layer lists without outputs.
 - [ ] **UI:**
   - [x] "Pages" become "Layers" throughout the Surfaces tab.
   - [x] The virtual deck attaches with capabilities and `at`.
   - [x] "New layer" on a surface copies its controls, and the layer editor draws the grid from `at`. Done: it copies what `/controls` returns, or the model's controls if the surface hasn't attached since the server started. Arrow keys move to the nearest control in that direction, and a control with no `image` output says there's nothing to bind on it yet.
-  - "Add key trigger" uses `control` and `event`.
+  - [x] "Add key trigger" uses `control` and `event`. Done: it's "Add control trigger" now, and offers only the events the control's inputs can give; "When pressed" makes a `control` trigger.
   - Journal summaries cover input patches and `input.event`, and the state view shows control input.
 - [ ] **Tests:**
   - the gesture recogniser's unit tests against input state

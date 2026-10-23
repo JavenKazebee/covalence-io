@@ -12,7 +12,7 @@ use super::{Flow, Step, StepKind, Trigger, WaitFor, param_expr};
 use crate::expr::{At, Evaluator};
 use crate::schema;
 use crate::state::ConnId;
-use crate::surface::{Layer, LayerId};
+use crate::surface::{self, Layer, LayerId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -36,9 +36,9 @@ pub enum Code {
     BadPath,
     /// A `branch` without arms.
     NoArms,
-    /// A `gesture` trigger, binding or start layer on a layer that doesn't exist.
+    /// A `control` trigger, binding or start layer on a layer that doesn't exist.
     UnknownLayer,
-    /// A `gesture` trigger or binding on a control its layer doesn't list.
+    /// A `control` trigger or binding on a control its layer doesn't list.
     UnknownControl,
     /// A second binding for a control on the same layer, or a layer that
     /// lists a control twice.
@@ -187,11 +187,14 @@ fn find_unsupported(json: &Value) -> Vec<Problem> {
             Some(kind) if LATER_TRIGGERS.contains(&kind) => {
                 not_yet(at("kind"), &format!("{kind:?} triggers"))
             }
-            Some("gesture")
-                if let Some(event @ ("turn" | "change" | "touch" | "untouch")) =
-                    trigger.get("gesture").and_then(Value::as_str) =>
-            {
-                not_yet(at("gesture"), &format!("{event:?} gestures"))
+            Some("control") => {
+                if trigger.get("echo").is_some() {
+                    not_yet(at("echo"), "echoes on control triggers");
+                }
+                let control = trigger.get("control").and_then(Value::as_object);
+                if control.is_some_and(|c| c.keys().any(|k| k != "layer" && k != "control")) {
+                    not_yet(at("control"), "control refs other than {layer, control}");
+                }
             }
             Some("event") => {
                 let source = trigger.get("source");
@@ -330,18 +333,36 @@ pub fn validate(flow: &Flow, ctx: &Context) -> Report {
                 }
             }
             Trigger::State { when, .. } => v.expr(at("when"), when),
-            Trigger::Gesture { control, .. } => match ctx.layers.get(&control.layer) {
+            Trigger::Control { control, event } => match ctx
+                .layers
+                .get(&control.layer)
+                .map(|layer| layer.control(&control.control))
+            {
                 None => v.error(
                     path![key("triggers"), index(i), key("control"), key("layer")],
                     Code::UnknownLayer,
                     format!("no layer {:?}", control.layer),
                 ),
-                Some(layer) if layer.control(&control.control).is_none() => v.error(
+                Some(None) => v.error(
                     path![key("triggers"), index(i), key("control"), key("control")],
                     Code::UnknownControl,
                     format!("the layer doesn't list a control {:?}", control.control),
                 ),
-                Some(_) => {}
+                Some(Some(listed)) => {
+                    let needs = surface::input_for(*event);
+                    if !listed.inputs.contains(&needs) {
+                        v.error(
+                            at("event"),
+                            Code::Unsupported,
+                            format!(
+                                "{} gives no {:?} events: that needs a {} input, and the layer doesn't list one for it",
+                                control.control,
+                                event.as_str(),
+                                needs.as_str()
+                            ),
+                        );
+                    }
+                }
             },
         }
     }

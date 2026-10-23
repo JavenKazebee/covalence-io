@@ -5,17 +5,17 @@
   "enabled": true,
   "triggers": [
     {
-      "kind": "gesture",
+      "kind": "control",
       "control": { "layer": "01JBZ7P0D3F5G7H9J1K3L5M7PA", "control": "k0" },
-      "gesture": "press"
+      "event": "press"
     },
     {
-      "kind": "gesture",
+      "kind": "control",
       "control": { "layer": "01JBZ7P0D3F5G7H9J1K3L5M7PA", "control": "k14" },
-      "gesture": "hold"
+      "event": "hold"
     }
   ],
-  "conditions": ["trigger.gesture != \"hold\" || trigger.delta <= 3"],
+  "conditions": ["trigger.event != \"hold\" || trigger.delta <= 3"],
   "concurrency": "ignore",
   "failover": "abort",
   "body": [

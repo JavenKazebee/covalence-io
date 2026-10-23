@@ -393,8 +393,8 @@ impl Drop for Runtime {
     }
 }
 
-/// Fires `event` and `gesture` triggers from plugin events and surface
-/// gestures in the journal.
+/// Fires `event` and `control` triggers from plugin events and control
+/// events in the journal.
 async fn match_events(inner: Arc<Inner>) {
     let mut feed = inner.shared.journal.subscribe();
     loop {
@@ -430,19 +430,22 @@ async fn match_events(inner: Arc<Inner>) {
             Record::InputEvent(input) => {
                 let Some(layer) = &input.layer else { continue };
                 let candidates = inner.candidates(|t| {
-                    matches!(t, Trigger::Gesture { control, gesture }
+                    matches!(t, Trigger::Control { control, event }
                         if &control.layer == layer
                             && control.control == input.control
-                            && *gesture == input.event)
+                            && *event == input.event)
                 });
                 let mut payload = vec![
                     ("surface".into(), input.surface.as_str().into()),
                     ("layer".into(), layer.as_str().into()),
                     ("control".into(), input.control.as_str().into()),
-                    ("gesture".into(), input.event.as_str().into()),
+                    ("event".into(), input.event.as_str().into()),
                 ];
                 if let Some(delta) = input.delta {
                     payload.push(("delta".into(), delta.into()));
+                }
+                if let Some(value) = &input.value {
+                    payload.push(("value".into(), value.clone()));
                 }
                 (candidates, Value::Map(payload), entry.origin.clone())
             }

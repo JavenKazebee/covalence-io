@@ -154,7 +154,7 @@ impl App {
     }
 
     /// Removes a layer, its bindings, and any surface's use of it as a start
-    /// layer. Flows whose `gesture` triggers name it keep them, and are told
+    /// layer. Flows whose `control` triggers name it keep them, and are told
     /// when they're next saved.
     pub fn delete_layer(&self, id: &str) -> Result<Option<Layer>, SaveError> {
         let _saving = self.saving.lock().unwrap_or_else(|e| e.into_inner());

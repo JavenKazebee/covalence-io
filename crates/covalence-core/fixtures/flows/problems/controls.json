@@ -1,23 +1,28 @@
 {
   "flow": {
-    "name": "Bad gestures",
-    "slug": "badGestures",
+    "name": "Bad controls",
+    "slug": "badControls",
     "enabled": true,
     "triggers": [
       {
-        "kind": "gesture",
+        "kind": "control",
         "control": { "layer": "01JBZ7P0D3F5G7H9J1K3L5M7PZ", "control": "k0" },
-        "gesture": "press"
+        "event": "press"
       },
       {
-        "kind": "gesture",
+        "kind": "control",
         "control": { "layer": "01JBZ7P0D3F5G7H9J1K3L5M7PA", "control": "k15" },
-        "gesture": "press"
+        "event": "press"
       },
       {
-        "kind": "gesture",
+        "kind": "control",
         "control": { "layer": "01JBZ7P0D3F5G7H9J1K3L5M7PA", "control": "k01" },
-        "gesture": "double"
+        "event": "double"
+      },
+      {
+        "kind": "control",
+        "control": { "layer": "01JBZ7P0D3F5G7H9J1K3L5M7PA", "control": "k0" },
+        "event": "turn"
       }
     ],
     "concurrency": "parallel",
@@ -26,7 +31,8 @@
   "errors": [
     { "path": ["triggers", 0, "control", "layer"], "code": "unknownLayer" },
     { "path": ["triggers", 1, "control", "control"], "code": "unknownControl" },
-    { "path": ["triggers", 2, "control", "control"], "code": "unknownControl" }
+    { "path": ["triggers", 2, "control", "control"], "code": "unknownControl" },
+    { "path": ["triggers", 3, "event"], "code": "unsupported" }
   ],
   "warnings": []
 }

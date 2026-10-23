@@ -23,7 +23,7 @@ import { hrefOf, navigate } from "../nav";
 import { useCatalogStore } from "../stores/catalog";
 import { useFlowsStore } from "../stores/flows";
 import { useSurfacesStore } from "../stores/surfaces";
-import { gestureHelp, gestures } from "../surfaces/model";
+import { eventHelp, eventsFor, type ControlEvent } from "../surfaces/model";
 import ExprInput from "./ExprInput.vue";
 import FlowRuns from "./FlowRuns.vue";
 import StepList from "./StepList.vue";
@@ -112,14 +112,15 @@ function eventsOf(connId: string) {
   return conn === undefined ? [] : (catalog.manifest(conn.plugin)?.events ?? []);
 }
 
-function addTrigger(kind: "api" | "event" | "state" | "gesture") {
+function addTrigger(kind: "api" | "event" | "state" | "control") {
   if (draft.value === null) return;
-  if (kind === "gesture") {
+  if (kind === "control") {
     const layer = surfaces.layers[0];
+    const control = layer?.controls[0];
     draft.value.triggers.push({
-      kind: "gesture",
-      control: { layer: layer?.id ?? "", control: layer?.controls[0]?.id ?? "" },
-      gesture: "press",
+      kind: "control",
+      control: { layer: layer?.id ?? "", control: control?.id ?? "" },
+      event: eventsFor(control)[0] ?? "press",
     });
     return;
   }
@@ -145,6 +146,12 @@ const edgeHelp: Record<Edge, string> = {
 function controlsOf(layerId: string, current: string): string[] {
   const ids = surfaces.layer(layerId)?.controls.map((c) => c.id) ?? [];
   return ids.includes(current) ? ids : [current, ...ids];
+}
+
+/** The events a trigger's control can give, keeping the one it names if the control can't. */
+function eventsOfControl(layerId: string, controlId: string, current: ControlEvent): ControlEvent[] {
+  const events = eventsFor(surfaces.layer(layerId)?.controls.find((c) => c.id === controlId));
+  return events.includes(current) ? events : [current, ...events];
 }
 
 /** A sample event trigger for previewing a filter: the payload isn't known until it fires. */
@@ -297,8 +304,8 @@ async function remove() {
           <template v-if="trigger.kind === 'api'">
             <span><strong>API</strong> <span class="muted">· the Run button and <code>POST /flows/{id}/run</code></span></span>
           </template>
-          <template v-else-if="trigger.kind === 'gesture'">
-            <strong>Key</strong>
+          <template v-else-if="trigger.kind === 'control'">
+            <strong>Control</strong>
             <select
               v-model="trigger.control.layer"
               :aria-label="`Trigger ${i + 1} layer`"
@@ -330,21 +337,15 @@ async function remove() {
               </option>
             </select>
             <select
-              v-model="trigger.gesture"
-              :aria-label="`Trigger ${i + 1} gesture`"
+              v-model="trigger.event"
+              :aria-label="`Trigger ${i + 1} event`"
             >
               <option
-                v-if="!(gestures as readonly string[]).includes(trigger.gesture)"
-                :value="trigger.gesture"
+                v-for="e in eventsOfControl(trigger.control.layer, trigger.control.control, trigger.event)"
+                :key="e"
+                :value="e"
               >
-                {{ trigger.gesture }}
-              </option>
-              <option
-                v-for="g in gestures"
-                :key="g"
-                :value="g"
-              >
-                {{ gestureHelp[g] }}
+                {{ eventHelp[e] }}
               </option>
             </select>
             <a
@@ -504,9 +505,9 @@ async function remove() {
           class="secondary"
           :disabled="surfaces.layers.length === 0"
           :title="surfaces.layers.length === 0 ? 'Make a layer in Surfaces first' : ''"
-          @click="addTrigger('gesture')"
+          @click="addTrigger('control')"
         >
-          Add key trigger
+          Add control trigger
         </button>
       </div>
       <ul

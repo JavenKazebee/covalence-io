@@ -147,7 +147,7 @@ async function remove() {
           </p>
           <p class="hint">
             Press keys with the mouse, or focus one and hold Space. Each press is a
-            <code>gesture</code> a flow can trigger on; the keys show what their layer binds.
+            <code>control</code> event a flow can trigger on; the keys show what their layer binds.
           </p>
         </div>
       </div>

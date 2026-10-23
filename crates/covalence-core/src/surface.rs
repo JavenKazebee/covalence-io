@@ -14,7 +14,7 @@
 //! input state, `surface.<slug>.controls.<id>.*`, as `state.patch`es with the
 //! surface as origin (surfaces spec §4.1). Each change gives its edge events
 //! ([`gesture`]), journaled as `input.event` with `cause` → the patch. Flows
-//! match `gesture` triggers on those entries. Key, touch and encoder changes
+//! match `control` triggers on those entries. Key, touch and encoder changes
 //! each get a scheduler turn of their own: the task waits for the state's
 //! consumers to see one before it applies the next. The rest of the
 //! surface's state, `surface.<slug>.*`, is written through the journal as
@@ -139,6 +139,20 @@ pub enum OutputCapKind {
     Led,
     Level,
     Text,
+}
+
+/// The input a control needs to give an event (surfaces spec §4.2).
+pub fn input_for(event: ControlEvent) -> InputCapKind {
+    match event {
+        ControlEvent::Press
+        | ControlEvent::Release
+        | ControlEvent::Double
+        | ControlEvent::Long
+        | ControlEvent::Hold => InputCapKind::Momentary,
+        ControlEvent::Turn => InputCapKind::Relative,
+        ControlEvent::Change => InputCapKind::Absolute,
+        ControlEvent::Touch | ControlEvent::Untouch => InputCapKind::Touch,
+    }
 }
 
 impl InputCapKind {

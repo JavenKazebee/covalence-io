@@ -108,7 +108,7 @@ function whenPressed() {
   const flow = newFlowDraft();
   const label = preview.value?.look.label.trim();
   flow.name = `${props.layer.name} ${props.control}${label ? ` (${label})` : ""}`;
-  flow.triggers = [{ kind: "gesture", control: { layer: props.layer.id, control: props.control }, gesture: "press" }];
+  flow.triggers = [{ kind: "control", control: { layer: props.layer.id, control: props.control }, event: "press" }];
   flows.prefill = flow;
   navigate({ tab: "flows", flow: "new" });
 }

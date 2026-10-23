@@ -63,11 +63,11 @@ const failing = (control: string) => {
   const id = byControl.value.get(control)?.id;
   return id !== undefined && runtime.value.some((p) => p.binding === id);
 };
-/** Flows with a gesture trigger on each control, for the grid's corner mark. */
+/** Flows with a control trigger on each control, for the grid's corner mark. */
 const triggered = computed(() => {
   const out = new Set<string>();
   for (const f of flows.flows) {
-    for (const t of f.triggers) if (t.kind === "gesture" && t.control.layer === props.id) out.add(t.control.control);
+    for (const t of f.triggers) if (t.kind === "control" && t.control.layer === props.id) out.add(t.control.control);
   }
   return out;
 });

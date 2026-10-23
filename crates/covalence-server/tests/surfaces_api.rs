@@ -227,18 +227,18 @@ async fn surfaces_layers_and_bindings_are_validated_and_stored() {
         [(json!(["props", "label"]), "noOutput".into())]
     );
 
-    // Flows can now save `gesture` triggers, checked against layers.
-    let gesture_flow = |layer: &str| {
+    // Flows save `control` triggers, checked against layers.
+    let control_flow = |layer: &str| {
         json!({
             "name": "On press",
             "enabled": true, "concurrency": "ignore",
-            "triggers": [{ "kind": "gesture", "control": { "layer": layer, "control": "k3" }, "gesture": "press" }],
+            "triggers": [{ "kind": "control", "control": { "layer": layer, "control": "k3" }, "event": "press" }],
             "body": [{ "id": "s", "kind": "set", "path": "vars.pressed", "value": "true" }],
         })
     };
-    let (status, body) = server.post("/flows", gesture_flow(id(&cams))).await;
+    let (status, body) = server.post("/flows", control_flow(id(&cams))).await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
-    let (status, body) = server.post("/flows", gesture_flow("nope")).await;
+    let (status, body) = server.post("/flows", control_flow("nope")).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(codes(&body)[0].1, "unknownLayer", "{body}");
 
@@ -581,7 +581,7 @@ async fn a_web_surface_presses_routes_and_redraws() {
             json!({
                 "name": "Route on press",
                 "enabled": true, "concurrency": "ignore",
-                "triggers": [{ "kind": "gesture", "control": { "layer": id(&layer), "control": "k1" }, "gesture": "press" }],
+                "triggers": [{ "kind": "control", "control": { "layer": id(&layer), "control": "k1" }, "event": "press" }],
                 "body": [{
                     "id": "route1", "kind": "action", "target": { "conn": vh },
                     "action": "route", "params": { "output": 1, "input": 3 },

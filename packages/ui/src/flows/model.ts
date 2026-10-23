@@ -4,7 +4,7 @@
 
 import type { JsonSchema, Manifest } from "../api";
 import { fieldsOf, parseValues, type Field } from "../forms/schema";
-import type { Gesture } from "../surfaces/model";
+import type { ControlEvent } from "../surfaces/model";
 
 export type Concurrency = "parallel" | "queue" | "restart" | "ignore";
 export const concurrencies: readonly Concurrency[] = ["parallel", "queue", "restart", "ignore"];
@@ -20,7 +20,7 @@ export type Trigger =
   | { kind: "event"; source: { conn: string }; event: string; filter?: Expr }
   | { kind: "state"; when: Expr; edge: Edge }
   /** A control on a layer, on any surface where the layer controls it (surfaces spec §7). */
-  | { kind: "gesture"; control: { layer: string; control: string }; gesture: Gesture };
+  | { kind: "control"; control: { layer: string; control: string }; event: ControlEvent };
 
 /** A value that is an expression: `{expr: "..."}` (flow spec §8.3). */
 export interface ExprValue {
@@ -234,13 +234,13 @@ let nextKey = 1;
 /** A deep copy of plain JSON, which flows are. Unlike `structuredClone`, it takes Vue's reactive proxies. */
 const copyJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
-/** Whether a trigger fires on this gesture of this control. */
-export function firesOn(trigger: Trigger, layer: string, control: string, gesture: Gesture): boolean {
+/** Whether a trigger fires on this event of this control. */
+export function firesOn(trigger: Trigger, layer: string, control: string, event: ControlEvent): boolean {
   return (
-    trigger.kind === "gesture" &&
+    trigger.kind === "control" &&
     trigger.control.layer === layer &&
     trigger.control.control === control &&
-    trigger.gesture === gesture
+    trigger.event === event
   );
 }
 
@@ -502,8 +502,8 @@ export function describeTrigger(
   layerName: (layer: string) => string = (layer) => layer,
 ): string {
   switch (trigger.kind) {
-    case "gesture":
-      return `${layerName(trigger.control.layer)} ${trigger.control.control} ${trigger.gesture}`;
+    case "control":
+      return `${layerName(trigger.control.layer)} ${trigger.control.control} ${trigger.event}`;
     case "api":
       return "API / Run button";
     case "event":

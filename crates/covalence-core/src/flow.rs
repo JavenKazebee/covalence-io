@@ -94,10 +94,10 @@ pub enum Trigger {
     /// An expression over state, on an edge (spec §8.2).
     State { when: Expr, edge: Edge },
     /// An event on a control of a layer, on any surface where that layer
-    /// controls it (surfaces spec §7).
-    Gesture {
+    /// controlled it (surfaces spec §7).
+    Control {
         control: ControlRef,
-        gesture: ControlEvent,
+        event: ControlEvent,
     },
 }
 

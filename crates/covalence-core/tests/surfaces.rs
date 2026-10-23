@@ -697,7 +697,7 @@ async fn removing_a_layer_or_renaming_a_surface_updates_state() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_gesture_trigger_runs_its_flow_and_why_reaches_the_input_patch() {
+async fn a_control_trigger_runs_its_flow_and_why_reaches_the_input_patch() {
     let w = world();
     let runtime = Runtime::start(
         w.shared.clone(),
@@ -710,9 +710,9 @@ async fn a_gesture_trigger_runs_its_flow_and_why_reaches_the_input_patch() {
         "slug": "notePress",
         "enabled": true,
         "triggers": [{
-            "kind": "gesture",
+            "kind": "control",
             "control": { "layer": CAMS, "control": "k4" },
-            "gesture": "press",
+            "event": "press",
         }],
         "concurrency": "parallel",
         "body": [{
@@ -766,7 +766,7 @@ async fn a_gesture_trigger_runs_its_flow_and_why_reaches_the_input_patch() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_gesture_trigger_only_matches_its_layer() {
+async fn a_control_trigger_only_matches_its_layer() {
     let w = world();
     let runtime = Runtime::start(
         w.shared.clone(),
@@ -779,9 +779,9 @@ async fn a_gesture_trigger_only_matches_its_layer() {
         "slug": "audioOnly",
         "enabled": true,
         "triggers": [{
-            "kind": "gesture",
+            "kind": "control",
             "control": { "layer": AUDIO, "control": "k0" },
-            "gesture": "double",
+            "event": "double",
         }],
         "concurrency": "parallel",
         "body": [{ "id": "note", "kind": "set", "path": "vars.doubled", "value": "true" }],
@@ -932,4 +932,47 @@ async fn a_layer_fits_by_capability_not_by_size() {
         }
     );
     assert_eq!(w.surfaces.controls("nope"), None);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_control_trigger_on_a_dial_gets_the_turn() {
+    let w = world();
+    let runtime = runtime(&w.shared);
+    const DIALS: &str = "01JC5PAGE00000000000000004";
+    w.surfaces
+        .set_layer(Layer {
+            id: DIALS.into(),
+            name: "Dials".into(),
+            slug: "dials".into(),
+            controls: vec![LayerControl {
+                id: "dial".into(),
+                at: None,
+                inputs: vec![InputCapKind::Relative],
+                outputs: vec![],
+            }],
+        })
+        .unwrap();
+    let flow: Flow = serde_json::from_value(json!({
+        "id": "01JC5FLOW00000000000000006",
+        "name": "Turned",
+        "slug": "turned",
+        "enabled": true,
+        "triggers": [{
+            "kind": "control",
+            "control": { "layer": DIALS, "control": "dial" },
+            "event": "turn",
+        }],
+        "concurrency": "queue",
+        "body": [{ "id": "note", "kind": "set", "path": "vars.turned", "value": "`${trigger.event} ${trigger.delta}`" }],
+    }))
+    .unwrap();
+    runtime.set_flow(flow);
+    let link = w.surfaces.attach(DECK, mixer()).unwrap();
+    w.surfaces
+        .show(DECK, Some(DIALS), Origin::system())
+        .unwrap();
+    send_value(&link, "dial", InputKind::Turn, Some((-2.0).into()), 0.0).await;
+    settle(&w.surfaces).await;
+    assert_eq!(var(&w.shared, "turned"), Some("turn -2".into()));
+    runtime.shutdown().await;
 }

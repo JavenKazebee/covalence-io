@@ -14,12 +14,21 @@
         "event": "routeChanged"
       },
       {
-        "kind": "gesture",
+        "kind": "control",
         "control": {
           "layer": "01JBZ7P0D3F5G7H9J1K3L5M7PA",
           "control": "k0"
         },
-        "gesture": "turn"
+        "event": "press",
+        "echo": true
+      },
+      {
+        "kind": "control",
+        "control": {
+          "surface": "01JC5URFACE000000000000001",
+          "control": "k0"
+        },
+        "event": "press"
       }
     ],
     "concurrency": "ignore",
@@ -94,7 +103,15 @@
       "path": [
         "triggers",
         2,
-        "gesture"
+        "echo"
+      ],
+      "code": "unsupported"
+    },
+    {
+      "path": [
+        "triggers",
+        3,
+        "control"
       ],
       "code": "unsupported"
     },
