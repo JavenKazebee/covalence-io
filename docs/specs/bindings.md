@@ -1,13 +1,13 @@
 # Spec: Bindings
 
-- **Status:** Draft v0.2. [M5](../milestones/m5-surfaces-and-bindings.md) implements display bindings (§1–§4) for `label`, `textColor` and `background`; helpers, layer parameters and presets come later. [ADR 0024](../adr/0024-surfaces-as-two-way-devices.md) replaces value mappings with helpers (§5). Its markers follow the [surfaces spec](surfaces.md): **(Now)** is [M5 Phase 5](../milestones/m5-surfaces-and-bindings.md), and implemented; **(Later)** has no milestone yet.
-- **Related:** [ADR 0018](../adr/0018-flows-as-step-trees.md), [ADR 0024](../adr/0024-surfaces-as-two-way-devices.md), [ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md), [ADR 0004](../adr/0004-javascript-expressions-and-scripts.md), [state and event log](state-and-event-log.md), [plugin protocol §8](plugin-protocol.md), [flows](flows.md)
+- **Status:** Draft v0.3. [M5](../milestones/m5-surfaces-and-bindings.md) implements display bindings (§1–§4) for `label`, `textColor` and `background`. [ADR 0024](../adr/0024-surfaces-as-two-way-devices.md) replaces value mappings with helpers (§5). [ADR 0026](../adr/0026-sources-and-selectors.md) makes every binding a `Source` and the binding kinds stateless transforms (§2); [ADR 0029](../adr/0029-dataflow-sources-transforms-sinks.md) makes helpers reducers (§5). Its markers follow the [surfaces spec](surfaces.md): **(Now)** is [M5 Phase 5](../milestones/m5-surfaces-and-bindings.md), and implemented; **(M6)**, **(M8)** and **(M9)** are those milestones; **(Later)** has no milestone yet.
+- **Related:** [ADR 0018](../adr/0018-flows-as-step-trees.md), [ADR 0024](../adr/0024-surfaces-as-two-way-devices.md), [ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md), [ADR 0004](../adr/0004-javascript-expressions-and-scripts.md), [ADR 0026](../adr/0026-sources-and-selectors.md), [ADR 0029](../adr/0029-dataflow-sources-transforms-sinks.md), [ADR 0031](../adr/0031-templates-instances-and-components.md), [dataflow](dataflow.md), [composition](composition.md), [state and event log](state-and-event-log.md), [plugin protocol §8](plugin-protocol.md), [flows](flows.md)
 
-Bindings are Covalence's **dataflow**. Flows do things in order; bindings keep something continuously in step with state. Every binding is evaluated as a JS expression ([ADR 0004](../adr/0004-javascript-expressions-and-scripts.md)), but users only write code when they choose to.
+Bindings are where Covalence's **dataflow** ([dataflow spec](dataflow.md)) meets a control. Flows do things in order; bindings keep something continuously in step with state. Every binding is a `Source` and evaluates as a JS expression ([ADR 0004](../adr/0004-javascript-expressions-and-scripts.md)), but users only write code when they choose to.
 
 A `control_binding` covers both directions of one control, since a surface is a two-way device ([ADR 0024](../adr/0024-surfaces-as-two-way-devices.md)):
-- **Display bindings** (§1–§4): state → the control's outputs (image, LED, level, text).
-- **Helpers** (§5): the control's input state → derived state and events. A derived value can be shown, written to a variable or drive an action parameter. Derived events trigger flows through `control` triggers.
+- **Display bindings** (§1–§4): sources → the control's outputs (image, LED, level, text). Each property is a sink (dataflow §7).
+- **Helpers** (§5): reducers over the control's input → cells with derived state and events. A derived value can be shown, sent to a variable or drive an action parameter. Derived events trigger flows through event triggers.
 
 A control's input is already state and events without any binding (surfaces §4). Flows react to it; bindings don't run steps. Surfaces, controls, input state, events, layers and control groups are in the [surfaces spec](surfaces.md).
 
@@ -22,8 +22,9 @@ interface ControlBinding {        // project entity `control_binding`
   id: string;
   layer: string;                  // (Now) the layer it's on (M5: `page`)
   control: string;                // one of the layer's LayerControl IDs
-  props: { [prop in ControlProp]?: Binding };
-  helpers?: Helper[];             // (Later) §5
+  props: { [prop in ControlProp]?: Source<Value> };   // (M6) was `Binding`, §2
+  helpers?: Helper[];             // (M8) §5
+  gestures?: GestureTiming;       // (M8) surfaces §4.2: doubleWindow, longAfter, holdEvery, as Sources
 }
 
 type ControlProp =
@@ -48,7 +49,21 @@ Each property drives one output capability (surfaces §2), and **(Now)** a prope
 
 ## 2. Binding kinds
 
-A binding is stored in one of five structured forms. All but `expr` compile to an expression.
+**(M6)** A binding is a `Source` (dataflow §1): a literal, `{ref}`, `{expr}` or a stateless transform (`{use}`, dataflow §4.1). The five kinds below are what M5 stored. M6 migrates them, and the editor keeps offering the same five choices:
+
+| M5 kind | Becomes |
+|---|---|
+| `{kind: "value", path, fallback?}` | `{ref: path, fallback?}` |
+| `{kind: "value", path, format, fallback?}` | `{use: "format", input: {ref: path}, format, fallback?}` |
+| `{kind: "template", parts, fallback?}` | `{use: "template", parts, fallback?}`, each `{path, format?}` part a `{ref}` or a `format` |
+| `{kind: "rules", rules, else}` | `{use: "rules", rules, else}`, each `when` a `{use: "compare", input: {ref: path}, op, value}` |
+| `{kind: "map", path, …}` | `{use: "map", input: {ref: path}, …}` |
+| `{kind: "expr", source, fallback?}` | `{expr: source, fallback?}` |
+
+- Because options are sources, transforms chain, and `when` can combine conditions with `all`, `any` and `not` (open question 2).
+- A literal is a binding too: `background: "#222"` needs no kind.
+
+The M5 shapes, kept here as the reference for the migration and for §2.1:
 
 ```ts
 type Binding =
@@ -71,14 +86,14 @@ type Format = "auto" | "mmss" | "hhmmss" | "percent" | "fixed1" | "fixed2" | "up
 | Kind | For | Example (text form) |
 |---|---|---|
 | `value` | Show one value | `pp.timers.countdown.remaining` → `04:59` (format `auto` uses the schema's `kind`: a `duration` shows as `mm:ss`) |
-| `template` | Text with values in it | `Cam {layer.params.camera.name}` |
+| `template` | Text with values in it | `Cam {params.camera.name}` |
 | `rules` | Conditional styling; first match wins | when `atem.program == 3` → red; when `atem.preview == 3` → green; else grey |
 | `map` | Scale a number, or pick from a list | fader 0–1 → −60…+10 dB; level 0–100 → `["green", "yellow", "red"]` |
 | `expr` | Anything else | `target(vars.selectedCam).tally.program ? "red" : "#333"` |
 
 ### 2.1 What M5 implements
 
-The shapes above, with these rules, which the native evaluator and the compiled expression both follow (`covalence_core::binding`):
+The shapes above, with these rules, which the native evaluator and the compiled expression both follow (`covalence_core::binding`). **(M6)** The same rules define the `format`, `template`, `rules`, `compare` and `map` transforms (dataflow §4.1); only the shapes change.
 
 - **Properties:** `label`, `textColor` and `background`. The others are `unsupported`, as are refs through a `target`.
 - **`Path`s are segment arrays** ([ADR 0017](../adr/0017-wire-paths-as-segment-arrays.md)): `["outputs", 1, "source"]`.
@@ -121,6 +136,7 @@ The shapes above, with these rules, which the native evaluator and the compiled 
 - **Missing values read as `undefined`** ([ADR 0004](../adr/0004-javascript-expressions-and-scripts.md)). If the result is `undefined` or the evaluation throws, the property uses `fallback`, then the control's default. Errors are reported in the editor and the log, rate-limited, and never stop other bindings.
 - **Stale values are shown as stale.** If any value a binding read has `quality: stale` ([state spec §1.3](state-and-event-log.md)), the control is dimmed and marked automatically. A binding can opt out with `showStale: false`.
 - **Budget:** a state change to a re-rendered key image in under 16 ms ([architecture](../architecture.md#performance-budgets-targets-to-test-against)).
+- **(M8) Bindings are consumers in the dataflow graph** (dataflow §5.3). They're evaluated after the turn's cells have settled, so a binding that reads a helper or a computed variable never shows a half-updated value.
 
 ---
 
@@ -134,48 +150,29 @@ The shapes above, with these rules, which the native evaluator and the compiled 
 
 ---
 
-## 5. Helpers (Later)
+## 5. Helpers (M8)
 
-A helper turns a control's input state into derived state, events, or both (surfaces §4.3). Helpers replace value mappings ([ADR 0024](../adr/0024-surfaces-as-two-way-devices.md)). A fader or encoder driving a mixer volume or a camera's zoom speed is a helper with a `to: {action}` route.
+A helper turns a control's input into derived state, events, or both (surfaces §4.3). **A helper is a reducer** (dataflow §4.2) whose `on` and `input` default to its control, and whose value is a cell under the layer or the surface ([ADR 0029](../adr/0029-dataflow-sources-transforms-sinks.md)). Helpers replace value mappings ([ADR 0024](../adr/0024-surfaces-as-two-way-devices.md)). A fader or encoder driving a mixer volume or a camera's zoom speed is a helper with a `to` sink.
 
 ```ts
-type Opt<T> = T | Ref | { expr: Expr };        // every option can follow state
-
-type Helper =
-  | { use: "gestures"; doubleWindow?: Opt<Duration>; longAfter?: Opt<Duration>; holdEvery?: Opt<Duration> }
-  | { use: "toggle"; as?: string; initial?: Opt<boolean> } & Common
-  | { use: "position"; as?: string; min?: Opt<number>; max?: Opt<number>; step?: Opt<number>;
-      wrap?: Opt<boolean>; accel?: Opt<number> } & Common
-  | { use: "velocity"; as?: string; window?: Opt<Duration>; decay?: Opt<Duration>; scale?: Opt<number> } & Common
-  | { use: "select"; as?: string; count: Opt<number> | Ref; wrap?: Opt<boolean> } & Common
-  | { use: "absolute"; as?: string; curve?: "linear" | "log" | "exp"; pickup?: boolean } & Common
-  | { use: "rate"; as?: string; centre?: Opt<number>; deadband?: Opt<number> } & Common
-  | { use: "script"; as?: string; source: Expr } & Common;
-
-interface Common {
-  scope?: "layer" | "surface";                  // where the value lives; default "layer"
-  follow?: Ref;                                 // keep the value in step with this state
-  holdoff?: Duration;                           // default 250ms: `follow` waits this long after user input
-  to?: Route;
-}
-
-type Route =
-  | { set: Ref }                                    // a `vars` path
-  | { action: {
-      target: TargetSpec;                           // fixed or dynamic, per flows §2.1
-      action: string;                               // "setVolume"
-      param: string;                                // the parameter that receives the value
-      params?: { [k: string]: Value | { expr: Expr } };   // the other parameters
-      map?: { from: [number, number]; to: [number, number]; curve?: "linear" | "log" | "exp" };
-      rateLimit?: Duration;                         // default 20ms; the latest value always wins
-    } };
+type Helper = ReducerSource & {                 // {use: "toggle" | "position" | …, …options}, dataflow §4.2
+  as?: string;                                  // the cell's name; default the `use`
+  scope?: "layer" | "surface";                  // where the cell lives; default "layer"
+  to?: Sink[];                                  // dataflow §7
+  journal?: "full" | { sampled: Duration };
+};
 ```
+
+- **Options are `Source`s,** so `min`, `max`, `count` or `items` can follow state. `follow`, `holdoff` and `pickup` are in dataflow §4.3.
+- **`to` is a list of sinks** (dataflow §7): `{set}` to a writable variable, or `{action: {target, action, param, params?, rateLimit?}}`. Scaling on the way out is a `map` on the cell's value, not an option of the route: `to: {action: {…, param: "level"}}` reads the cell, and a `map` helper can sit in between if the units differ.
+- **`gestures`** timing moved to the control binding (§1). It configures the control's events rather than computing a value.
 
 | Need | How |
 |---|---|
-| A key that runs a flow | No helper: a `control` trigger on `press` |
+| A key that runs a flow | No helper: an event trigger on `press` |
 | A key that only counts while another is held | No helper: a `state` trigger over both keys' `pressed` |
-| A latching key | `toggle`, shown with a `rules` binding on `background` |
+| A latching key | `toggle`, shown with a `rules` source on `background` |
+| A GPIO contact or an OSC button that latches | Not a helper: a variable whose `value` is `{use: "toggle", on: {from: {path: …}, event: "press"}}` (dataflow §6) |
 | An encoder as a volume | `position` with `follow` on the volume and `to: {action: setVolume}`; `value` bound to the same volume sets its ring |
 | An encoder as a zoom speed | `velocity` with `decay`, `to: {action: zoom}` |
 | An encoder picking a camera | `select` over a list, `to: {set: vars.selectedCam}` |
@@ -184,34 +181,31 @@ type Route =
 | A 3D mouse's axes as pan and tilt | `script` returning `{values: {pan, tilt}}` |
 
 - **No helper is needed for input state and edge events.** They exist for every control (surfaces §4.1, §4.2).
-- **Validation:** a helper must read an input the control has (`noInput`), `as` names are unique on the control, a `set` route must be a `vars` path, a `script` must compile (`exprSyntax`), and a route's action and parameters are checked as an `action` step's are (flows §4).
-- **A value is state first.** It's written under `as` (surfaces §3) whether or not it has a route, so bindings and `state` triggers can use it. `scope: "surface"` gives each surface the layer is on its own value.
-- **Options that follow state** are re-read when that state changes, as a binding's reads are (§3).
-- **`follow`** sets the value from state whenever that state changes, so input continues from where the target is rather than jumping. It pauses while the control is `touched` and for `holdoff` after user input. It replaces value mappings' `feedback`; the output side is a display binding on `value`.
-- **`script`** gets `{input, event?, previous}` and returns `{values?, events?}`. It runs on the binding thread with the 10 ms limit (§3). A failure keeps the previous values and is reported like a binding error.
-- **Actions from a route** go through the output gate and the journal like any other action, with `cause` → the input's `state.patch`. High-rate updates are journaled with sampling, as for high-rate state ([state spec open question 4](state-and-event-log.md#6-open-questions)).
-- **Only the latest value is kept** while the rate limit is waiting, so a slow device never builds a backlog.
-- **`pickup`** (non-motor faders) ignores input until the control crosses the followed value.
+- **Validation:** a helper must read an input the control has (`noInput`), `as` names are unique on the control, a `set` sink must be a writable variable (`readOnly`), a `script` must compile (`exprSyntax`), and an action sink's action and parameters are checked as an `action` step's are (flows §4).
+- **A value is state first.** It's written under `as` (surfaces §3) whether or not it has a sink, so bindings and `state` triggers can use it. `scope: "surface"` gives each surface the layer is on its own value.
+- **`follow`** replaces value mappings' `feedback`; the output side is a display binding on `value`.
+- **`script`** gets `{input, event?, previous}` and returns `{values?, events?}`, under the bindings' 10 ms limit. A failure keeps the previous values and is reported like a binding error.
+- **Actions from a sink** go through the output gate and the journal like any other action, with `cause` → the cell's patch, rate-limited with the latest value winning (dataflow §7). High-rate cells are journaled sampled (dataflow §5.1).
 
 ---
 
-## 6. Layer parameters and templates
+## 6. Layer parameters and templates (M9)
 
-- **A layer can declare parameters:** `params: { camera: { kind: "target", interface: "camera.ptz@1" } }`. Their values live at `layer.<slug>.params.<name>`, and bindings and flows on that layer read them as `layer.params.<name>`. With the tree preset, a layer's descendants read them too (surfaces §5.3).
-- **One layer, a selector row.** Buttons at the top set `layer.params.camera`. Every binding and action on the layer that uses it follows the selection. This is the main "control any camera" layout ([ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md)).
-- **Or stamp out copies.** "Create from template" makes one layer per matching target, each with its parameter set to that target. For a list that changes while the show runs, a control group (surfaces §6) spreads it over controls instead.
+- **A layer can declare parameters:** `params: { camera: { kind: "target", interface: "camera.ptz@1" } }`. Their values live at `layer.<slug>.params.<name>`, and the layer's own bindings, helpers and flows triggered from it read them as `params.<name>` (dataflow §8). Nothing reads them implicitly from another layer ([ADR 0031](../adr/0031-templates-instances-and-components.md)).
+- **One layer, a selector row.** The layer's `camera` parameter defaults to `{ref: vars.selectedCam}`, and buttons at the top set that variable. Every binding and action on the layer that uses `params.camera` follows the selection. This is the main "control any camera" layout ([ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md)).
+- **Or instances.** "Create from template" makes one **instance** per matching target, each with its parameter set to that target ([composition §2](composition.md)). Instances follow their template: there are no copies to drift. For a list that changes while the show runs, a control group (surfaces §6) spreads it over controls instead.
 
 ---
 
-## 7. Plugin presets
+## 7. Plugin presets become components (M9)
 
-Manifest `presets` ([plugin protocol §4](plugin-protocol.md#4-manifest)) can include ready-made bindings, such as "tally colour" or "preset name label". A preset written against an interface works for any target that implements it, so picking "tally of the selected camera" from a menu needs no typing.
+Manifest `presets` ([plugin protocol §4](plugin-protocol.md#4-manifest)) become **components** ([composition §3](composition.md)): a reusable control with its look, helpers, flows and parameters, such as "tally key" or "record toggle". A component written against an interface works for any target that implements it, so placing "tally of the selected camera" needs no typing.
 
 ---
 
 ## 8. Open questions
 
 1. ~~Should bindings on hidden pages keep evaluating when the page is shown on another surface or a web panel?~~ Decided for M5: "visible" means shown on any attached surface, and a layer's bindings are evaluated once for all of them.
-2. Should the `rules` kind allow combining conditions with AND/OR, or should more complex logic go to `expr`?
+2. ~~Should the `rules` kind allow combining conditions with AND/OR, or should more complex logic go to `expr`?~~ Decided by [ADR 0026](../adr/0026-sources-and-selectors.md): a rule's `when` is a `Source<boolean>`, so `all`, `any` and `not` combine conditions.
 3. Is a visual editor for helpers (curves, ranges, acceleration) needed for v1, or are the form fields enough?
 4. ~~Should value mappings support two-way, such as an encoder that changes a value and also shows it, as one entity?~~ Decided by [ADR 0024](../adr/0024-surfaces-as-two-way-devices.md): one `control_binding` holds the control's helpers and its display bindings, and `follow` keeps the input side in step with state.

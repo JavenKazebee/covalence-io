@@ -1,10 +1,11 @@
 # 0025 – Device drivers are plugins; the core performs hardware I/O, and network I/O is the plugin's choice
 
 - **Status:** Proposed
+- **Amended by:** [0029](0029-dataflow-sources-transforms-sinks.md) (plugins may ship transforms, run in the core's sandbox)
 - **Date:** 2026-10-22
 - **Amends:** [0001](0001-rust-core.md) (built-in device drivers in the core), [0002](0002-protocol-first-plugins.md) (point 5: host transports), [0003](0003-plugin-runtime-deno.md) (hardware access belongs in the core's built-in drivers), [0010](0010-orbital-remote-nodes.md) (Orbital finds devices with the `covalence-surfaces` driver crate). The plugin protocol, the Deno host and the core's surface model ([0024](0024-surfaces-as-two-way-devices.md)) stand.
 - **Specs:** [plugin protocol §4, §7, §8](../specs/plugin-protocol.md), [surfaces](../specs/surfaces.md)
-- **Milestone:** [M6: Surfaces from plugins](../milestones/m6-surfaces-from-plugins.md)
+- **Milestone:** [M7: Surfaces from plugins](../milestones/m7-surfaces-from-plugins.md)
 
 ## Context
 - **The architecture puts device drivers in the core:** "Built-in drivers: Stream Deck HID · MIDI · OSC · TCP/UDP/HTTP/WS · Serial", in a `covalence-surfaces` crate shared with Orbital. Every new surface model, MIDI controller or USB gadget would then need a core release.
@@ -50,7 +51,7 @@
 ## Consequences
 - A new surface model, MIDI controller or USB gadget with a standard class needs only a plugin. An ESP32 that shows up as USB serial, HID or MIDI is a plugin of plain TypeScript.
 - Libraries with a pluggable backend (group 1) are used whole. Group 2 libraries work as they are, outside the inspector unless they take a socket. Group 3 libraries are used through their protocol layer, not their native one.
-- Surface input crosses the plugin host: device → core → host → core. This adds an IPC round trip to the 5 ms key-down budget, which M6 measures.
+- Surface input crosses the plugin host: device → core → host → core. This adds an IPC round trip to the 5 ms key-down budget, which M7 measures.
 - Key images cross it too: the core renders, the host packs the image into reports, and the core writes them. At 15 keys of about 10 KB this is small, and frames are binary.
 - The core needs a device layer (HID, serial, MIDI, hotplug) on every platform, with clear errors for OS limits: macOS's exclusive-access rules, Windows' WinUSB, Linux udev rules.
 - Traffic from `directNetwork` plugins isn't in the inspector or record/replay, and Orbitals can't route it.

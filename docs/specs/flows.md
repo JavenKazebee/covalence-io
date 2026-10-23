@@ -1,9 +1,11 @@
 # Spec: Flows
 
-- **Status:** Draft v0.1
-- **Related:** [ADR 0018](../adr/0018-flows-as-step-trees.md), [ADR 0020](../adr/0020-project-entity-types-in-the-core.md), [ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md), [ADR 0004](../adr/0004-javascript-expressions-and-scripts.md), [ADR 0008](../adr/0008-redundancy-and-failover.md), [ADR 0014](../adr/0014-time-sources-and-scheduling.md), [state and event log](state-and-event-log.md), [bindings](bindings.md)
+- **Status:** Draft v0.2
+- **Related:** [ADR 0018](../adr/0018-flows-as-step-trees.md), [ADR 0020](../adr/0020-project-entity-types-in-the-core.md), [ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md), [ADR 0004](../adr/0004-javascript-expressions-and-scripts.md), [ADR 0008](../adr/0008-redundancy-and-failover.md), [ADR 0014](../adr/0014-time-sources-and-scheduling.md), [ADR 0026](../adr/0026-sources-and-selectors.md), [ADR 0027](../adr/0027-events-addressed-by-path.md), [ADR 0028](../adr/0028-the-core-is-a-connection.md), [ADR 0030](../adr/0030-composite-connections.md), [dataflow](dataflow.md), [core actions](core-actions.md), [composition](composition.md), [state and event log](state-and-event-log.md), [bindings](bindings.md)
 
-A flow is the single unit of automation: triggers, optional conditions, and a body of steps. Button action lists, rules and node graphs are all flows. Flows are **control flow only**. Values move through expressions, not edges ([ADR 0018](../adr/0018-flows-as-step-trees.md)).
+A flow is the single unit of automation: triggers, optional conditions, and a body of steps. Button action lists, rules and node graphs are all flows. Flows are **control flow only**. Values move through expressions, not edges ([ADR 0018](../adr/0018-flows-as-step-trees.md)). Keeping something continuously in step with state is dataflow, not a flow ([dataflow spec](dataflow.md)).
+
+**Markers** in §1–§7 follow the [dataflow spec](dataflow.md): **(M6)**, **(M8)** and **(M9)** name the milestone that implements a rule. §8 lists what's implemented.
 
 Shapes use TypeScript notation for readability. The real source of truth will be the schema in `protocol/`.
 
@@ -23,8 +25,8 @@ interface Flow {
   concurrency: "parallel" | "queue" | "restart" | "ignore";
   failover: "abort" | "resume" | "restart";       // ADR 0008
 
-  inputs?: { [name: string]: StateSchemaNode };   // for call-flow, API and OSC triggers
-  outputs?: { [name: string]: StateSchemaNode };  // returned by `stop` (§2.3) to a caller
+  inputs?: { [name: string]: StateSchemaNode };   // (M9) for call-flow, API, OSC and composite actions
+  outputs?: { [name: string]: StateSchemaNode };  // (M9) returned by `stop` (§2.3) to a caller
 
   body: Step[];                       // a sequence
   editor?: EditorMeta;                // view-only metadata (§6); ignored by the runtime
@@ -44,18 +46,20 @@ type Expr = string;                   // JS expression source (ADR 0004)
 
 | Kind | Fields | `trigger` payload in expressions |
 |---|---|---|
-| `control` | `control: ControlRef`, `event`: an input event, such as `press`, `double`, `hold`, `turn` or `change`, or a helper's; `echo?` | `{surface, layer?, control, event, delta?, value?, item?}` |
-| `event` | `source: Target \| TargetConstraint`, `event`, `filter?: Expr` | `{source, event, payload}`, with `payload` typed by the `EventDef` |
-| `state` | `when: Expr`, `edge: rising \| falling \| change` | `{value, previous}` |
+| `event` | `from: EventSource`, `event: string \| string[]`, `filter?: Expr`, `echo?` ([dataflow §3.1](dataflow.md)) | `{path, event, payload, captures?, source?, surface?, layer?, control?, item?, index?}`, with `payload` typed by the event's definition |
+| `state` | `when: Expr \| Source<boolean>`, `edge: rising \| falling \| change` | `{value, previous}` |
 | `state` with `match` | `match: PathPattern`, `when?: Expr`, `edge` | `{path, captures, value, previous, ts}` |
 | `schedule` | per [ADR 0014](../adr/0014-time-sources-and-scheduling.md) | `{scheduled, fired}` |
 | `call` | none; any flow may call this one | `{caller: {flow, run}}` |
 | `api` / `osc` | `address?` for OSC | `{args}` |
-| `startup` | none | `{reason: boot \| failover \| publish}` |
+| `action` **(M9)** | none: set by a composite whose action names this flow ([composition §1.2](composition.md)) | `{conn, call}`; the action's params are `input` |
 
-- An `event` trigger can listen to an interface instead of one connection. `source: {interface: "camera.ptz@1"}` fires for any camera, and `trigger.source` says which ([ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md)).
-- `state` triggers are edge-triggered. Their dependencies are tracked at run time, like bindings.
-- **A control's input is state, and its events are derived from that state** ([ADR 0024](../adr/0024-surfaces-as-two-way-devices.md), [surfaces spec §4](surfaces.md)). A `control` trigger is the quick way in for events: a press, a double, a turn. `ControlRef` names one control by layer or surface, or a set of them by control group, region, neighbour, selector or expression. A layer-relative ref matches per surface, on whichever surfaces that layer controls the control.
+- **(M6) One trigger kind for every event** ([ADR 0027](../adr/0027-events-addressed-by-path.md)). Events happen at a node in the state tree and have a name (`pp:timerEnded`, `surface.deck.controls.k3:press`, `flow.preService:finished`, `sys:startup`). `from` picks the nodes with a path selector, a target selector, a layer or surface with a control selector, a group, or a component slot. The M5 `control` and the planned `startup` kinds are event triggers now: `{from: {layer, controls}, event: "press"}` and `{from: {path: "sys"}, event: "startup"}`.
+- An `event` trigger can listen to an interface instead of one connection. `from: {target: {interface: "camera.ptz@1"}}` fires for any camera, composites included, and `trigger.source` says which ([ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md)).
+- `state` triggers are edge-triggered. Their dependencies are tracked at run time, like bindings. **(M6)** `when` can be a structured source (`{use: "compare", …}`), as well as an expression string.
+- **A control's input is state, and its events are derived from that state** ([ADR 0024](../adr/0024-surfaces-as-two-way-devices.md), [surfaces spec §4](surfaces.md)). An event trigger is the quick way in for them: a press, a double, a turn. A layer source matches per surface, on whichever surfaces that layer controls the control.
+- **(M6) Flows emit events** at `flow.<slug>`: `started`, `finished` and `failed`, with `{run, status, error?}`. "When that flow finishes" is an event trigger.
+- **(M9) `params`** is in scope for a run triggered by a control event: the controlling layer's (or instance's) parameters ([dataflow §8](dataflow.md)).
 - **`state` triggers cover conditions and combinations** over input state: a press that only counts while armed, a shift key, a helper's position crossing a threshold.
 - **A `state` trigger with `match`** fires for each path matching the pattern, with `*` matching one segment: `surface.*.controls.*.pressed`. `trigger.path` is the path that changed, and `trigger.captures` the segments `*` matched. `when` is optional, and sees `trigger.value`. It works on any state, so a GPIO contact from a plugin and a key on a surface can drive the same flow.
 
@@ -86,8 +90,8 @@ type Duration = string;  // "500ms", "2s", "1m30s"
 
 | Kind | Fields | Result (`steps.<id>.result`) |
 |---|---|---|
-| `action` | `target: TargetSpec`, `action`, `params: {[k]: Value \| {expr: Expr}}` | The action's `result`, per its `ActionDef` |
-| `wait` | `for: Duration \| Expr` | none |
+| `action` | `target: Source<Target>`, `constraint?`, `action`, `params: {[k]: Source<Value>}` | The action's `result`, per its `ActionDef` |
+| `wait` | `for: Source<Duration>` | none |
 | `waitUntil` | `until: Expr`, `timeout?` | `{value}`. Checked immediately (level, not edge), then on every change |
 | `call` | `flow`, `inputs?`, `wait?: boolean` (default `true`) | The callee's `outputs`, or `{run}` if `wait` is `false` |
 | `set` | `path: "local.<name>" \| "vars.<name>"`, `value: Expr` | none |
@@ -97,12 +101,15 @@ type Duration = string;  // "500ms", "2s", "1m30s"
 | `break` / `continue` | none | only inside a `loop` |
 
 ```ts
-type TargetSpec =
-  | { conn: string; key?: PathSegment }                    // fixed
-  | { expr: Expr; constraint: TargetConstraint };          // dynamic (ADR 0019)
+type Target = { conn: string; key?: PathSegment };          // ADR 0019
 
+// (M6) An action step's target is a Source (dataflow §1): a literal Target is fixed;
+// a ref or an expression is dynamic, and then `constraint` is required.
 type TargetConstraint = { plugin: string } | { interface: string };   // "camera.ptz@1"
 ```
+
+- **(M6) Parameters are `Source`s,** one per top-level parameter: a literal, `{ref}`, `{expr}` or a stateless transform. This generalises M4's `{expr}` parameters (§8.3), which are already in this shape.
+- **(M6) The core's own actions** (navigate a surface, inject input, cancel a flow's runs) are actions on the `core` connection ([core actions](core-actions.md)), with no step kinds of their own.
 
 ### 2.2 Blocks
 
@@ -140,6 +147,7 @@ Steps read data through expressions. These names are in scope:
 | `error` | The error, inside a `catch` | no |
 | state roots | `<alias>`, `vars`, `sys`, `surface`, `layer` (M5: `page`), `flow` ([state spec §1.1](state-and-event-log.md)) | `vars` via `set` and scripts |
 | `target(t)` | A target's state ([ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md)) | no |
+| `params` **(M9)** | The controlling layer's parameters, for a run triggered by a control event; a placement's, for a component's flow ([dataflow §8](dataflow.md)) | no |
 
 - **Steps in a branch that didn't run are absent** from `steps`. Reading them gives `undefined`, like any missing value ([ADR 0004](../adr/0004-javascript-expressions-and-scripts.md)).
 - **Inside a `parallel` block,** a branch can only see its own steps and those that finished before the block started. Other branches' steps become visible after the join.
@@ -184,6 +192,8 @@ Types are checked **when editing**. Values stay dynamic at runtime.
 ### 5.4 Flow status in state
 `flow.<slug>.running` (count of active runs), `flow.<slug>.lastRun.{status, startedAt, durationMs, error?}`.
 
+**(M6)** A run also emits events at `flow.<slug>`: `started` with `{run}`, then `finished` with `{run, status}` and, when it failed, `failed` with `{run, error}`. They're journaled as `event` with `cause` → `run.started` or `run.finished`.
+
 ---
 
 ## 6. Views
@@ -192,7 +202,7 @@ The three views are three ways of showing the same tree.
 
 | View | Shows a flow when | Notes |
 |---|---|---|
-| **Button** | At least one `control` trigger, no conditions, and a body of only `action`, `wait`, `set` and `log` steps | Edits add steps to the flat list. **(Later)** Other triggers show as "Also runs when…" chips, and editing a flow with more than one trigger says so first |
+| **Button** | At least one event trigger on controls, no conditions, and a body of only `action`, `wait`, `set` and `log` steps | Edits add steps to the flat list. **(Later)** Other triggers show as "Also runs when…" chips, and editing a flow with more than one trigger says so first |
 | **Rule** | One trigger, and a body that is either the Button shape or a single `branch` whose arms have that shape | Conditions show as the "if" card |
 | **Flow** | Any flow | Blocks are nested regions. Edges show order only |
 
@@ -213,19 +223,18 @@ name: Recall shot on selected camera
 slug: recallShot
 enabled: true
 triggers:
-  - kind: control
-    control: { layer: camControl, control: k8 }
+  - kind: event
+    from: { layer: 01JBZ9CAMCONTROL0LAYER00000, controls: k8 }   # camControl
     event: press
 concurrency: restart
 failover: abort
 body:
   - id: recall
     kind: action
-    target:
-      expr: vars.selectedCam
-      constraint: { interface: camera.ptz@1 }
+    target: { ref: { root: vars, path: [selectedCam] } }
+    constraint: { interface: camera.ptz@1 }
     action: recallPreset
-    params: { preset: { expr: layer.params.shot } }
+    params: { preset: { expr: params.shot } }
     timeout: 2s
     retry: { attempts: 2, backoff: 200ms }
   - id: settle
@@ -240,7 +249,7 @@ body:
     params: {}
 ```
 
-Keys appear in a fixed order. Fields that are always expressions (`when`, `until`, `while`, `filter`, `value`) hold plain strings. Action parameters are literal values unless wrapped in `{expr: ...}`, so a string parameter is never mistaken for code.
+Keys appear in a fixed order. Fields that are always expressions (`when`, `until`, `while`, `filter`, `value`) hold plain strings. Action parameters and targets are `Source`s ([dataflow §1](dataflow.md)): literal values unless they're `{ref}`, `{expr}` or `{use}`, so a string parameter is never mistaken for code.
 
 ---
 
@@ -250,6 +259,7 @@ This section is what the core accepts today.
 - [Milestone 3](../milestones/m3-first-flows.md) implemented the Button-view shape (§6) without expressions.
 - [Milestone 4](../milestones/m4-expressions.md) adds expressions (§8.7), `state` triggers, `event` filters, flow conditions, and the `branch`, `waitUntil` and `set` steps. Rules that M4 adds or changes are marked **(M4)**.
 - [Milestone 5](../milestones/m5-surfaces-and-bindings.md) adds `gesture` triggers, marked **(M5)**. M5 Phase 5 replaced them with `control` triggers on input events ([ADR 0024](../adr/0024-surfaces-as-two-way-devices.md)), marked **(Now)** and implemented; the **(M5)** `gesture` rows describe what's gone. Rules marked **(Later)** have no milestone yet.
+- [Milestone 6](../milestones/m6-primitives.md) replaces `control` triggers with `event` triggers whose `from` is an event source, adds pattern `state` triggers and flow events, and makes action targets and parameters `Source`s. Rules it adds or changes are marked **(M6)**, and aren't implemented yet.
 
 **Anything outside this section is rejected on save with an error, never stored and ignored.** Types live in `covalence_core::flow` ([ADR 0020](../adr/0020-project-entity-types-in-the-core.md)).
 
@@ -261,7 +271,7 @@ This section is what the core accepts today.
 | `name` | Required, non-empty |
 | `slug` | Optional on create: derived from `name` (camelCase, ASCII, deduplicated with a number). Must match `[a-z][A-Za-z0-9_]*` and be unique |
 | `enabled` | Required |
-| `triggers` | `api`, `event`, **(M4)** `state` and **(M5)** `gesture`, **(Now)** `control` (§8.2). May be empty, with a warning: the flow can't start |
+| `triggers` | `api`, `event`, **(M4)** `state` and **(M5)** `gesture`, **(Now)** `control` (§8.2), which **(M6)** folds into `event`. May be empty, with a warning: the flow can't start |
 | `conditions` | **(M4)** Optional list of expressions. All must be truthy when a trigger matches, or no run starts (§8.2) |
 | `inputs`, `outputs` | Must be absent |
 | `concurrency` | Required. All four modes |
@@ -274,10 +284,10 @@ This section is what the core accepts today.
 | Kind | Fields | `trigger` in expressions | Notes |
 |---|---|---|---|
 | `api` | none | `{args: {}}` | Fired by `POST /flows/{id}/run` (§9). A flow without one can't be run from the API or the UI's Run button |
-| `event` | `source: {conn}`, `event`, **(M4)** `filter?: Expr` | `{source, event, payload}` | `event` must be in the plugin manifest's `events`. No `{plugin}` or `{interface}` sources |
+| `event` | `source: {conn}`, `event`, **(M4)** `filter?: Expr` | `{source, event, payload}` | `event` must be in the plugin manifest's `events`. No `{plugin}` or `{interface}` sources. **(M6)** `from: EventSource` replaces `source` (`{conn}` becomes `{target: conn}`), with path, target, layer and surface sources, `event` as a name or a list, and the payload of dataflow §3.1 |
 | `state` **(M4)** | `when: Expr`, `edge: rising \| falling \| change` | `{value, previous}` | See below |
 | `gesture` **(M5)** | `control: {page, control}`, `gesture: press \| release \| double \| long \| hold` | `{surface, page, control, gesture, delta?}`, with IDs | Matches on any surface showing the page. `turn` isn't supported yet. Gestures and their timing are in the [surfaces spec §4.2](surfaces.md). `trigger.matched` has `cause` → the `input.gesture` entry |
-| `control` **(Now)** | `control: {layer, control}`, `event: press \| release \| double \| long \| hold \| turn \| change \| touch \| untouch` | `{surface, layer, control, event, delta?, value?}`, with IDs | Replaces `gesture`. Matches the control on any surface where the layer controlled it. `trigger.matched` has `cause` → the `input.event` entry ([surfaces spec §7](surfaces.md)). **(Later)** `{surface, control}`, `{group}` with `trigger.item`, region, relative, selector and expression refs, helper events, and `echo` |
+| `control` **(Now)** | `control: {layer, control}`, `event: press \| release \| double \| long \| hold \| turn \| change \| touch \| untouch` | `{surface, layer, control, event, delta?, value?}`, with IDs | Replaces `gesture`. Matches the control on any surface where the layer controlled it. `trigger.matched` has `cause` → the `input.event` entry ([surfaces spec §7](surfaces.md)). **(M6)** Replaced by `event` with `from: {layer, controls}`; stored flows are migrated |
 
 - `trigger.matched` names the trigger by its index in `triggers`.
 - **(M4) Matching order.** When a trigger fires:

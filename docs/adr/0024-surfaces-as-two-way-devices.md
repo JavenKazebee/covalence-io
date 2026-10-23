@@ -1,6 +1,7 @@
 # 0024 – Surfaces are two-way devices; control input is device state; layers decide who controls each control
 
 - **Status:** Proposed
+- **Amended by:** [0027](0027-events-addressed-by-path.md) (`control` triggers become event triggers), [0029](0029-dataflow-sources-transforms-sinks.md) (helpers are reducers; `to` routes are sinks)
 - **Date:** 2026-10-22
 - **Amends:** [0022](0022-surfaces-pages-and-the-web-surface.md) (the `page` entity becomes `layer`; pages addressed as a `k0…kN` grid, equal layouts, `gesture` triggers, `input.raw` and `input.gesture`; the surface entity, transport-independent core module and web surface stand). Replaces value mappings as a separate entity ([bindings §5](../specs/bindings.md)).
 - **Specs:** [surfaces](../specs/surfaces.md), [bindings](../specs/bindings.md), [flows](../specs/flows.md), [plugin protocol §8](../specs/plugin-protocol.md), [state and event log](../specs/state-and-event-log.md)

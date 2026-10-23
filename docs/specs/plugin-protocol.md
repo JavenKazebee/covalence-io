@@ -1,7 +1,7 @@
 # Spec: Plugin protocol
 
 - **Status:** Draft v0.1 (protocol version `0.1.0`)
-- **Related:** [ADR 0002](../adr/0002-protocol-first-plugins.md), [ADR 0003](../adr/0003-plugin-runtime-deno.md), [ADR 0010](../adr/0010-orbital-remote-nodes.md), [state and event log](state-and-event-log.md)
+- **Related:** [ADR 0002](../adr/0002-protocol-first-plugins.md), [ADR 0003](../adr/0003-plugin-runtime-deno.md), [ADR 0010](../adr/0010-orbital-remote-nodes.md), [ADR 0027](../adr/0027-events-addressed-by-path.md), [ADR 0029](../adr/0029-dataflow-sources-transforms-sinks.md), [state and event log](state-and-event-log.md), [dataflow](dataflow.md), [composition](composition.md)
 
 The protocol is the contract between the **core** and any **host**. Message shapes below use TypeScript notation for readability. The real source of truth will be the schema in `protocol/`.
 
@@ -145,14 +145,16 @@ interface Manifest {
     udpBroadcast?: boolean;
     env?: string[];
   };
-  directNetwork?: boolean;       // (M6) opens sockets itself instead of through host transports (§7, ADR 0025)
-  devices?: DeviceMatch[];       // (M6) hardware this plugin drives, matched on hotplug (§7.1)
+  directNetwork?: boolean;       // (M7) opens sockets itself instead of through host transports (§7, ADR 0025)
+  devices?: DeviceMatch[];       // (M7) hardware this plugin drives, matched on hotplug (§7.1)
   connections: "multiple" | "single";   // policy for standby nodes (ADR 0008)
 
   actions: ActionDef[];
   events: EventDef[];
   state: StateSchema;            // see the state spec §1.2–1.4
-  presets?: PresetDef[];         // suggested button and layer templates
+  presets?: PresetDef[];         // suggested button and layer templates; (M9) replaced by `components`
+  components?: ComponentDef[];   // (M9) reusable controls: look, helpers, flows, params (composition §3)
+  transforms?: string[];         // (M9) transform definition modules, run in the core's sandbox (dataflow §4.4)
   implements?: InterfaceImpls;   // proposed: interfaces such as "camera.ptz@1" (ADR 0019)
   surfaces?: SurfaceProviderDef; // if the plugin provides surfaces (for example a web panel)
   simulator?: { stateLevel: boolean; protocolLevel: boolean };
@@ -168,14 +170,19 @@ interface ActionDef {
   cancellable?: boolean;
   durationHint?: "instant" | "short" | "long";
   learn?: boolean;               // supports "learn current values" for its params
+  effect?: "internal" | "device";   // (M6) default "device"; simulate mode suppresses only "device" (core actions §4)
 }
 
 interface EventDef {
   id: string;                    // "timerEnded"
   name: string;
   payload?: JSONSchema;
+  at?: string;                   // (M6) a collection path the event happens under: "outputs" (§6)
 }
 ```
+
+- **(M9) `components`** are content with no code ([ADR 0025](../adr/0025-device-drivers-are-plugins.md)): the `Component` shape of [composition §3](composition.md), with IDs namespaced by the plugin. They replace `presets`.
+- **(M9) `transforms`** are paths to modules in the package, each a `defineTransform` ([dataflow §4.4](dataflow.md)). The core loads them into its own sandbox, never into the plugin host, and names them `<plugin id>/<id>`. A module that fails to load or to pass its declared types is skipped with an error on the plugin; the rest of the plugin is unaffected.
 
 ### 4.1 Instance schema updates (host → core, ntf `schema.update`)
 
@@ -227,7 +234,7 @@ Params (the connection is the envelope's `conn`):
 |---|---|---|
 | `state.snapshot` | ntf | `{values: {p: Path, v: Value}[], complete: true}`: replaces the connection's whole subtree |
 | `state.patch` | ntf | `{ops: [{p: Path, v: Value} \| {p: Path, del: true}], call?, ts?}` |
-| `event.emit` | ntf | `{event: string, payload?: unknown, call?, ts?}` |
+| `event.emit` | ntf | `{event: string, payload?: unknown, at?: Path, call?, ts?}`. **(M6)** `at` is the node the event happened at, relative to the connection root (`["outputs", 3]`), so it's addressed `vh.outputs[3]:routeChanged` ([dataflow §3](dataflow.md)). Absent, it's the root |
 | `log` | ntf | `{level: "trace" \| "debug" \| "info" \| "warn" \| "error", msg, fields?}` |
 
 The envelope's `conn` is required, except for `log`. Paths are segment arrays ([ADR 0017](../adr/0017-wire-paths-as-segment-arrays.md)) relative to the connection root: `["timers", "countdown", "remaining"]`. The core adds the connection prefix and validates against the schema. Invalid patches are dropped and logged.
@@ -251,20 +258,20 @@ The SDK exposes these as `ctx.tcp`, `ctx.udp`, `ctx.ws`, `ctx.http`, `ctx.serial
 
 | Method | Direction | Params / result |
 |---|---|---|
-| `io.open` | host → core, req | `{conn, kind: "tcp" \| "udp" \| "ws" \| "serial" \| "hid" \| "midi", target, options: {reconnect?, backoff?, framing?: "raw" \| "line" \| "length", baud?}}` → `{handle}`. **(M6)** For `serial`, `hid` and `midi`, `target` is a device ID (§7.1) |
+| `io.open` | host → core, req | `{conn, kind: "tcp" \| "udp" \| "ws" \| "serial" \| "hid" \| "midi", target, options: {reconnect?, backoff?, framing?: "raw" \| "line" \| "length", baud?}}` → `{handle}`. **(M7)** For `serial`, `hid` and `midi`, `target` is a device ID (§7.1) |
 | `io.write` | host → core, ntf | `{handle, data: bytes}`. For `hid`, an output report whose first byte is the report ID; for `midi`, one or more MIDI messages |
 | `io.data` | core → host, ntf | `{handle, data: bytes}`. For `hid`, an input report; for `midi`, one message |
-| `io.feature` | host → core, req | **(M6)** `hid` only: `{handle, op: "get", reportId, length}` → `{data}`, or `{handle, op: "send", data}` → `{}` |
-| `io.state` | core → host, ntf | `{handle, state: "open" \| "closed" \| "reconnecting" \| "error", error?}`. **(M6)** A device handle closes with `error: "unplugged"` and opens again when the same device returns |
+| `io.feature` | host → core, req | **(M7)** `hid` only: `{handle, op: "get", reportId, length}` → `{data}`, or `{handle, op: "send", data}` → `{}` |
+| `io.state` | core → host, ntf | `{handle, state: "open" \| "closed" \| "reconnecting" \| "error", error?}`. **(M7)** A device handle closes with `error: "unplugged"` and opens again when the same device returns |
 | `io.close` | host → core, ntf | `{handle}` |
 | `http.request` | host → core, req | `{conn, method, url, headers, body?, timeoutMs}` → `{status, headers, body}` |
 
 - **Hardware goes through the core.** Deno has no HID, MIDI or serial of its own, and plugins don't use native add-ons for them. `usb` (interfaces, bulk, interrupt and control transfers) comes later.
 - **One connection holds a device at a time.** A second `io.open` of the same device is refused with `busy`.
-- **(M6) Device handles outlive a plugin host restart.** The core keeps the device open, drops its data while no host is there, and gives the restarted connection the same device on its next `io.open`.
-- **Network transports are optional.** A plugin that opens sockets itself declares `directNetwork: true` (§4). It's still limited by its worker's permissions once they're enforced ([ADR 0015](../adr/0015-defer-plugin-permission-enforcement.md)), but its traffic isn't in the inspector or record/replay, and an Orbital can't route it. **(M6)** The SDK's `ctx.tcp` returns an object shaped like `Deno.Conn`, and `ctx.net.socket()` one shaped like a `node:net` `Socket`, so libraries that accept a socket can use the core's.
+- **(M7) Device handles outlive a plugin host restart.** The core keeps the device open, drops its data while no host is there, and gives the restarted connection the same device on its next `io.open`.
+- **Network transports are optional.** A plugin that opens sockets itself declares `directNetwork: true` (§4). It's still limited by its worker's permissions once they're enforced ([ADR 0015](../adr/0015-defer-plugin-permission-enforcement.md)), but its traffic isn't in the inspector or record/replay, and an Orbital can't route it. **(M7)** The SDK's `ctx.tcp` returns an object shaped like `Deno.Conn`, and `ctx.net.socket()` one shaped like a `node:net` `Socket`, so libraries that accept a socket can use the core's.
 
-### 7.1 Devices (M6)
+### 7.1 Devices (M7)
 
 The core enumerates HID, serial and MIDI devices, watches for hotplug, and matches them against installed plugins' `devices`.
 
@@ -304,11 +311,11 @@ interface DeviceInfo {
 
 ## 8. Surfaces (Orbital and plugin-provided)
 
-A surface is a two-way device ([ADR 0024](../adr/0024-surfaces-as-two-way-devices.md), [surfaces spec](surfaces.md)). The host reports its controls' input, which the core keeps as state and derives events from, and the core sets their outputs. **(Now)** marks the M5 Phase 5 reshaping; **(M6)**, [M6](../milestones/m6-surfaces-from-plugins.md); **(Later)**, what has no milestone yet. The web surface carries these notifications today (surfaces §8). **(M6)** The plugin host carries them, with the envelope's `conn` naming the connection that provides the surface: a hardware surface is a plugin that reads its device through `ctx.hid` (§7) and translates ([ADR 0025](../adr/0025-device-drivers-are-plugins.md)). Orbitals carry them **(Later)**.
+A surface is a two-way device ([ADR 0024](../adr/0024-surfaces-as-two-way-devices.md), [surfaces spec](surfaces.md)). The host reports its controls' input, which the core keeps as state and derives events from, and the core sets their outputs. **(Now)** marks the M5 Phase 5 reshaping; **(M7)**, [M7](../milestones/m7-surfaces-from-plugins.md); **(Later)**, what has no milestone yet. The web surface carries these notifications today (surfaces §8). **(M7)** The plugin host carries them, with the envelope's `conn` naming the connection that provides the surface: a hardware surface is a plugin that reads its device through `ctx.hid` (§7) and translates ([ADR 0025](../adr/0025-device-drivers-are-plugins.md)). Orbitals carry them **(Later)**.
 
 | Method | Direction | Params |
 |---|---|---|
-| `surface.attach` | host → core, ntf | `{surface, model, serial?, name, controls: ControlDef[], outputs?: {brightness?: boolean}}`. **(Now)** No `layout`. **(M6)** From the plugin host, `surface` is the host's own key for the device, and the core matches the attach to a surface entity by `model` and `serial` (surfaces §1) |
+| `surface.attach` | host → core, ntf | `{surface, model, serial?, name, controls: ControlDef[], outputs?: {brightness?: boolean}}`. **(Now)** No `layout`. **(M7)** From the plugin host, `surface` is the host's own key for the device, and the core matches the attach to a surface entity by `model` and `serial` (surfaces §1) |
 | `surface.detach` | host → core, ntf | `{surface}` |
 | `surface.input` | host → core, ntf | `{surface, control, kind: "down" \| "up" \| "turn" \| "touch" \| "value", value?, ts, echo?}` |
 | `surface.draw` | core → host, ntf | `{surface, control, image: bytes, format: "jpeg" \| "bmp" \| "png" \| "rgb565"}`, for `image` outputs |
@@ -350,7 +357,7 @@ type OutputCap =
 
 - **The SDK has presets** for common controls: `button`, `encoder`, `fader`, `touchstrip`, `lcd` and `led` build the capability lists that M5's `kind` stood for. A device with no physical layout (GPIO pins) still gets an `at`: the SDK places its controls in a row.
 - **Input state, events and gestures are computed in the core,** using the host's `ts` (surfaces §4). Network jitter therefore never turns a double-press into two separate presses. Hosts send what happened, not what it means: a MIDI host normalises its controller's relative encoding into signed detents, and a 14-bit fader into 0 to 1.
-- **A host can't define helpers.** It can `suggest` defaults for a control, such as a jog wheel's acceleration.
+- **A host can't run helpers.** It can `suggest` defaults for a control, such as a jog wheel's acceleration. **(M9)** A plugin can also ship transforms (§4), which the core runs in its own sandbox, never in the host ([ADR 0029](../adr/0029-dataflow-sources-transforms-sinks.md)).
 - **`echo: true`** **(Later)** marks input the device sent because the core moved it, such as a motor fader reaching its requested position (surfaces §4.4). A host that can't tell leaves it out, and the core decides from timing.
 - **Input that doesn't match a control's capabilities** (a `turn` on a control with no `relative` input) is dropped and logged, rate-limited.
 - **The core renders images** at each `image` output's native size and format, and sends only the outputs that changed.

@@ -1,6 +1,7 @@
 # 0021 – Expressions are sandboxed snippets; what code can do depends on where it runs
 
 - **Status:** Accepted
+- **Amended by:** [0029](0029-dataflow-sources-transforms-sinks.md) (transform definitions are a new sandboxed context)
 - **Date:** 2026-10-21
 - **Amends:** [0004](0004-javascript-expressions-and-scripts.md) (the expression level and the core's use of `oxc`; the language, engine and script host API stand). Takes over the dependency-tracking section of [0019](0019-dynamic-action-targets-and-interfaces.md), which stays proposed for dynamic targets and interfaces.
 - **Specs:** [flows](../specs/flows.md), [bindings](../specs/bindings.md)

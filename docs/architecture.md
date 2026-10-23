@@ -9,7 +9,7 @@
                                                 │ WebSocket + HTTP API
 ┌──────────────────────────────── covalence-core (Rust) ─────────────────────────────────┐
 │                                                                                        │
-│  Host Supervisor ──► Input Router ──► Gesture Layer ──► Trigger Matcher                │
+│  Host Supervisor ──► Input Router ──► Input Events ──► Event Matcher                   │
 │   (Deno host,            ▲                                   │                         │
 │    isolated hosts,       │                                   ▼                         │
 │    Orbitals)             │                             Flow Runtime ──► Script Engine  │
@@ -21,7 +21,7 @@
 │                                                                                        │
 │  State Tree (reactive) ◄──── Runtime Journal ────► Timeline / Replication              │
 │        │                                                                               │
-│        ├──► Binding Evaluator ──► Surface Renderer (diffed images)                     │
+│        ├──► Dataflow Graph (cells, bindings, sinks) ──► Surface Renderer               │
 │        │                                                                               │
 │  Project Store (SQLite: entities, project op log, snapshots, assets)                   │
 │                                                                                        │
@@ -51,34 +51,53 @@ These are the user-facing terms. Product and component names use the chemistry t
 
 | Term | Meaning |
 |---|---|
-| **Plugin** | An installable package that knows how to talk to one kind of device or service, control surfaces included. |
-| **Connection** | A configured, running instance of a plugin ("ProPresenter – FOH Mac"). It has an **alias** used in expressions (`pp`). |
+| **Plugin** | An installable package that knows how to talk to one kind of device or service, control surfaces included. It can also ship components and transforms. |
+| **Connection** | A configured, running instance of a plugin ("ProPresenter – FOH Mac"). It has an **alias** used in expressions (`pp`). The core itself is a connection, `core` ([ADR 0028](adr/0028-the-core-is-a-connection.md)). |
+| **Composite** | A connection users build from other connections' state, events and actions, and flows: "Camera A" ([ADR 0030](adr/0030-composite-connections.md)). |
 | **Manifest** | What a plugin declares: config, permissions, actions, events, state schema, presets. |
 | **Action** | Something a connection can do, with typed parameters (`videohub.route`). |
 | **Target** | What an action acts on: a connection, optionally narrowed to one item it controls. Fixed, or chosen at run time ([ADR 0019](adr/0019-dynamic-action-targets-and-interfaces.md)). |
 | **Interface** | A versioned contract for one kind of device (`camera.ptz@1`) that plugins implement, so one action or binding works across brands. |
-| **Event** | Something that happened at a moment in time (`pp.timerEnded`). |
+| **Event** | Something that happened at a moment in time, at a node in the state tree (`pp:timerEnded`, `surface.deck.controls.k3:press`) ([ADR 0027](adr/0027-events-addressed-by-path.md)). |
 | **State** | Typed values that persist over time, held in one tree (`pp.timers.countdown.remaining`). |
-| **Variable** | User-defined state (`vars.serviceStarted`). |
+| **Variable** | User-defined state (`vars.serviceStarted`): written by flows, or computed from a source. |
+| **Source** | Where a value comes from: a literal, a state path, an expression or a transform. Every field that can follow state is one ([ADR 0026](adr/0026-sources-and-selectors.md)). |
+| **Selector** | Which things: controls, targets, paths or entities, by ID, list, region, capability, interface, pattern or expression. |
+| **Transform** | A function over sources: stateless (`rules`, `map`, `format`) or a reducer that keeps a value (`toggle`, `position`, `select`). Defined as sandboxed JS, so plugins and projects can add their own ([ADR 0029](adr/0029-dataflow-sources-transforms-sinks.md)). |
+| **Cell** | A source with a home in the state tree: a computed variable, a helper's value, a composite's state. |
+| **Sink** | Where a value goes: a control's output, a variable, or an action parameter. |
 | **Surface** | A physical or virtual control device: Stream Deck, MIDI controller, fader panel, GPIO box, web panel. Two-way: it takes input and shows output ([ADR 0024](adr/0024-surfaces-as-two-way-devices.md)). |
 | **Control** | One part of a surface, typed by its capabilities: inputs (`momentary`, `relative`, `absolute`, `touch`) and outputs (`image`, `led`, `level`, `text`). |
 | **Input state** | What a control reports, kept as state: `pressed`, `detents`, `value`, `touched`. Volatile: reset on attach and detach. |
 | **Input event** | An occurrence derived from input state: press, release, double, long, hold, turn, change, touch. |
-| **Helper** | Builds on a control's input state to give derived state and events: a toggle, a position, a velocity, a selection, a script. |
+| **Helper** | A reducer on a control's binding, whose input defaults to that control: a toggle, a position, a velocity, a selection, a script. |
 | **Layer** | A set of control bindings on the controls it covers. Which layer controls each control is computed from state: navigation, conditions and rank. Pages, shift layers, popovers, folders and sections are all layers. |
 | **Control group** | Spreads a live list (the selected camera's ISO values) over a set of controls in a layer, with `item` in bindings and triggers. |
-| **Binding** | Dataflow: a reactive link from state to a control's look (label, colour, image), stored as a value, template, rules, map or expression ([spec](specs/bindings.md)). A binding also holds the control's **helpers**, the input direction. |
+| **Binding** | Dataflow: a source per property of a control's look (label, colour, image) ([spec](specs/bindings.md)). A binding also holds the control's **helpers**, the input direction. |
+| **Template / instance** | A layer or composite with parameters, and entities that use it with their own parameter values. Instances never override what's inside ([ADR 0031](adr/0031-templates-instances-and-components.md)). |
+| **Component** | A reusable control: look, helpers, flows and parameters, placed on one or more controls of a layer. |
 | **Flow** | The single unit of automation: trigger(s) + optional conditions + a tree of steps. Control flow only. Button action lists, rules and node graphs are all flows ([spec](specs/flows.md)). |
 | **Run** | One execution of a flow, with a handle, a status and a cancellation token. |
 | **Expression** | A JS expression, used in bindings, conditions and parameters. |
 | **Script** | A JS/TS script step inside a flow. |
 | **Orbital** | A remote Covalence node that hosts surfaces or plugins on another machine. |
 
+## Composition model
+
+Covalence aims to be flexible without becoming hard to read. A few rules keep it that way:
+
+- **Small primitives that combine.** Sources, selectors, transforms, cells and sinks are each defined once ([dataflow spec](specs/dataflow.md)) and used everywhere. A new selector form or transform works in every place at once.
+- **Flows do things in order; dataflow keeps things in step.** Anything with steps, waits or conditions is a flow. Anything that follows state continuously is a source, a cell or a sink.
+- **Everything the system can do is an action on a target,** including the core's own (navigate, inject input). Everything that happens is an event at a path.
+- **Reuse is by parameters, never by copying or overriding** ([composition spec](specs/composition.md)). Templates have instances; components have placements; composites wrap connections.
+- **Scope is explicit.** A container sees its own `params`. To pass a value in, bind a parameter where it's placed.
+- **Extensions run where the guarantees are.** Plugins add devices (in the plugin host), and components and transforms (in the core's sandbox). They never add step kinds, scheduling or layer resolution.
+
 ## Three ways to edit one model
 
 | View | For | Compiles to |
 |---|---|---|
-| **Button view** | "Press this, do these 3 things." Built live in seconds. | A flow with a gesture trigger and linear steps |
+| **Button view** | "Press this, do these 3 things." Built live in seconds. | A flow with an event trigger on a control and linear steps |
 | **Rule view** | When / if / then cards, schedules, state triggers | A flow with a trigger, a condition and steps |
 | **Flow view** | Node graph: branches, loops, parallel paths, waits, script steps | A flow |
 
@@ -90,7 +109,7 @@ You can always move a flow up to a more powerful view ("Open as flow"). A linear
 
 The full definition is in the [flow spec](specs/flows.md).
 
-- **Triggers:** an input event on a control, event, state condition (edge-triggered), schedule, flow-called-by-flow, API or OSC call, and startup.
+- **Triggers:** an event (a control's, a connection's, a flow's, a helper's or the core's, all addressed by path), a state condition (edge-triggered), a schedule, flow-called-by-flow, and an API or OSC call.
 - **Concurrency mode per flow:** `parallel` | `queue` | `restart` | `ignore` (when a run is already active).
 - **Steps:** action, wait (duration), wait-until (expression, timeout), call flow, set variable, script, log, stop, break, continue.
 - **Blocks:** group (with catch and finally), branch, loop, parallel.

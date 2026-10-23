@@ -1,14 +1,14 @@
-# Milestone 6: Surfaces from plugins
+# Milestone 7: Surfaces from plugins
 
-- **Status:** Planned
+- **Status:** Planned, after [M6](m6-primitives.md)
 
 A real Stream Deck drives Covalence, through a plugin. The core gets a device layer: it enumerates HID and serial devices, watches hotplug, matches them to plugins' manifests and performs their I/O, so a plugin of plain TypeScript can drive hardware with no native add-ons ([ADR 0025](../adr/0025-device-drivers-are-plugins.md)). The plugin host carries the surface protocol ([plugin protocol §8](../specs/plugin-protocol.md)), and `io.covalence.streamdeck` translates between the deck's reports and M5's surface model. Network transports arrive too, and the Videohub plugin moves onto them. MIDI, Orbitals and controls beyond keys stay out.
 
 ## Done when
 
-- [ ] Plugging in a Stream Deck MK.2 (15 keys) is noticed by the core, matched to the Stream Deck plugin's `devices`, and gets a connection and a surface without asking (`autoCreate`). The surface shows its start layer, and its keys fire M5's `control` triggers.
+- [ ] Plugging in a Stream Deck MK.2 (15 keys) is noticed by the core, matched to the Stream Deck plugin's `devices`, and gets a connection and a surface without asking (`autoCreate`). The surface shows its start layer, and its keys fire event triggers on `{layer, controls}` ([M6](m6-primitives.md)).
 - [ ] Unplugging it detaches the surface and releases held keys. Plugging the same deck back in reattaches the same surface entity, matched by `model` and `serial`, showing the layer it showed last.
-- [ ] `why` on an action fired from the deck walks back through `trigger.matched` and `input.event` to the `state.patch` on `surface.<slug>.controls.k0.pressed`, with the host's `deviceTs`.
+- [ ] `why` on an action fired from the deck walks back through `trigger.matched` and the key's `event` entry to the `state.patch` on `surface.<slug>.controls.k0.pressed`, with the host's `deviceTs`.
 - [ ] The Stream Deck plugin is TypeScript on `@elgato-stream-deck/core` with a backend over `ctx.hid`. No native add-ons, and no device-specific code in the core.
 - [ ] Restarting the plugin host doesn't close the deck. The surface detaches and reattaches within 3 s, and the keys keep their last images meanwhile.
 - [ ] Budgets hold with the plugin host in the path, measured from the device layer: key down → first action dispatched in under 5 ms, and state change → key image written to the device in under 16 ms.
@@ -23,7 +23,7 @@ A real Stream Deck drives Covalence, through a plugin. The core gets a device la
 - [ ] **Spike: `@elgato-stream-deck/core` under Deno.** It loads from npm, its HID device interface can be implemented over a stub, and it runs with no native add-on in the dependency tree. If it can't, write the MK.2's protocol in the plugin directly; it's small.
 - [ ] **Choose the Rust crates** for HID (`hidapi` or `nusb`-based), serial (`serialport`) and hotplug. `hidapi` has no hotplug; decide between polling enumeration (once a second) and OS notifications.
 - [ ] **Protocol schema:** the §7 additions, §7.1 and the §8 `conn` in TypeSpec, with fixtures.
-- [ ] Accept ADR 0024, which M5 built, and ADR 0025 once the spike passes.
+- [ ] Accept ADR 0025 once the spike passes. (ADR 0024 is accepted in [M6](m6-primitives.md).)
 
 ### Phase 1: The core's device layer
 - [ ] **`covalence-devices`:** enumerate HID and serial devices, watch hotplug, and give each a stable `DeviceInfo.id` (§7.1).

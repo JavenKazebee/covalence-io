@@ -1,7 +1,7 @@
 # Spec: Surfaces and layers
 
-- **Status:** Draft v0.4
-- **Related:** [ADR 0022](../adr/0022-surfaces-pages-and-the-web-surface.md), [ADR 0023](../adr/0023-key-rendering-and-binding-evaluation.md), [ADR 0024](../adr/0024-surfaces-as-two-way-devices.md), [bindings](bindings.md), [flows](flows.md), [plugin protocol §8](plugin-protocol.md), [state and event log](state-and-event-log.md)
+- **Status:** Draft v0.5
+- **Related:** [ADR 0022](../adr/0022-surfaces-pages-and-the-web-surface.md), [ADR 0023](../adr/0023-key-rendering-and-binding-evaluation.md), [ADR 0024](../adr/0024-surfaces-as-two-way-devices.md), [ADR 0026](../adr/0026-sources-and-selectors.md), [ADR 0027](../adr/0027-events-addressed-by-path.md), [ADR 0028](../adr/0028-the-core-is-a-connection.md), [ADR 0029](../adr/0029-dataflow-sources-transforms-sinks.md), [ADR 0031](../adr/0031-templates-instances-and-components.md), [dataflow](dataflow.md), [bindings](bindings.md), [flows](flows.md), [core actions](core-actions.md), [composition](composition.md), [plugin protocol §8](plugin-protocol.md), [state and event log](state-and-event-log.md)
 
 A **surface** is a control device: a Stream Deck, a MIDI controller, a motor-fader panel, a GPIO box, a panel in a browser. It's a two-way device, not an input device ([ADR 0024](../adr/0024-surfaces-as-two-way-devices.md)):
 - Its controls' input is **state** the device reports, such as a key being pressed or a fader's position.
@@ -14,7 +14,9 @@ A device is a surface when it has controls the core interprets or renders for. A
 
 Shapes use TypeScript notation. The source of truth is the Rust types in `covalence-core` ([ADR 0020](../adr/0020-project-entity-types-in-the-core.md)).
 
-**Markers.** Unmarked rules are implemented (M5 Phases 1–4). **(Now)** is the reshaping in [M5 Phase 5](../milestones/m5-surfaces-and-bindings.md), which replaced pages, the `k`-grid, `input.raw` and the `gesture` shapes; it's implemented too. **(Later)** has no milestone yet.
+**Markers.** Unmarked rules are implemented (M5 Phases 1–4). **(Now)** is the reshaping in [M5 Phase 5](../milestones/m5-surfaces-and-bindings.md), which replaced pages, the `k`-grid, `input.raw` and the `gesture` shapes; it's implemented too. **(M6)** to **(M9)** name the milestone that implements a rule: [M6](../milestones/m6-primitives.md) (sources, selectors, event triggers, core actions), [M7](../milestones/m7-surfaces-from-plugins.md) (hardware surfaces), [M8](../milestones/m8-dataflow.md) (helpers as reducers, layer resolution), [M9](../milestones/m9-composition.md) (templates and components). **(Later)** has no milestone yet.
+
+Values that may follow state are `Source`s, and sets of controls are `Selector`s, as defined in the [dataflow spec](dataflow.md) §1–§2.
 
 ---
 
@@ -25,10 +27,10 @@ interface Surface {               // project entity `surface`
   id: string;                     // ULID
   name: string;                   // "FOH deck"
   slug: string;                   // state key: surface.<slug>
-  model: string;                  // "virtual.deck15"; (M6) hardware models from their plugin
-  serial?: string;                // (M6) matches a hardware device on attach
+  model: string;                  // "virtual.deck15"; (M7) hardware models from their plugin
+  serial?: string;                // (M7) matches a hardware device on attach
   startLayer?: string;            // (Now) layer ID shown in the `main` group on first attach (M5: `startPage`)
-  provider?: string;              // (M6) the connection whose device this is
+  provider?: string;              // (M7) the connection whose device this is
 }
 
 interface Layer {                 // (Now) project entity `layer`, replacing `page`
@@ -36,13 +38,14 @@ interface Layer {                 // (Now) project entity `layer`, replacing `pa
   name: string;                   // "Cameras"
   slug: string;                   // state key: layer.<slug>
   controls: LayerControl[]        // (Now) the controls it covers (M5: `layout: {cols, rows}`)
-          | { region: Rect }      // (Later) every control inside a rectangle
-          | { expr: Expr };       // (Later) control IDs from state
-  on?: string[] | { expr: Expr }; // (Later) surfaces or surface groups it may appear on
-  when?: When;                    // (Later) §5.3; default { nav: "main" }
-  level?: "under" | "normal" | "over";   // (Later) §5.3; default "normal"
-  rank?: number | { expr: Expr }; // (Later) within the level; default 0
+          | Selector<ControlId>;  // (Later) e.g. {region}, {has}: resolved per surface (dataflow §2)
+  on?: Selector<SurfaceId>;       // (M8) surfaces or surface groups it may appear on
+  when?: When;                    // (M8) §5.3; default { nav: "main" }
+  level?: "under" | "normal" | "over";   // (M8) §5.3; default "normal"
+  rank?: Source<number>;          // (M8) within the level; default 0
   parent?: string;                // (Later) the tree preset, §5.3
+  params?: { [name: string]: ParamDef };        // (M9) makes it a template (composition §2)
+  template?: string;                            // (M9) makes it an instance; `params` are then Sources
 }
 
 interface LayerControl {          // (Now)
@@ -61,11 +64,11 @@ interface SurfaceGroup {          // (Later) project entity `surface_group`
 ```
 
 - **Slugs** follow the state segment rule (`[A-Za-z_][A-Za-z0-9_]*`) and are unique per entity type, as for flows.
-- **A surface entity exists before its device attaches.** The virtual surface is created in the UI. **(M6)** Hardware surfaces are created on first attach from a plugin, matched by `model` and `serial` after that ([ADR 0025](../adr/0025-device-drivers-are-plugins.md)).
+- **A surface entity exists before its device attaches.** The virtual surface is created in the UI. **(M7)** Hardware surfaces are created on first attach from a plugin, matched by `model` and `serial` after that ([ADR 0025](../adr/0025-device-drivers-are-plugins.md)).
 - **A layer is independent of surfaces.** The same layer can control controls on several surfaces at once, and its bindings are evaluated once for all of them.
 - **(Now) A layer lists its controls.** Control IDs on a layer are unique, and there are at most 256. The editor's "New layer" for a surface copies that surface's controls with their capabilities.
 - **(Later) A surface group** places several surfaces on one canvas, each offset into the group's coordinates, so they work as one wide device. A layer `on` a group covers its controls by region, or by qualified ID `<surface slug>/<control id>`.
-- **(M6) `provider`** ties a surface to the connection whose device it is. It's set by the attach, and a surface whose provider is deleted is kept, detached.
+- **(M7) `provider`** ties a surface to the connection whose device it is. It's set by the attach, and a surface whose provider is deleted is kept, detached.
 
 ---
 
@@ -114,7 +117,7 @@ type OutputKind = OutputCap["kind"];
 - **(Now) Every control has `at`.** Controls may not overlap. A device without a physical layout, such as GPIO pins, is placed in a row by its SDK preset. Positions are what regions, neighbours, surface groups and the editor's drawing are built on.
 - **(Now)** A control with no inputs and no outputs is refused at attach, as is a duplicate ID or a missing `at`. Input that doesn't match a control's capabilities (a `turn` on a control with no `relative` input) is dropped and logged, rate-limited.
 - **(Now) Outputs.** Only `image` does anything. **(Later)** `led`, `level` and `text` through the bindings' `led`, `value` and `text` properties, and surface-wide brightness.
-- **(Later) Region and relative refs.** Wherever a control can be named (a layer's `controls`, a control group, a `ControlRef`), it can also be `{region: Rect}`, for every control whose `at` lies inside, or `{relative: "left" | "right" | "above" | "below", of: <control>}`, for the nearest control in that direction.
+- **(M6) Controls are named by selectors.** Wherever one or many controls are named (a layer's `controls`, a control group, an event source), the field is a `Selector<ControlId>` (dataflow §2): an ID, a list, `{region: Rect}` for every control whose `at` lies inside, `{near: "left" | "right" | "above" | "below", of}` for the nearest control in that direction, `{has: {inputs?, outputs?}}` by capability, `{expr}`, and `any`, `all` and `not`. M6 implements the selector in the core and IDs and lists in each field; the other forms reach each field as it needs them.
 
 ---
 
@@ -125,19 +128,21 @@ type OutputKind = OutputCap["kind"];
 | `surface.<slug>.connected` | `boolean` | The core, on attach and detach |
 | `surface.<slug>.model` | `string` | The core, on attach |
 | `surface.<slug>.current.<group>` | layer slug, or `null` | **(Now)** The core and the API: the current layer of a navigation group (§5.3). `main` replaces M5's `surface.<slug>.page`, and is set on attach as `page` was |
-| `surface.<slug>.layers` | layer slugs, highest first | **(Later)** The core: the active layers in resolution order (§5.2) |
-| `surface.<slug>.controls.<id>.layer` | layer slug, or `null` | **(Later)** The core: the layer controlling the control (§5.2) |
+| `surface.<slug>.layers` | layer slugs, highest first | **(M8)** The core: the active layers in resolution order (§5.2) |
+| `surface.<slug>.controls.<id>.layer` | layer slug, or `null` | **(M8)** The core: the layer controlling the control (§5.2) |
 | `surface.<slug>.controls.<id>.pressed` | `boolean` | **(Now)** The device: `momentary` input |
 | `surface.<slug>.controls.<id>.velocity` | `number`, 0 to 1 | **(Now)** The device: the last `down`, if the capability has `velocity` |
 | `surface.<slug>.controls.<id>.detents` | integer | **(Now)** The device: the running total of `relative` input since the attach |
 | `surface.<slug>.controls.<id>.value` | `number`, or `[x, y]` | **(Now)** The device: `absolute` input |
 | `surface.<slug>.controls.<id>.touched` | `boolean` | **(Now)** The device: `touch` input |
 | `surface.<slug>.controls.<id>.requested.<output>` | the output's value | **(Later)** The core: what it last sent to a `led`, `level` or `text` output (§4.4) |
-| `surface.<slug>.controls.<id>.helpers.<name>` | a helper's value | **(Later)** A helper with `scope: "surface"` (§4.3) |
-| `layer.<slug>.controls.<id>.<name>` | a helper's value | **(Later)** A helper on a layer (§4.3) |
-| `layer.<slug>.params.<name>` | a layer parameter | **(Later)** Bindings §6 |
+| `surface.<slug>.controls.<id>.helpers.<name>` | a helper's value | **(M8)** A helper with `scope: "surface"` (§4.3) |
+| `layer.<slug>.controls.<id>.<name>` | a helper's value | **(M8)** A helper on a layer (§4.3) |
+| `layer.<slug>.params.<name>` | a layer parameter | **(M9)** An instance's or a template's parameter (composition §2) |
+| `layer.<slug>.parts.<placement>.flows.<flow>` | owned flow status | **(M9)** A component placement's flows (composition §3) |
 
 - `surface` and `layer` are reserved roots: a connection alias can't be either (state spec §1.1). **(Now)** `layer` replaces M5's `page` root.
+- **(M6) Each surface is a target** of the `core` connection, `{conn: "core", key: <surface ID>}`, with interface `surface@1`. `target(t)` on it reads `surface.<slug>` ([core actions §2](core-actions.md)).
 - Surface state is held while the surface is detached, with `connected: false`, so a binding that shows a surface's layer keeps working. Input state is the exception (§4.1).
 - **Control IDs that aren't state segments** (`pad.36`) use bracket syntax in text paths: `surface.mixer.controls["pad.36"].pressed` (state spec §1.1).
 
@@ -169,7 +174,7 @@ type OutputKind = OutputCap["kind"];
 
 ### 4.2 Events
 
-**(Now)** Each input patch also gives **edge events**, journaled as `input.event` with `cause` → the patch, replacing M5's `input.gesture`.
+**(Now)** Each input patch also gives **edge events**, journaled as `input.event` with `cause` → the patch, replacing M5's `input.gesture`. **(M6)** They're addressed at the control, `surface.<slug>.controls.<id>:press`, and journaled as `event` with `surface`, `layer` and `control` as context ([ADR 0027](../adr/0027-events-addressed-by-path.md), dataflow §3). `delta` and `value` are in the payload.
 - **Each event carries `layer`:** the layer that controlled the control when the input arrived (§5.2).
 - **A timed `long` or `hold`** has `cause` → the patch for the `down` it follows, and carries the layer that controlled the control at that `down`.
 
@@ -192,34 +197,33 @@ type OutputKind = OutputCap["kind"];
 
 - **Timing uses the device's `ts`**, so jitter between the device and the core doesn't change what a gesture is.
 - **`long` and `hold` need a timer,** because no input arrives while a key is held. The core starts one when the `down` arrives. If the `up` arrives first and its `ts` shows the key was held for `longAfter` or more (late delivery), `long` fires before `release`. A `hold` repeat that would fire after the `up`'s `ts` doesn't fire.
-- **Layer-relative input is events, not state.** Two surfaces can each be under one layer and each hold its `k0`, so `layer.<slug>` has no `pressed`. A `control` trigger on `{layer, control}` is matched per surface (§7).
-- **(Later)** The timing settings are configurable per control with the `gestures` helper (§4.3).
+- **Layer-relative input is events, not state.** Two surfaces can each be under one layer and each hold its `k0`, so `layer.<slug>` has no `pressed`. An event trigger on `{layer, controls}` is matched per surface (§7).
+- **(M8)** The timing settings are configurable per control with `gestures` on its control binding (bindings §5). It configures events rather than computing a value, so it's a setting, not a helper.
 
-### 4.3 Helpers (Later)
+### 4.3 Helpers (M8)
 
-A **helper** builds on a control's input state to give derived state, events, or both. Helpers are configured per control on its `control_binding` (bindings §5). They make common cases quick, while input state and events stay available for anything else.
+A **helper** builds on a control's input to give derived state, events, or both. **A helper is a reducer** (dataflow §4.2) on the control's `control_binding` (bindings §5), whose `on` and `input` default to that control ([ADR 0029](../adr/0029-dataflow-sources-transforms-sinks.md)). The same reducers work anywhere else as a variable's `value`, so a GPIO contact or an OSC fader gets them too. Input state and events stay available for anything else.
 
 | Helper | Reads | Gives |
 |---|---|---|
-| `gestures` | `pressed` | the timed events in §4.2, with its own timing settings |
-| `toggle` | `pressed` | a boolean, flipped on each `press` |
+| `toggle` | `press` | a boolean, flipped on each `press` |
+| `counter` | `press` | a number, stepped on each `press` |
 | `position` | `detents`, `value` | a number in `[min, max]`: step, wrap, acceleration, `follow` |
 | `velocity` | `detents`, `value` | a rate in units per second, smoothed, decaying to 0 when the control stops |
-| `select` | `detents` | an integer index, over a count or a list |
+| `select` | `detents` | an integer index, or an item, over a count or a list |
 | `absolute` | `value` | the value through a curve, with pickup and `follow` |
 | `rate` | `value` | −1 to 1 from the control's centre, with a deadband |
+| `latch` | events | set by one event, reset by another |
 | `script` | everything above | whatever its expression returns: values and events |
 
-- **Values** are written under `as` (the helper's name by default):
+- **Each helper is a cell** (dataflow §5), written under `as` (the helper's name by default):
   - at `layer.<slug>.controls.<id>.<name>`, shared by every surface the layer is on
   - with `scope: "surface"`, at `surface.<slug>.controls.<id>.helpers.<name>` instead, one value per surface
-  - in a variable, with `to: {set}`
-  - into an action parameter, with `to: {action}`
-- **Events** from a helper (a `toggle`'s `on` and `off`, a `select`'s `select`, a `script`'s own) are journaled as `input.event` with the helper's name, and match `control` triggers.
-- **Options can be literals, refs or expressions,** so a step, a bound or a list can follow state.
-- **`follow: Ref`** sets the value from state whenever that state changes. It pauses while the control is `touched`, and for `holdoff` (default 250 ms) after the last user input. **`pickup`** ignores a non-motor fader until it crosses the followed value.
-- **`script`** is a sandboxed expression ([ADR 0021](../adr/0021-expressions-as-sandboxed-snippets.md)) that gets the control's input state, the input that just arrived and its own previous values, and returns `{values?, events?}`. It runs on the binding thread with the bindings' 10 ms limit.
-- **Helpers run in the core.** A plugin can suggest defaults for a control (`ControlDef.suggest`, plugin protocol §8). It can't run its own.
+- **`to`** sends the value on to a variable or an action parameter, as for any cell (dataflow §7).
+- **Events** from a helper (a `toggle`'s `on` and `off`, a `select`'s `select`, a `script`'s own) happen at its cell, `layer.<slug>.controls.<id>.<name>:on`, and match event triggers on `{layer, controls}` with the helper's event name.
+- **Options are `Source`s,** so a step, a bound or a list can follow state.
+- **`follow`, `holdoff` and `pickup`** are as in dataflow §4.3.
+- **Helpers run in the core,** as sandboxed transform definitions (dataflow §4.4). A plugin can suggest defaults for a control (`ControlDef.suggest`, plugin protocol §8), and **(M9)** ship transforms of its own, which also run in the core.
 
 ### 4.4 Reported and requested values (Later)
 
@@ -232,14 +236,14 @@ A **helper** builds on a control's input state to give derived state, events, or
   - the host marks it (`echo: true`)
   - it arrives within `echoWindow` (default 100 ms) of an output to the same control, and matches it
 
-  An echo updates input state with `cause` → the output's patch. It gives no `change`, `press` or `release` unless the trigger opts in (`echo: true` on a `control` trigger).
+  An echo updates input state with `cause` → the output's patch. It gives no `change`, `press` or `release` unless the trigger opts in (`echo: true` on an event trigger).
 - The loop guard (flows §8.6) is the backstop for loops the echo rule misses.
 
-### 4.5 Injecting input (Later)
+### 4.5 Injecting input (M6)
 
-- **A core action injects input** on a control as if the device had sent it: `down`, `up`, a `turn` or a `value`. It goes through §4.1 and §4.2 unchanged, with the flow run (or the UI user) as origin.
+- **The `core` action `inject`** on a surface target puts input on a control as if the device had sent it: `down`, `up`, a `turn`, a `value` or a `touch` ([core actions §3.1](core-actions.md)). It goes through §4.1 and §4.2 unchanged, with the flow run (or the UI user) as origin.
 - This covers "press button X" macros, virtual buttons in the UI, and testing a layer without hardware.
-- Its exact shape waits for core-provided actions (open question 1).
+- Injected input is `internal` (core actions §4), so it works in simulate mode.
 
 ---
 
@@ -249,7 +253,7 @@ A **helper** builds on a control's input state to give derived state, events, or
 
 A layer covers some controls and binds them. A layer that covers every control of a surface is what M5 called a page. One that covers three keys is a shift layer, a popover or a section. **(Now)** Every layer is in the `main` navigation group, and the surface's current layer controls the controls it covers, which is M5's behaviour.
 
-### 5.2 Who controls a control (Later)
+### 5.2 Who controls a control (M8)
 
 For each surface and each control, the **controlling layer** is chosen from the layers that:
 - cover the control (`controls`, evaluated for this surface)
@@ -265,8 +269,8 @@ The highest `level` wins, then the highest `rank`. A tie goes to the layer that 
   - `surface.<slug>.controls.<id>.layer` names the controlling layer.
 
   Both are journaled, so `why` explains who controls a key. After a restart, the order is rebuilt from current state, with ties going to the oldest layer.
-- **`self`.** In a layer's `controls`, `on`, `when` and `rank` expressions, `self` is the surface being resolved: `self.controls.k15.pressed`, `self.current.main`.
-- **Guards.** A layer's expressions can't read resolution results (`surface.<slug>.layers`, `.controls.<id>.layer`); saving such a layer fails with `resolutionCycle`. Resolution runs once per scheduler turn, after bindings' reads have settled.
+- **`self`.** In a layer's `controls`, `on`, `when` and `rank` sources, `self` is the surface being resolved: `self.controls.k15.pressed`, `self.current.main` (dataflow §8).
+- **Guards.** A layer's sources can't read resolution results (`surface.<slug>.layers`, `.controls.<id>.layer`); saving such a layer fails with `resolutionCycle`. Resolution runs once per scheduler turn, after cells have settled (dataflow §5.3).
 - **Armed layers.** A layer whose `when` reads input state is evaluated and rendered ahead of time while inactive, so that holding shift redraws within the 16 ms budget.
 - **The editor shows a control's candidates:** "k3: Shift (over, while k15 is held), otherwise Cameras (main)". It can simulate a state ("hold k15") to show what would change.
 
@@ -278,28 +282,27 @@ Presets fill in `when`, `level`, `rank` and `controls` for common structures. As
 type When =
   | { nav: string }               // a navigation group: active while it's the group's current layer
   | { always: true }
-  | { while: Expr }               // active while the expression is truthy
-  | { expr: Expr };               // anything else
+  | { while: Source<boolean> };   // active while truthy: a ref, a `compare`, an expression…
 ```
 
 | Preset | Fields | Compiles to |
 |---|---|---|
 | **Navigation group** (default) | `when: {nav: "main"}` | `self.current.main == me`. Navigation sets `surface.<slug>.current.<group>`; folders are layers in one group with navigation keys between them |
 | **Levels** | `level: under \| normal \| over` | `rank` bands of 0, 100 and 200, with `rank` (0 to 99) inside the band |
-| **Shift** | `level: over`, `when: {while: self.controls.k15.pressed}` | Active while the key is held. A latching shift uses a `toggle` helper's value |
+| **Shift** | `level: over`, `when: {while: {expr: "self.controls.k15.pressed"}}` | Active while the key is held. A latching shift reads a `toggle` helper's value |
 | **Popover** | `level: over`, `when: {nav: "popover"}` | Opened by navigating the `popover` group to it, dismissed by navigating it to `null` |
 | **Tree** | `parent: <layer>` | `when` is combined with the parent's (both must be active). `rank` follows position among siblings, so a later sibling covers an earlier one |
 | **Section** | `controls: {region}`, `when: {nav: "<section>"}` | A region of the deck with its own current layer, as in Bitfocus Buttons |
 | **Always on** | `when: {always: true}`, usually `level: under` | A strip that shows wherever nothing else covers it |
 
-- **Navigation** is an API call (§9) and, later, a core action. Each group keeps a short history for "back".
-- **(Later) Layer parameters** (bindings §6) are readable by the layer's bindings, and with the tree preset, by its descendants.
+- **Navigation** is an API call (§9) and **(M6)** the `core` action `navigate` ([core actions §3.1](core-actions.md)). Each group keeps a short history for **(Later)** `back`.
+- **(M9) Layer parameters** (composition §2) are readable as `params` by the layer's own bindings, helpers and fields. The tree preset doesn't pass them to descendants: a child that needs one declares its own and binds it ([ADR 0031](../adr/0031-templates-instances-and-components.md)).
 
 ### 5.4 Fit
 
 - **(Now) A layer fits a surface** when every one of its listed controls exists on the surface with at least the inputs and outputs the layer declares for it. The surface may have controls the layer doesn't.
 - A layer that doesn't fit can't be navigated to on that surface (`doesNotFit`, §9), which replaces M5's equal-layout rule.
-- **(Later)** A layer covering a `region` or an `expr` always fits. It covers whatever controls are there.
+- **(Later)** A layer whose `controls` is a selector always fits. It covers whatever controls the selector finds there.
 - **(Later) Placement per surface** maps a layer's controls onto a surface of a different shape.
 
 ---
@@ -312,18 +315,21 @@ A **control group** spreads a live list over a set of controls in a layer: a gri
 interface ControlGroup {          // project entity `control_group`
   id: string;
   layer: string;
-  controls: string[] | { region: Rect };   // the controls it owns
-  items: Expr;                    // target(vars.selectedCam).iso.options
+  controls: Selector<ControlId>;  // the controls it owns, in selector order (dataflow §2)
+  items: Source<Value[]>;         // {expr: "target(vars.selectedCam).iso.options"}
   key?: Expr;                     // each item's identity; default the item itself
-  props: { [prop in ControlProp]?: Binding };   // `item`, `index` and `count` in scope
+  props?: { [prop in ControlProp]?: Source<Value> };   // `item`, `index` and `count` in scope
   helpers?: Helper[];
+  component?: string;             // (M9) or: place this component on each control
+  params?: { [name: string]: Source<Value> };   // (M9) the component's params, with `item` in scope
   overflow?: "clip" | "scroll";   // scroll: the core holds an offset; keys outside the group move it
 }
 ```
 
-- **The group owns its controls.** A plain binding on one of them, or two groups that overlap, is `duplicateControl`. Controls with no item are blank.
-- **Bindings see the item.** A label of `{item.label}`, and a `rules` binding on `background` that's red when `item.value == target(vars.selectedCam).iso.current`, give the current-setting indicator.
-- **Triggers see the item.** A `control` trigger on `{group}` fires for any control in the group, with `trigger.item`, `trigger.index` and `trigger.key` the item the control showed at the `press`. One flow handles the whole grid.
+- **The group owns its controls.** A plain binding on one of them, a placement, or two groups that overlap, is `duplicateControl`. Controls with no item are blank.
+- **Bindings see the item.** A label of `{item.label}`, and a `rules` source on `background` that's red when `item.value == target(vars.selectedCam).iso.current`, give the current-setting indicator.
+- **(M9) Or a component per item,** with `item` bound into its params: a group of tally keys over a list of cameras (composition §3).
+- **Triggers see the item.** An event trigger on `{group}` fires for any control in the group, with `trigger.item`, `trigger.index` and `trigger.key` the item the control showed at the `press`. One flow handles the whole grid.
 - **`overflow: "scroll"`** keeps the offset in `layer.<slug>.groups.<group>.offset`. Flows or keys outside the group move it.
 - **Nothing is generated.** A group is one saved entity evaluated over a live list. The core never creates bindings at run time.
 
@@ -333,33 +339,33 @@ interface ControlGroup {          // project entity `control_group`
 
 Flows can start from a control in two ways (flows §1.1). **A control's binding holds its look and its helpers. What happens when it's used lives in flows**, and the key editor shows every flow that references a control (flows §6).
 
-**`control` triggers** are the quick way in, for events:
+**Event triggers** are the quick way in, for events. **(M6)** A control's events are events like any other ([ADR 0027](../adr/0027-events-addressed-by-path.md)), so the `control` trigger of M5 Phase 5 becomes an `event` trigger whose source names controls (dataflow §3.1):
 
 ```ts
-{ kind: "control", control: ControlRef, event: string, echo?: boolean }   // (Now) replaces `gesture` triggers
+{ kind: "event", from: EventSource, event: string | string[], filter?: Expr, echo?: boolean }
 
-type ControlRef =
-  | { layer: string; control: string }      // the control on any surface where the layer controls it
-  | { surface: string; control: string }    // (Later) whatever layer controls it
-  | { group: string }                       // (Later) any control in a control group (§6)
-  | { layer: string; region: Rect }         // (Later) any control in a region of a layer
-  | { layer: string; relative: "left" | "right" | "above" | "below"; of: string }   // (Later)
-  | { select: ControlSelector }             // (Later) e.g. every relative control on a layer
-  | { expr: Expr };                         // (Later) resolved when the input arrives
+// The control forms of EventSource:
+  | { layer: string; controls?: Selector<ControlId> }    // on any surface where the layer controls them
+  | { surface: string; controls?: Selector<ControlId> }  // (Later) whatever layer controls them
+  | { group: string }                                    // (Later) any control in a control group (§6)
+  | { slot: string }                                     // (M9) a component's slot (composition §3)
+  | { path: Selector<Ref> }                              // any control by path: {match: "surface.*.controls.*"}
 ```
 
-- **(Now)** `event` is one of the events in §4.2. A `{layer, control}` trigger matches that control **on any surface where that layer controlled it** when the input arrived. `layer` is a layer ID; the editor shows its name.
-- **The `trigger` payload** is `{surface, layer?, control, event, delta?, value?}`, plus **(Later)** `item`, `index` and `key` for a group. `surface` and `layer` are entity IDs, as an `event` trigger's `source.conn` is.
-- `trigger.matched` has `cause` → the `input.event` entry and the surface as its origin, so `why` on an action reaches the input's patch.
+- **Migration (M6).** `{kind: "control", control: {layer, control}, event}` becomes `{kind: "event", from: {layer, controls: control}, event}`. Stored flows are migrated when M6 loads them.
+- `event` is one of the events in §4.2, or a helper's. A `{layer}` source matches **on any surface where that layer controlled the control** when the input arrived. `layer` is a layer ID; the editor shows its name.
+- **`controls` is a selector,** so one trigger covers a region, every encoder (`{has: {inputs: ["relative"]}}`) or a list. Absent, it's every control of the layer.
+- **The `trigger` payload** is the event payload of dataflow §3.1: `{path, event, payload, surface, layer?, control}`, with `delta` and `value` in `payload`, plus **(Later)** `item`, `index` and `key` for a group. `surface` and `layer` are entity IDs.
+- `trigger.matched` has `cause` → the control's `event` entry and the surface as its origin, so `why` on an action reaches the input's patch.
 - **Validation:**
-  - The layer must exist (`unknownLayer`), and `control` must be one of its listed controls (`unknownControl`).
-  - An event the control's inputs can't give (a `turn` on a key) is `unsupported`.
+  - The layer must exist (`unknownLayer`), and every control the selector names must be one of its listed controls (`unknownControl`).
+  - An event none of the selected controls' inputs can give (a `turn` on keys) is `unsupported`.
 
 **`state` triggers** work on input state as they do on any state, for conditions and combinations:
 - A press only while armed: `when: surface.deck.controls.k0.pressed && vars.armed`, `edge: rising`.
 - A chord: `when: surface.deck.controls.k3.pressed && surface.deck.controls.k4.pressed`, `edge: rising`.
 - A helper's value: `when: layer.cams.controls.dial1.position > 0.5`, `edge: rising`.
-- **(Later) Pattern `state` triggers** match many paths at once: `match: "surface.*.controls.*.pressed"`, with the payload `{path, captures, value, previous, ts}` (flows §1.1). They work on any connection's state the same way.
+- **(M6) Pattern `state` triggers** match many paths at once: `match: "surface.*.controls.*.pressed"`, with the payload `{path, captures, value, previous, ts}` (flows §1.1). They work on any connection's state the same way.
 
 A shift key is usually a layer (§5.3) rather than a condition, so the deck shows what the shifted keys do and the editor has a key to select.
 
@@ -399,7 +405,7 @@ Surfaces, layers and control bindings have the same routes and answers as flows 
 |---|---|---|
 | `GET` | `/surfaces`, `/layers`, `/control-bindings?layer=<id>` | List |
 | `POST` | `/surfaces`, `/layers`, `/control-bindings` | Create, validated like flows |
-| `GET`, `PUT`, `DELETE` | `/surfaces/{id}`, `/layers/{id}`, `/control-bindings/{id}` | Read, replace, delete. Deleting a surface detaches it and deletes its state. Deleting a layer deletes its bindings and clears it as any surface's `startLayer`; a flow whose `control` trigger names it gets `unknownLayer` when it's next saved |
+| `GET`, `PUT`, `DELETE` | `/surfaces/{id}`, `/layers/{id}`, `/control-bindings/{id}` | Read, replace, delete. Deleting a surface detaches it and deletes its state. Deleting a layer deletes its bindings and clears it as any surface's `startLayer`; a flow whose event trigger names it gets `unknownLayer` when it's next saved |
 | `GET` | `/surfaces/{id}/controls` | **(Now)** The controls the surface declared when it last attached, for "New layer" in the editor. `404` if it has never attached |
 | `POST` | `/surfaces/{id}/current` `{group?: "main", layer: <id> \| null}` | **(Now)** Navigates a group (only `main` until groups arrive) and answers `{surface, group, layer}` once the surface has been sent its controls' outputs. Journaled as a `state.patch` on `surface.<slug>.current.<group>`, origin the user. `422 {error, code: "unknownLayer"}`, or `409 {error, code: "doesNotFit", controls}` listing the layer controls the surface lacks or can't support. Replaces M5's `POST /surfaces/{id}/page` and `layoutMismatch` |
 | `GET` | `/control-bindings/problems` | `[{binding, prop, message}]`: each binding property that failed when last evaluated (bindings §3) |
@@ -409,17 +415,17 @@ Surfaces, layers and control bindings have the same routes and answers as flows 
 - **Validation:**
   - **A surface** needs a `name`, a `model` and a slug no other surface has (`badSlug`, `duplicateSlug`), and its `startLayer` must exist (`unknownLayer`).
   - **A layer** needs a `name` and a unique slug. **(Now)** Its controls need unique IDs (`duplicateControl`), there are at most 256, and every control bound on the layer must still be among them (`unknownControl` at `controls`).
-  - **(Later)** A layer's expressions can't read resolution results (`resolutionCycle`).
+  - **(M8)** A layer's sources can't read resolution results (`resolutionCycle`).
   - **Bindings** are validated as in bindings §2.1.
 - **Edits answer once drawn.** Saving or deleting a layer or binding, and replacing a surface, answer after surfaces showing the change have been sent their controls' outputs.
 
-- **(M5)** Flows can't navigate or inject input yet. Both need actions on the core itself, which wait for a design of core-provided actions.
+- **(M6)** Flows navigate and inject input with `core` actions ([core actions](core-actions.md)). `POST /surfaces/{id}/current` stays, for the UI, and does what `navigate` does.
 
 ---
 
 ## 10. Open questions
 
-1. Core-provided actions (navigate a group, back, set brightness, inject input) for flows: a reserved `core` target, or new step kinds? A surface's outputs would be natural targets, as in `target(vars.deck).setBrightness`.
+1. ~~Core-provided actions (navigate a group, back, set brightness, inject input) for flows: a reserved `core` target, or new step kinds?~~ Decided by [ADR 0028](../adr/0028-the-core-is-a-connection.md): the core is a connection, and each surface is one of its targets, with interface `surface@1`.
 2. ~~Mapping a page onto a surface of a different size~~: layers list their controls and fit by capability, or cover a region (§5.4). Explicit placement per surface is Later.
 3. Should hardware surfaces that attach for the first time get an entity automatically, or wait in an "unassigned" list until a user adds them?
 4. Which surface interfaces (`surface.keypad@1`, `surface.mixer@1` …) should exist, and do they name controls by role so one layer can target any surface of a shape?
@@ -427,6 +433,6 @@ Surfaces, layers and control bindings have the same routes and answers as flows 
 6. **Capabilities beyond the four inputs and four outputs:** pressure and aftertouch, more than two axes, multi-position switches, haptics, sounds. Should unknown kinds attach with their input written as raw state under the kind's name?
 7. **Whole-surface canvases:** a Loupedeck or tablet screen with touch zones, drawn as one image rather than per control.
 8. **Time-based output:** blinking and animation. Bindings follow state, not time.
-9. **Sequences** ("A then B within 1 s"): these need recent history, not current state.
+9. **Sequences** ("A then B within 1 s"): these need recent history, not current state. A reducer (dataflow §4.2) that steps on both events and emits `matched` may be enough.
 10. **Orbitals while the core is unreachable:** should an Orbital keep showing the last outputs, or run some feedback locally?
 11. **Reading the look underneath:** a shift layer that relabels a key has to set its colour too. Should a binding be able to read the look the next layer down would give (`below.background`)?

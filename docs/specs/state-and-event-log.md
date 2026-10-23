@@ -1,7 +1,8 @@
 # Spec: State model and event log
 
-- **Status:** Draft v0.1
-- **Related:** [ADR 0007](../adr/0007-event-sourced-core.md), [ADR 0008](../adr/0008-redundancy-and-failover.md), [ADR 0009](../adr/0009-multi-user-editing.md), [plugin protocol](plugin-protocol.md)
+- **Status:** Draft v0.2
+- **Related:** [ADR 0007](../adr/0007-event-sourced-core.md), [ADR 0008](../adr/0008-redundancy-and-failover.md), [ADR 0009](../adr/0009-multi-user-editing.md), [ADR 0027](../adr/0027-events-addressed-by-path.md), [ADR 0029](../adr/0029-dataflow-sources-transforms-sinks.md), [plugin protocol](plugin-protocol.md), [dataflow](dataflow.md)
+- **Markers:** **(M6)**, **(M8)** and **(M9)** name the milestone that implements a rule, as in the [dataflow spec](dataflow.md).
 
 Redundancy, multi-user editing, undo, history, the timeline and replay are all built on this spec. Get it right before writing engine code.
 
@@ -20,14 +21,15 @@ All live values in the system share one namespace.
 | Root | Owner | Example |
 |---|---|---|
 | `<alias>` | A connection, named by its user-chosen alias | `pp.timers.countdown.remaining` |
-| `vars` | User variables | `vars.serviceStarted` |
+| `vars` | User variables: writable, or **(M8)** computed and accumulated cells ([dataflow §6](dataflow.md)) | `vars.serviceStarted` |
 | `sys` | The core | `sys.time.now`, `sys.node.role`, `sys.timecode.frames` |
 | `surface` | Surfaces, their navigation and their controls' input state | `surface.fohDeck.current.main`, `surface.fohDeck.controls.k0.pressed` |
 | `layer` | Per-layer state: parameters and helper values. **(Now)** Replaces M5's `page` root | `layer.cameraA.controls.dial1.position` |
 | `flow` | Flow and run status | `flow.preService.running`, `flow.preService.lastRun.status` |
 
 - **Segments** match `[A-Za-z_][A-Za-z0-9_]*`. Collection keys that aren't valid identifiers use bracket syntax: `vh.outputs["SDI 4"].source`.
-- **Aliases** are unique per project, must not collide with the reserved roots, and are renameable.
+- **Aliases** are unique per project, must not collide with the reserved roots, and are renameable. **(M6)** `core` is reserved too: it's the alias of the core's own connection ([core actions](core-actions.md)), whose state is the reserved roots.
+- **(M6) Events are addressed by path:** an event happens at a node and has a name, written `<path>:<name>` (`pp:timerEnded`, `surface.deck.controls.k3:press`, `flow.preService:finished`). See [dataflow §3](dataflow.md).
 - **User variables are `vars`, not `var`,** because `var` is a JavaScript keyword and couldn't be read in an expression ([ADR 0021](../adr/0021-expressions-as-sandboxed-snippets.md)).
 - **On the wire and in storage, paths are segment arrays** (`["outputs", "SDI 4", "source"]`), per [ADR 0017](../adr/0017-wire-paths-as-segment-arrays.md). The dotted text form is for expressions, the UI and logs.
 - **The stored form uses IDs, not aliases.** The project stores references as `{conn: <connectionId>, path: [...]}`, and the alias is shown only when rendering text. Renaming an alias therefore never breaks a reference.
@@ -86,7 +88,7 @@ Action parameters can refer to a collection for their choices (`choices: { from:
 1. Patches arrive from hosts, drivers, scripts or the core.
 2. They're applied to the tree and journaled.
 3. A **dirty set** of changed paths goes to the binding evaluator.
-4. The evaluator re-runs only the bindings and state triggers whose dependency set contains a dirty path. Dependency sets come from the static analysis in [ADR 0004](../adr/0004-javascript-expressions-and-scripts.md); dynamic accesses are tracked at runtime.
+4. The evaluator re-runs only the bindings and state triggers whose dependency set contains a dirty path. Dependency sets are tracked at run time ([ADR 0021](../adr/0021-expressions-as-sandboxed-snippets.md)). **(M8)** Cells are evaluated first, in dependency order, and their changes join the dirty set within the same turn ([dataflow §5.3](dataflow.md)).
 5. The surface renderer redraws only the controls whose resolved look changed.
 6. UI clients receive patches only for the paths they subscribe to.
 
@@ -151,7 +153,7 @@ type Origin =
   | { conn: string }                          // a connection (via its host)
   | { surface: string; orbital?: string }
   | { flow: string; run: string; step?: string }   // no step on run-level entries
-  | { core: "scheduler" | "system" | "replication" };
+  | { core: "scheduler" | "system" | "replication" | "dataflow" };   // (M8) dataflow: cells and sinks
 ```
 
 Ordering is defined **only** by `seq` within a log. `ts` is for display.
@@ -162,8 +164,8 @@ Ordering is defined **only** by `seq` within a log. `ts` is for display.
 |---|---|---|
 | `input.raw` | `{surface, control, kind: down\|up\|turn\|touch\|value, value?, deviceTs}` | **(M5)** `surface` is the entity ID. `deviceTs` is the host's clock: the browser's, or the Orbital's if remote. **(Now)** Replaced by a `state.patch` on the control's input state |
 | `input.gesture` | `{surface, page?, control, gesture: press\|release\|double\|long\|hold\|turn, delta?}` | **(M5)** `page` is the page ID shown when the input arrived. `cause` → the `input.raw` entry. **(Now)** Replaced by `input.event` |
-| `input.event` | `{surface, layer?, control, event, delta?, value?, echo?, item?}` | **(Now)** An event derived from a control's input state ([surfaces spec §4.2](surfaces.md)). `layer` is the layer that controlled the control, absent if none did. `cause` → the input's `state.patch`, or for a timed `long` or `hold`, the `down`'s. **(Later)** `item` is the control group item it showed |
-| `event` | `{source, event, payload}` | From a plugin, the core or a script. From a plugin action: `cause` → the `action.requested` entry |
+| `input.event` | `{surface, layer?, control, event, delta?, value?, echo?, item?}` | **(Now)** An event derived from a control's input state ([surfaces spec §4.2](surfaces.md)). `layer` is the layer that controlled the control, absent if none did. `cause` → the input's `state.patch`, or for a timed `long` or `hold`, the `down`'s. **(Later)** `item` is the control group item it showed. **(M6)** Folded into `event` |
+| `event` | `{source, event, payload}` | From a plugin, the core or a script. From a plugin action: `cause` → the `action.requested` entry. **(M6)** `{path, event, payload?, conn?, key?, surface?, layer?, control?, item?, echo?}`: `path` is the node it happened at, in ID form ([dataflow §3](dataflow.md)); the other fields are context. Control input events, helper events, flow events and `sys:startup` are all `event` entries |
 | `state.patch` | `{ops: [{path, value} \| {path, delete: true}], deviceTs?}` | Paths stored in ID form. From a plugin action: `cause` → the `action.requested` entry ([plugin protocol](plugin-protocol.md) §6 `call`). **(Now)** From control input: origin the surface, and `deviceTs` the host's clock |
 | `state.quality` | `{subtree, quality}` | Marks a subtree stale or good |
 | `trigger.matched` | `{flow, trigger, blocked?, reason?}` | `cause` → the event, input event or patch. `reason` says why it was blocked ([flow spec](flows.md) §8.5) |
@@ -182,11 +184,13 @@ Ordering is defined **only** by `seq` within a log. `ts` is for display.
 
 **"Why did this fire?"** means walking `cause` backwards. For example:
 
-`action.result` → `action.requested` → `run.step` → `run.started` → `trigger.matched` → `input.event` → `state.patch` (the input)
+`action.result` → `action.requested` → `run.step` → `run.started` → `trigger.matched` → `input.event` (**(M6)** `event`) → `state.patch` (the input)
+
+**(M8)** Cells add links to the chain without breaking it: a computed variable's `state.patch` has `cause` → the patch it read, so `why` passes through it to the input.
 
 ### 2.3 Project op log
 
-Entities: `connection`, `surface`, `surface_group` (Later), `layer` (M5: `page`), `control_binding`, `control_group` (Later) (which also holds a control's helpers, replacing `value_mapping`), `flow`, `variable`, `asset`, `user`, `role_assignment`, `setting`, `restore_point`.
+Entities: `connection` (**(M9)** including composites, plugin `core.composite`), `surface`, `surface_group` (Later), `layer` (M5: `page`), `control_binding` (which also holds a control's helpers, replacing `value_mapping`), `control_group` (Later), `flow`, `variable` (**(M8)** declared, [dataflow §6](dataflow.md)), **(M9)** `component`, `placement` and `transform` ([composition](composition.md), [dataflow §4.4](dataflow.md)), `asset`, `user`, `role_assignment`, `setting`, `restore_point`.
 
 ```ts
 interface ProjectOp extends Entry {
@@ -263,5 +267,5 @@ Secrets aren't stored here ([ADR 0006](../adr/0006-project-storage-and-versionin
 1. Should integers be a distinct type in expressions, or should we always use f64 in JS and keep `int` only as a schema hint? (Leaning towards the hint.)
 2. Journal retention defaults on a Raspberry Pi with an SD card. How much should we write, and how do we limit wear?
 3. Should `run.checkpoint` be automatic at every step, or opt-in per flow? Automatic is simpler; opt-in costs less.
-4. Should state patches from a connection be journaled in full, or sampled for very high-rate values (meters, timecode)? Proposal: the schema flag `journal: sampled(100ms)`. Fader input and helper values (surfaces spec §4) need the answer before helpers ship.
+4. Should state patches from a connection be journaled in full, or sampled for very high-rate values (meters, timecode)? Proposal: the schema flag `journal: sampled(100ms)`. **(M8)** Decided for cells and helpers by [ADR 0029](../adr/0029-dataflow-sources-transforms-sinks.md): `journal: {sampled: "100ms"}` applies every value to state, journals the latest per interval, and a final entry when it settles ([dataflow §5.1](dataflow.md)). Connections' schemas get the same flag when a plugin needs it.
 5. How should drafts interact with multi-user editing? Is one draft shared per layer, or does each user have their own?
