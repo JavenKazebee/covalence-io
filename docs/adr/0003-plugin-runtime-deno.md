@@ -1,6 +1,6 @@
 # 0003 – Plugins share one Deno runtime, with per-connection isolation
 
-- **Status:** Accepted, pending the validation spike below. Permission enforcement and the spike are deferred by [0015](0015-defer-plugin-permission-enforcement.md).
+- **Status:** Accepted, pending the validation spike below. Permission enforcement and the spike are deferred by [0015](0015-defer-plugin-permission-enforcement.md). Hardware access is the core's device I/O for plugins, not built-in drivers ([0025](0025-device-drivers-are-plugins.md)).
 - **Date:** 2026-10-18
 
 ## Context

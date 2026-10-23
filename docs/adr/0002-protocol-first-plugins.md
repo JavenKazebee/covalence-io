@@ -1,6 +1,6 @@
 # 0002 – Plugins defined protocol-first
 
-- **Status:** Accepted. The schema tool is decided in [0016](0016-protocol-schema-tooling.md).
+- **Status:** Accepted. The schema tool is decided in [0016](0016-protocol-schema-tooling.md). Point 5 is amended by [0025](0025-device-drivers-are-plugins.md): hardware goes through the core, and network transports are optional.
 - **Date:** 2026-10-18
 
 ## Context

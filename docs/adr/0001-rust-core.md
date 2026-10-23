@@ -1,6 +1,6 @@
 # 0001 – Core engine in Rust
 
-- **Status:** Accepted
+- **Status:** Accepted. Device drivers moved to plugins by [0025](0025-device-drivers-are-plugins.md); the core performs their hardware I/O.
 - **Date:** 2026-10-18
 
 ## Context

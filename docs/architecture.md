@@ -25,7 +25,7 @@
 │        │                                                                               │
 │  Project Store (SQLite: entities, project op log, snapshots, assets)                   │
 │                                                                                        │
-│  Built-in drivers: Stream Deck HID · MIDI · OSC · TCP/UDP/HTTP/WS · Serial             │
+│  Device I/O for plugins: HID · MIDI · Serial · hotplug · optional TCP/UDP/HTTP/WS      │
 └────────────────────────────────────────────────────────────────────────────────────────┘
         ▲ plugin protocol (stdio)                      ▲ plugin protocol (TLS)
 ┌───────┴────────────┐                         ┌───────┴──────────────────────┐
@@ -37,8 +37,8 @@
 
 | Component | Language | Role |
 |---|---|---|
-| **covalence-core** | Rust (tokio) | The engine: state, logs, flows, scheduling, gestures, rendering, built-in drivers, API, supervision. Runs headless. |
-| **Plugin host** | TypeScript on Deno | Runs plugins. One shared process by default; a connection can be isolated into its own process. |
+| **covalence-core** | Rust (tokio) | The engine: state, logs, flows, scheduling, gestures, rendering, device I/O, API, supervision. Runs headless. It has no device drivers: those are plugins ([ADR 0025](adr/0025-device-drivers-are-plugins.md)). |
+| **Plugin host** | TypeScript on Deno | Runs plugins, including surface drivers such as the Stream Deck's. One shared process by default; a connection can be isolated into its own process. |
 | **UI** | Vue 3 + TypeScript | The only UI. Served by the core and usable from any browser. |
 | **Desktop shell** | Tauri | Optional. Installer, tray icon, auto-start, and a window onto the local UI. Never runs the engine. |
 | **Orbital** | Rust | Remote node for surfaces and devices attached to other machines. |
@@ -51,7 +51,7 @@ These are the user-facing terms. Product and component names use the chemistry t
 
 | Term | Meaning |
 |---|---|
-| **Plugin** | An installable package that knows how to talk to one kind of device or service. |
+| **Plugin** | An installable package that knows how to talk to one kind of device or service, control surfaces included. |
 | **Connection** | A configured, running instance of a plugin ("ProPresenter – FOH Mac"). It has an **alias** used in expressions (`pp`). |
 | **Manifest** | What a plugin declares: config, permissions, actions, events, state schema, presets. |
 | **Action** | Something a connection can do, with typed parameters (`videohub.route`). |
@@ -118,7 +118,7 @@ covalence-io/
 │   ├── covalence-protocol/  # generated Rust types + framing
 │   ├── covalence-store/     # SQLite store, migrations, export/import
 │   ├── covalence-script/    # QuickJS embedding, expression validator (oxc)
-│   ├── covalence-surfaces/  # Stream Deck / MIDI / X-keys drivers (shared with Orbital)
+│   ├── covalence-devices/   # HID / MIDI / serial I/O and hotplug for plugins (shared with Orbital)
 │   └── covalence-orbital/   # Orbital binary
 ├── packages/
 │   ├── protocol/            # generated TS types
@@ -126,7 +126,7 @@ covalence-io/
 │   ├── plugin-host/         # Deno host bootstrap and worker management
 │   └── ui/                  # Vue 3 app
 ├── apps/desktop/            # Tauri shell
-├── plugins/                 # first-party plugins (videohub, propresenter, red-rcp2, …)
+├── plugins/                 # first-party plugins (videohub, streamdeck, propresenter, red-rcp2, …)
 └── docs/
 ```
 

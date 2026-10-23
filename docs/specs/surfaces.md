@@ -25,10 +25,10 @@ interface Surface {               // project entity `surface`
   id: string;                     // ULID
   name: string;                   // "FOH deck"
   slug: string;                   // state key: surface.<slug>
-  model: string;                  // "virtual.deck15"; hardware models later
-  serial?: string;                // matches a hardware device on attach (later)
+  model: string;                  // "virtual.deck15"; (M6) hardware models from their plugin
+  serial?: string;                // (M6) matches a hardware device on attach
   startLayer?: string;            // (Now) layer ID shown in the `main` group on first attach (M5: `startPage`)
-  provider?: string;              // (Later) the connection whose device this is
+  provider?: string;              // (M6) the connection whose device this is
 }
 
 interface Layer {                 // (Now) project entity `layer`, replacing `page`
@@ -61,11 +61,11 @@ interface SurfaceGroup {          // (Later) project entity `surface_group`
 ```
 
 - **Slugs** follow the state segment rule (`[A-Za-z_][A-Za-z0-9_]*`) and are unique per entity type, as for flows.
-- **A surface entity exists before its device attaches.** The virtual surface is created in the UI. Hardware surfaces will be created on first attach, matched by `model` and `serial` after that (later milestone).
+- **A surface entity exists before its device attaches.** The virtual surface is created in the UI. **(M6)** Hardware surfaces are created on first attach from a plugin, matched by `model` and `serial` after that ([ADR 0025](../adr/0025-device-drivers-are-plugins.md)).
 - **A layer is independent of surfaces.** The same layer can control controls on several surfaces at once, and its bindings are evaluated once for all of them.
 - **(Now) A layer lists its controls.** Control IDs on a layer are unique, and there are at most 256. The editor's "New layer" for a surface copies that surface's controls with their capabilities.
 - **(Later) A surface group** places several surfaces on one canvas, each offset into the group's coordinates, so they work as one wide device. A layer `on` a group covers its controls by region, or by qualified ID `<surface slug>/<control id>`.
-- **(Later) `provider`** ties a surface to the connection whose device it is.
+- **(M6) `provider`** ties a surface to the connection whose device it is. It's set by the attach, and a surface whose provider is deleted is kept, detached.
 
 ---
 

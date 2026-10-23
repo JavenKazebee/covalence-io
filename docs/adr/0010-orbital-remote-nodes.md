@@ -1,6 +1,6 @@
 # 0010 – Orbital remote nodes
 
-- **Status:** Accepted
+- **Status:** Accepted. Orbital performs hardware I/O for plugins instead of running drivers ([0025](0025-device-drivers-are-plugins.md)).
 - **Date:** 2026-10-18
 
 ## Context

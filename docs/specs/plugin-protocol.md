@@ -145,6 +145,8 @@ interface Manifest {
     udpBroadcast?: boolean;
     env?: string[];
   };
+  directNetwork?: boolean;       // (M6) opens sockets itself instead of through host transports (§7, ADR 0025)
+  devices?: DeviceMatch[];       // (M6) hardware this plugin drives, matched on hotplug (§7.1)
   connections: "multiple" | "single";   // policy for standby nodes (ADR 0008)
 
   actions: ActionDef[];
@@ -245,28 +247,68 @@ The envelope's `conn` is required, except for `log`. Paths are segment arrays ([
 
 ## 7. Host transports (core-performed I/O)
 
-The SDK exposes these as `ctx.tcp`, `ctx.udp`, `ctx.ws`, `ctx.http` and `ctx.serial`. The core opens the socket, checks the target against the connection's resolved `permissions`, records traffic for the inspector and for record/replay ([ADR 0012](../adr/0012-simulated-devices.md)), and handles reconnects when asked.
+The SDK exposes these as `ctx.tcp`, `ctx.udp`, `ctx.ws`, `ctx.http`, `ctx.serial`, `ctx.hid` and `ctx.midi`. The core opens the socket or device, checks the target against the connection's resolved `permissions`, records traffic for the inspector and for record/replay ([ADR 0012](../adr/0012-simulated-devices.md)), and handles reconnects when asked. Transports are byte-level: what the bytes mean is the plugin's business ([ADR 0025](../adr/0025-device-drivers-are-plugins.md)).
 
 | Method | Direction | Params / result |
 |---|---|---|
-| `io.open` | host → core, req | `{conn, kind: "tcp" \| "udp" \| "ws" \| "serial", target, options: {reconnect?, backoff?, framing?: "raw" \| "line" \| "length"}}` → `{handle}` |
-| `io.write` | host → core, ntf | `{handle, data: bytes}` |
-| `io.data` | core → host, ntf | `{handle, data: bytes}` |
-| `io.state` | core → host, ntf | `{handle, state: "open" \| "closed" \| "reconnecting" \| "error", error?}` |
+| `io.open` | host → core, req | `{conn, kind: "tcp" \| "udp" \| "ws" \| "serial" \| "hid" \| "midi", target, options: {reconnect?, backoff?, framing?: "raw" \| "line" \| "length", baud?}}` → `{handle}`. **(M6)** For `serial`, `hid` and `midi`, `target` is a device ID (§7.1) |
+| `io.write` | host → core, ntf | `{handle, data: bytes}`. For `hid`, an output report whose first byte is the report ID; for `midi`, one or more MIDI messages |
+| `io.data` | core → host, ntf | `{handle, data: bytes}`. For `hid`, an input report; for `midi`, one message |
+| `io.feature` | host → core, req | **(M6)** `hid` only: `{handle, op: "get", reportId, length}` → `{data}`, or `{handle, op: "send", data}` → `{}` |
+| `io.state` | core → host, ntf | `{handle, state: "open" \| "closed" \| "reconnecting" \| "error", error?}`. **(M6)** A device handle closes with `error: "unplugged"` and opens again when the same device returns |
 | `io.close` | host → core, ntf | `{handle}` |
 | `http.request` | host → core, req | `{conn, method, url, headers, body?, timeoutMs}` → `{status, headers, body}` |
 
-Using transports is optional. A plugin that opens sockets directly through Deno is still limited by its worker permissions, but it doesn't get the traffic inspector or record/replay.
+- **Hardware goes through the core.** Deno has no HID, MIDI or serial of its own, and plugins don't use native add-ons for them. `usb` (interfaces, bulk, interrupt and control transfers) comes later.
+- **One connection holds a device at a time.** A second `io.open` of the same device is refused with `busy`.
+- **(M6) Device handles outlive a plugin host restart.** The core keeps the device open, drops its data while no host is there, and gives the restarted connection the same device on its next `io.open`.
+- **Network transports are optional.** A plugin that opens sockets itself declares `directNetwork: true` (§4). It's still limited by its worker's permissions once they're enforced ([ADR 0015](../adr/0015-defer-plugin-permission-enforcement.md)), but its traffic isn't in the inspector or record/replay, and an Orbital can't route it. **(M6)** The SDK's `ctx.tcp` returns an object shaped like `Deno.Conn`, and `ctx.net.socket()` one shaped like a `node:net` `Socket`, so libraries that accept a socket can use the core's.
+
+### 7.1 Devices (M6)
+
+The core enumerates HID, serial and MIDI devices, watches for hotplug, and matches them against installed plugins' `devices`.
+
+```ts
+interface DeviceMatch {
+  kind: "hid" | "serial" | "midi";
+  vendorId?: number;
+  productId?: number | number[];
+  usagePage?: number;            // hid
+  name?: string;                 // glob over the product or MIDI port name
+  autoCreate?: boolean;          // create a connection without asking (surfaces)
+}
+
+interface DeviceInfo {
+  id: string;                    // stable: from kind, vendor, product and serial number where there is one, else the port path
+  kind: "hid" | "serial" | "midi";
+  vendorId?: number;
+  productId?: number;
+  serial?: string;
+  manufacturer?: string;
+  product?: string;
+  path: string;                  // OS path or port name, for display
+  usagePage?: number;
+  usage?: number;
+}
+```
+
+| Method | Direction | Params / result |
+|---|---|---|
+| `device.list` | host → core, req | `{conn, kind?}` → `DeviceInfo[]`: devices this plugin's `devices` match, for a picker |
+
+- **A connection names its device in its config,** as a string field with `format: "device"`. The connection form offers matching devices that no connection holds.
+- **When a matching device appears that no connection holds,** the core offers to create a connection for it in the UI, with the device in its config, or creates one when the match says `autoCreate`. A device several plugins match is offered once, with a choice.
+- **OS limits are reported as `io.state` errors** the UI can explain: exclusive access refused (macOS keyboards and mice, another app holding the device), missing permission (Linux udev rules), no driver (Windows WinUSB).
 
 ---
 
 ## 8. Surfaces (Orbital and plugin-provided)
 
-A surface is a two-way device ([ADR 0024](../adr/0024-surfaces-as-two-way-devices.md), [surfaces spec](surfaces.md)). The host reports its controls' input, which the core keeps as state and derives events from, and the core sets their outputs. **(Now)** marks the M5 Phase 5 reshaping; **(Later)**, what has no milestone yet. The web surface carries these notifications today (surfaces §8). The plugin host and Orbitals carry them **(Later)**.
+A surface is a two-way device ([ADR 0024](../adr/0024-surfaces-as-two-way-devices.md), [surfaces spec](surfaces.md)). The host reports its controls' input, which the core keeps as state and derives events from, and the core sets their outputs. **(Now)** marks the M5 Phase 5 reshaping; **(M6)**, [M6](../milestones/m6-surfaces-from-plugins.md); **(Later)**, what has no milestone yet. The web surface carries these notifications today (surfaces §8). **(M6)** The plugin host carries them, with the envelope's `conn` naming the connection that provides the surface: a hardware surface is a plugin that reads its device through `ctx.hid` (§7) and translates ([ADR 0025](../adr/0025-device-drivers-are-plugins.md)). Orbitals carry them **(Later)**.
 
 | Method | Direction | Params |
 |---|---|---|
-| `surface.attach` | host → core, ntf | `{surface, model, serial?, name, controls: ControlDef[], outputs?: {brightness?: boolean}}`. **(Now)** No `layout` |
+| `surface.attach` | host → core, ntf | `{surface, model, serial?, name, controls: ControlDef[], outputs?: {brightness?: boolean}}`. **(Now)** No `layout`. **(M6)** From the plugin host, `surface` is the host's own key for the device, and the core matches the attach to a surface entity by `model` and `serial` (surfaces §1) |
 | `surface.detach` | host → core, ntf | `{surface}` |
 | `surface.input` | host → core, ntf | `{surface, control, kind: "down" \| "up" \| "turn" \| "touch" \| "value", value?, ts, echo?}` |
 | `surface.draw` | core → host, ntf | `{surface, control, image: bytes, format: "jpeg" \| "bmp" \| "png" \| "rgb565"}`, for `image` outputs |
@@ -317,7 +359,7 @@ type OutputCap =
 
 ## 9. Error codes
 
-`invalid_request` · `unknown_method` · `unsupported_version` · `invalid_params` · `not_found` · `not_connected` · `permission_denied` · `action_failed` · `timeout` · `cancelled` · `stale_term` · `restart_required` · `overloaded` · `internal`
+`invalid_request` · `unknown_method` · `unsupported_version` · `invalid_params` · `not_found` · `not_connected` · `permission_denied` · `action_failed` · `timeout` · `cancelled` · `stale_term` · `busy` · `restart_required` · `overloaded` · `internal`
 
 ---
 
