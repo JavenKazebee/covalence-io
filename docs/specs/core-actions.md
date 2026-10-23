@@ -33,7 +33,7 @@ Everything Covalence itself can do (navigate a surface, inject input, cancel a f
 
 | Action | Params | Result | Effect | Notes |
 |---|---|---|---|---|
-| `navigate` | `{group?: string = "main", layer: LayerId \| null}` | `{layer}` | internal | **(M6)** As `POST /surfaces/{id}/current` (surfaces §9): answers once the surface has been sent its outputs. Errors `unknownLayer`, `doesNotFit`. Idempotent |
+| `navigate` | `{group?: string = "main", layer: LayerId \| null, item?: PathSegment}` | `{layer, item?}` | internal | **(M6)** As `POST /surfaces/{id}/current` (surfaces §9): answers once the surface has been sent its outputs. Errors `unknownLayer`, `doesNotFit`. Idempotent. **(M9)** `item` picks one instance of a layer with `forEach` ([composition §4](composition.md)); `unknownItem` if it has none by that key |
 | `back` | `{group?: string = "main"}` | `{layer}` | internal | **(Later)** Pops the group's history |
 | `inject` | `{control: string, input: "down" \| "up" \| "turn" \| "value" \| "touch", value?: Value}` | none | internal | **(M6)** Applied as if the device had sent it (surfaces §4.5), with the run as origin. Errors `unknownControl`, `unsupported` |
 | `setBrightness` | `{level: number}` (0 to 1) | none | device | **(Later)** Needs surface-wide outputs |

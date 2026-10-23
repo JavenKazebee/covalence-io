@@ -1,7 +1,7 @@
 # 0019 – Dynamic action targets and plugin interfaces
 
 - **Status:** Proposed
-- **Amended by:** [0026](0026-sources-and-selectors.md) (`TargetSpec` becomes a `Source<Target>`), [0027](0027-events-addressed-by-path.md) (interface events), [0030](0030-composite-connections.md) (composites implement interfaces)
+- **Amended by:** [0026](0026-sources-and-selectors.md) (`TargetSpec` becomes a `Source<Target>`), [0027](0027-events-addressed-by-path.md) (interface events), [0030](0030-composite-connections.md) (composites implement interfaces), [0032](0032-one-template-primitive.md) (a composite's per-item instances are targets through `at`)
 - **Date:** 2026-10-18
 - **Amends:** [0004](0004-javascript-expressions-and-scripts.md). Its dependency-tracking section was accepted separately, as part of [0021](0021-expressions-as-sandboxed-snippets.md)
 - **Specs:** [flows](../specs/flows.md), [bindings](../specs/bindings.md), [plugin protocol](../specs/plugin-protocol.md)

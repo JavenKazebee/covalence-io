@@ -191,15 +191,15 @@ type Helper = ReducerSource & {                 // {use: "toggle" | "position" |
 
 ## 6. Layer parameters and templates (M9)
 
-- **A layer can declare parameters:** `params: { camera: { kind: "target", interface: "camera.ptz@1" } }`. Their values live at `layer.<slug>.params.<name>`, and the layer's own bindings, helpers and flows triggered from it read them as `params.<name>` (dataflow §8). Nothing reads them implicitly from another layer ([ADR 0031](../adr/0031-templates-instances-and-components.md)).
+- **A layer can declare parameters:** `params: { camera: { kind: "target", interface: "camera.ptz@1" } }`. Their values live at `layer.<slug>.params.<name>`, and the layer's own bindings, helpers and owned flows read them as `params.<name>` (dataflow §8). Nothing reads them implicitly from another layer or from a free-standing flow ([ADR 0031](../adr/0031-templates-instances-and-components.md), [ADR 0032](../adr/0032-one-template-primitive.md)).
 - **One layer, a selector row.** The layer's `camera` parameter defaults to `{ref: vars.selectedCam}`, and buttons at the top set that variable. Every binding and action on the layer that uses `params.camera` follows the selection. This is the main "control any camera" layout ([ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md)).
-- **Or instances.** "Create from template" makes one **instance** per matching target, each with its parameter set to that target ([composition §2](composition.md)). Instances follow their template: there are no copies to drift. For a list that changes while the show runs, a control group (surfaces §6) spreads it over controls instead.
+- **Or instances.** "Create from template" makes an **instance** ([composition §7](composition.md)), and one instance with `forEach: {targets: {interface: "camera.ptz@1"}}` makes a layer per camera, including cameras added during the show ([composition §4](composition.md)). Instances follow their template: there are no copies to drift. To spread a list over the controls of one layer, a control group (surfaces §6) does it instead.
 
 ---
 
 ## 7. Plugin presets become components (M9)
 
-Manifest `presets` ([plugin protocol §4](plugin-protocol.md#4-manifest)) become **components** ([composition §3](composition.md)): a reusable control with its look, helpers, flows and parameters, such as "tally key" or "record toggle". A component written against an interface works for any target that implements it, so placing "tally of the selected camera" needs no typing.
+Manifest `presets` ([plugin protocol §4](plugin-protocol.md#4-manifest)) become **components** ([composition §8](composition.md)): a reusable control with its look, helpers, flows and parameters, such as "tally key" or "record toggle". A component written against an interface works for any target that implements it, so placing "tally of the selected camera" needs no typing.
 
 ---
 

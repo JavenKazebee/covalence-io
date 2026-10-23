@@ -1,9 +1,10 @@
 # 0031 – Reuse is by parameters: templates, instances, components, and explicit scope
 
 - **Status:** Proposed
+- **Amended by:** [0032](0032-one-template-primitive.md) (one template primitive for every kind; templates nest; owned flows replace the flow on a template; `forEach`)
 - **Date:** 2026-10-22
 - **Amends:** [bindings §6–§7](../specs/bindings.md) ("Create from template" makes instances, not copies; plugin `presets` become components; the `layer.params` shorthand is replaced by `params`), [surfaces §5.3](../specs/surfaces.md) (the tree preset no longer passes parameters down)
-- **Specs:** [composition §2–§3](../specs/composition.md), [dataflow §8](../specs/dataflow.md)
+- **Specs:** [composition §7–§8](../specs/composition.md), [dataflow §8](../specs/dataflow.md)
 - **Milestone:** [M9: Composition](../milestones/m9-composition.md)
 
 ## Context

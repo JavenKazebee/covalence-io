@@ -153,7 +153,7 @@ interface Manifest {
   events: EventDef[];
   state: StateSchema;            // see the state spec §1.2–1.4
   presets?: PresetDef[];         // suggested button and layer templates; (M9) replaced by `components`
-  components?: ComponentDef[];   // (M9) reusable controls: look, helpers, flows, params (composition §3)
+  components?: ComponentDef[];   // (M9) reusable controls: look, helpers, flows, params, parts (composition §8)
   transforms?: string[];         // (M9) transform definition modules, run in the core's sandbox (dataflow §4.4)
   implements?: InterfaceImpls;   // proposed: interfaces such as "camera.ptz@1" (ADR 0019)
   surfaces?: SurfaceProviderDef; // if the plugin provides surfaces (for example a web panel)
@@ -181,7 +181,7 @@ interface EventDef {
 }
 ```
 
-- **(M9) `components`** are content with no code ([ADR 0025](../adr/0025-device-drivers-are-plugins.md)): the `Component` shape of [composition §3](composition.md), with IDs namespaced by the plugin. They replace `presets`.
+- **(M9) `components`** are content with no code ([ADR 0025](../adr/0025-device-drivers-are-plugins.md)): the `Component` shape of [composition §8](composition.md), with IDs namespaced by the plugin. They replace `presets`.
 - **(M9) `transforms`** are paths to modules in the package, each a `defineTransform` ([dataflow §4.4](dataflow.md)). The core loads them into its own sandbox, never into the plugin host, and names them `<plugin id>/<id>`. A module that fails to load or to pass its declared types is skipped with an error on the plugin; the rest of the plugin is unaffected.
 
 ### 4.1 Instance schema updates (host → core, ntf `schema.update`)

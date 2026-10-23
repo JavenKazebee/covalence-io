@@ -1,7 +1,7 @@
 # Spec: Flows
 
 - **Status:** Draft v0.2
-- **Related:** [ADR 0018](../adr/0018-flows-as-step-trees.md), [ADR 0020](../adr/0020-project-entity-types-in-the-core.md), [ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md), [ADR 0004](../adr/0004-javascript-expressions-and-scripts.md), [ADR 0008](../adr/0008-redundancy-and-failover.md), [ADR 0014](../adr/0014-time-sources-and-scheduling.md), [ADR 0026](../adr/0026-sources-and-selectors.md), [ADR 0027](../adr/0027-events-addressed-by-path.md), [ADR 0028](../adr/0028-the-core-is-a-connection.md), [ADR 0030](../adr/0030-composite-connections.md), [dataflow](dataflow.md), [core actions](core-actions.md), [composition](composition.md), [state and event log](state-and-event-log.md), [bindings](bindings.md)
+- **Related:** [ADR 0018](../adr/0018-flows-as-step-trees.md), [ADR 0020](../adr/0020-project-entity-types-in-the-core.md), [ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md), [ADR 0004](../adr/0004-javascript-expressions-and-scripts.md), [ADR 0008](../adr/0008-redundancy-and-failover.md), [ADR 0014](../adr/0014-time-sources-and-scheduling.md), [ADR 0026](../adr/0026-sources-and-selectors.md), [ADR 0027](../adr/0027-events-addressed-by-path.md), [ADR 0028](../adr/0028-the-core-is-a-connection.md), [ADR 0030](../adr/0030-composite-connections.md), [ADR 0032](../adr/0032-one-template-primitive.md), [dataflow](dataflow.md), [core actions](core-actions.md), [composition](composition.md), [state and event log](state-and-event-log.md), [bindings](bindings.md)
 
 A flow is the single unit of automation: triggers, optional conditions, and a body of steps. Button action lists, rules and node graphs are all flows. Flows are **control flow only**. Values move through expressions, not edges ([ADR 0018](../adr/0018-flows-as-step-trees.md)). Keeping something continuously in step with state is dataflow, not a flow ([dataflow spec](dataflow.md)).
 
@@ -25,8 +25,13 @@ interface Flow {
   concurrency: "parallel" | "queue" | "restart" | "ignore";
   failover: "abort" | "resume" | "restart";       // ADR 0008
 
-  inputs?: { [name: string]: StateSchemaNode };   // (M9) for call-flow, API, OSC and composite actions
+  inputs?: { [name: string]: ParamDef };          // (M9) bound per run: call-flow, API, OSC and composite actions
   outputs?: { [name: string]: StateSchemaNode };  // (M9) returned by `stop` (§2.3) to a caller
+
+  params?: { [name: string]: ParamDef };          // (M9) a template (composition §9); or, with `template`, an instance's bindings
+  template?: string;                              // (M9) an instance of a flow template; it then has no triggers or body of its own
+  forEach?: ForEach;                              // (M9) one instance per item (composition §4)
+  owner?: string;                                 // (M9) a layer or composite that owns it (composition §2)
 
   body: Step[];                       // a sequence
   editor?: EditorMeta;                // view-only metadata (§6); ignored by the runtime
@@ -52,14 +57,14 @@ type Expr = string;                   // JS expression source (ADR 0004)
 | `schedule` | per [ADR 0014](../adr/0014-time-sources-and-scheduling.md) | `{scheduled, fired}` |
 | `call` | none; any flow may call this one | `{caller: {flow, run}}` |
 | `api` / `osc` | `address?` for OSC | `{args}` |
-| `action` **(M9)** | none: set by a composite whose action names this flow ([composition §1.2](composition.md)) | `{conn, call}`; the action's params are `input` |
+| `action` **(M9)** | none: set by a composite whose action names this flow ([composition §6.2](composition.md)) | `{conn, call}`; the action's params are `input`, and `params` are the composite instance's |
 
 - **(M6) One trigger kind for every event** ([ADR 0027](../adr/0027-events-addressed-by-path.md)). Events happen at a node in the state tree and have a name (`pp:timerEnded`, `surface.deck.controls.k3:press`, `flow.preService:finished`, `sys:startup`). `from` picks the nodes with a path selector, a target selector, a layer or surface with a control selector, a group, or a component slot. The M5 `control` and the planned `startup` kinds are event triggers now: `{from: {layer, controls}, event: "press"}` and `{from: {path: "sys"}, event: "startup"}`.
 - An `event` trigger can listen to an interface instead of one connection. `from: {target: {interface: "camera.ptz@1"}}` fires for any camera, composites included, and `trigger.source` says which ([ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md)).
 - `state` triggers are edge-triggered. Their dependencies are tracked at run time, like bindings. **(M6)** `when` can be a structured source (`{use: "compare", …}`), as well as an expression string.
 - **A control's input is state, and its events are derived from that state** ([ADR 0024](../adr/0024-surfaces-as-two-way-devices.md), [surfaces spec §4](surfaces.md)). An event trigger is the quick way in for them: a press, a double, a turn. A layer source matches per surface, on whichever surfaces that layer controls the control.
 - **(M6) Flows emit events** at `flow.<slug>`: `started`, `finished` and `failed`, with `{run, status, error?}`. "When that flow finishes" is an event trigger.
-- **(M9) `params`** is in scope for a run triggered by a control event: the controlling layer's (or instance's) parameters ([dataflow §8](dataflow.md)).
+- **(M9) `params`** is the flow's own instance's parameters, or for an owned flow its owner instance's ([composition §2](composition.md)). A free-standing flow triggered by a control event doesn't get the layer's: it gets `trigger.layer` and `trigger.instance`, and a flow that should handle every instance of a layer template is owned by it ([ADR 0032](../adr/0032-one-template-primitive.md)).
 - **`state` triggers cover conditions and combinations** over input state: a press that only counts while armed, a shift key, a helper's position crossing a threshold.
 - **A `state` trigger with `match`** fires for each path matching the pattern, with `*` matching one segment: `surface.*.controls.*.pressed`. `trigger.path` is the path that changed, and `trigger.captures` the segments `*` matched. `when` is optional, and sees `trigger.value`. It works on any state, so a GPIO contact from a plugin and a key on a surface can drive the same flow.
 
@@ -140,14 +145,14 @@ Steps read data through expressions. These names are in scope:
 | Name | Contents | Writable |
 |---|---|---|
 | `trigger` | The trigger payload (§1.1) | no |
-| `input` | The flow's inputs | no |
+| `input` | The flow's inputs, bound for this run | no |
 | `local` | Run-local variables. They last for the run and are included in checkpoints | via `set` and scripts |
 | `steps.<id>` | `{status, result?, error?, startedAt, durationMs}` for steps that have run | no |
 | `<as>`, `index` | The current loop item and index, inside `forEach` | no |
 | `error` | The error, inside a `catch` | no |
 | state roots | `<alias>`, `vars`, `sys`, `surface`, `layer` (M5: `page`), `flow` ([state spec §1.1](state-and-event-log.md)) | `vars` via `set` and scripts |
 | `target(t)` | A target's state ([ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md)) | no |
-| `params` **(M9)** | The controlling layer's parameters, for a run triggered by a control event; a placement's, for a component's flow ([dataflow §8](dataflow.md)) | no |
+| `params` **(M9)** | The flow instance's parameters, or its owner instance's for an owned flow: a layer's, a composite's or a placement's ([composition §2](composition.md)) | no |
 
 - **Steps in a branch that didn't run are absent** from `steps`. Reading them gives `undefined`, like any missing value ([ADR 0004](../adr/0004-javascript-expressions-and-scripts.md)).
 - **Inside a `parallel` block,** a branch can only see its own steps and those that finished before the block started. Other branches' steps become visible after the join.

@@ -1,9 +1,10 @@
 # 0030 – Composite connections: users build devices out of other devices
 
 - **Status:** Proposed
+- **Amended by:** [0032](0032-one-template-primitive.md) (composite templates are one kind of template; collections through `forEach`; action flows are owned flows)
 - **Date:** 2026-10-22
 - **Amends:** [0019](0019-dynamic-action-targets-and-interfaces.md) (its rejected "aggregator plugin" alternative returns as a no-code composite)
-- **Specs:** [composition §1](../specs/composition.md), [dataflow](../specs/dataflow.md), [flows](../specs/flows.md)
+- **Specs:** [composition §6](../specs/composition.md), [dataflow](../specs/dataflow.md), [flows](../specs/flows.md)
 - **Milestone:** [M9: Composition](../milestones/m9-composition.md)
 
 ## Context

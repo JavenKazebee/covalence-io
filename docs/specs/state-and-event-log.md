@@ -144,6 +144,7 @@ interface Entry {
   origin: Origin;       // who produced it
   cause?: bigint;       // seq of the entry that directly caused this one (same log)
   run?: string;         // flow run ID this entry belongs to
+  instance?: InstanceChain;   // (M9) the instances it was made inside, outermost first (composition §5)
   kind: string;         // see the tables below
   data: unknown;        // kind-specific payload
 }
@@ -178,6 +179,7 @@ Ordering is defined **only** by `seq` within a log. `ts` is for display.
 | `action.suppressed` | `{call, reason: standby\|simulate\|showLock\|permission\|staleTerm}` | |
 | `action.result` | `{call, ok, result?, error?, durationMs}` | |
 | `nondet` | `{run, kind: now\|random, value}` | Recorded so replay is exact |
+| `instance.added`, `instance.removed` | `{instance: InstanceChain}` | **(M9)** A per-item instance created or ended with its list ([composition §4](composition.md)). `cause` → the patch or domain change that changed the list |
 | `conn.status` | `{conn, status, message?}` | |
 | `node.role` | `{node, role: active\|standby, term}` | |
 | `log` | `{level, message, fields}` | Plugin and script logs |
@@ -190,7 +192,7 @@ Ordering is defined **only** by `seq` within a log. `ts` is for display.
 
 ### 2.3 Project op log
 
-Entities: `connection` (**(M9)** including composites, plugin `core.composite`), `surface`, `surface_group` (Later), `layer` (M5: `page`), `control_binding` (which also holds a control's helpers, replacing `value_mapping`), `control_group` (Later), `flow`, `variable` (**(M8)** declared, [dataflow §6](dataflow.md)), **(M9)** `component`, `placement` and `transform` ([composition](composition.md), [dataflow §4.4](dataflow.md)), `asset`, `user`, `role_assignment`, `setting`, `restore_point`.
+Entities: `connection` (**(M9)** including composites, plugin `core.composite`), `surface`, `surface_group` (Later), `layer` (M5: `page`), `control_binding` (which also holds a control's helpers, replacing `value_mapping`), `control_group` (Later), `flow`, `variable` (**(M8)** declared, [dataflow §6](dataflow.md)), **(M9)** `component`, `placement` and `transform` ([composition](composition.md), [dataflow §4.4](dataflow.md)). Layers, composite connections and flows can be templates or instances of them, and placements are instances of components ([ADR 0032](../adr/0032-one-template-primitive.md)), `asset`, `user`, `role_assignment`, `setting`, `restore_point`.
 
 ```ts
 interface ProjectOp extends Entry {

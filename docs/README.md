@@ -12,7 +12,7 @@
 - [M6: Primitives](milestones/m6-primitives.md) (planned): sources, selectors, events by path, the core connection
 - [M7: Surfaces from plugins](milestones/m7-surfaces-from-plugins.md) (planned)
 - [M8: Dataflow](milestones/m8-dataflow.md) (planned): reducers, cells, variables, sinks, helpers, layer resolution
-- [M9: Composition](milestones/m9-composition.md) (planned): composites, templates, components, plugin transforms
+- [M9: Composition](milestones/m9-composition.md) (planned): one template primitive, composites, components, nesting, `forEach`, plugin transforms
 
 ## Specs (drafts)
 - [State model and event log](specs/state-and-event-log.md)
@@ -22,7 +22,7 @@
 - [Surfaces and layers](specs/surfaces.md)
 - [Dataflow](specs/dataflow.md): sources, selectors, events, transforms, cells, sinks, scope
 - [The core connection](specs/core-actions.md)
-- [Composition](specs/composition.md): composites, templates and instances, components
+- [Composition](specs/composition.md): templates and instances, nesting, `forEach`, composites, layers, components, flows
 
 ## Architecture decision records
 
@@ -46,7 +46,7 @@
 | [0016](adr/0016-protocol-schema-tooling.md) | Protocol schema tooling: TypeSpec → JSON Schema | Accepted |
 | [0017](adr/0017-wire-paths-as-segment-arrays.md) | State paths on the wire are segment arrays | Accepted |
 | [0018](adr/0018-flows-as-step-trees.md) | Flows are structured step trees; bindings are expressions | Accepted |
-| [0019](adr/0019-dynamic-action-targets-and-interfaces.md) | Dynamic action targets and plugin interfaces | Proposed (amended by 0026, 0027, 0030) |
+| [0019](adr/0019-dynamic-action-targets-and-interfaces.md) | Dynamic action targets and plugin interfaces | Proposed (amended by 0026, 0027, 0030, 0032) |
 | [0020](adr/0020-project-entity-types-in-the-core.md) | Project entity types live in the core, as serde types | Accepted |
 | [0021](adr/0021-expressions-as-sandboxed-snippets.md) | Expressions are sandboxed snippets; what code can do depends on where it runs | Accepted (amended by 0029) |
 | [0022](adr/0022-surfaces-pages-and-the-web-surface.md) | Surfaces and pages are core entities; the web surface speaks the surface protocol | Accepted (amended by 0024) |
@@ -57,7 +57,8 @@
 | [0027](adr/0027-events-addressed-by-path.md) | Events are addressed by state path; control triggers become event triggers | Proposed |
 | [0028](adr/0028-the-core-is-a-connection.md) | The core is a connection; surfaces and flows are its targets | Proposed |
 | [0029](adr/0029-dataflow-sources-transforms-sinks.md) | Dataflow is sources, transforms and sinks; helpers are transforms; transforms are sandboxed definitions | Proposed |
-| [0030](adr/0030-composite-connections.md) | Composite connections: users build devices out of other devices | Proposed |
-| [0031](adr/0031-templates-instances-and-components.md) | Reuse is by parameters: templates, instances, components, and explicit scope | Proposed |
+| [0030](adr/0030-composite-connections.md) | Composite connections: users build devices out of other devices | Proposed (amended by 0032) |
+| [0031](adr/0031-templates-instances-and-components.md) | Reuse is by parameters: templates, instances, components, and explicit scope | Proposed (amended by 0032) |
+| [0032](adr/0032-one-template-primitive.md) | One reuse primitive: templates and instances, for layers, composites, components and flows | Proposed |
 
 Each record covers its context, the decision, its consequences and the alternatives considered. Don't edit an accepted record to change its decision; write a new one that supersedes it.

@@ -1,7 +1,7 @@
 # Spec: Dataflow
 
 - **Status:** Draft v0.1
-- **Related:** [ADR 0026](../adr/0026-sources-and-selectors.md), [ADR 0027](../adr/0027-events-addressed-by-path.md), [ADR 0029](../adr/0029-dataflow-sources-transforms-sinks.md), [ADR 0031](../adr/0031-templates-instances-and-components.md), [bindings](bindings.md), [surfaces](surfaces.md), [flows](flows.md), [state and event log](state-and-event-log.md), [composition](composition.md)
+- **Related:** [ADR 0026](../adr/0026-sources-and-selectors.md), [ADR 0027](../adr/0027-events-addressed-by-path.md), [ADR 0029](../adr/0029-dataflow-sources-transforms-sinks.md), [ADR 0031](../adr/0031-templates-instances-and-components.md), [ADR 0032](../adr/0032-one-template-primitive.md), [bindings](bindings.md), [surfaces](surfaces.md), [flows](flows.md), [state and event log](state-and-event-log.md), [composition](composition.md)
 
 This spec defines the small set of primitives that everything reactive in Covalence is built from. Bindings, helpers, layer fields, state triggers, variables and composite connections are all combinations of them.
 
@@ -95,7 +95,7 @@ type Selector<Id> =
 | **Entities** | an entity ID | `{tag: string}` (Later) | every entity of the type |
 
 - **Controls are resolved per surface.** A layer's `controls: {region}` covers whatever controls lie in the rectangle on each surface (surfaces §2). `has` filters by capability: `{has: {inputs: ["relative"]}}` is every encoder.
-- **`{interface}` resolves to every target implementing it,** including items through `at` ([ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md)) and composites that declare it (composition §1).
+- **`{interface}` resolves to every target implementing it,** including items through `at` ([ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md)) and composites that declare it, or each of their items (composition §6).
 - **`PathPattern`** is a text path where `*` matches one segment: `surface.*.controls.*.pressed`. The segments it matched are its **captures**, in order.
 - **Reactive selectors re-resolve** when their reads change, or when the domain changes: a control attaches, a connection is created, an interface gets a new implementer.
 - **Order is stable:** a selector's result is in the domain's order (controls by `at`, row-major; targets and entities by ID), so a control group's items line up the same way every time.
@@ -122,7 +122,7 @@ Every event happens **at a node in the state tree** and has a **name**. The text
 
 ### 3.1 Event sources
 
-An event trigger (flows §1.1), a reducer's `on` (§4.2) and a composite's event (composition §1) all name events the same way:
+An event trigger (flows §1.1), a reducer's `on` (§4.2) and a composite's event (composition §6) all name events the same way:
 
 ```ts
 interface EventSpec {
@@ -138,11 +138,12 @@ type EventSource =
   | { layer: string; controls?: Selector<ControlId> }         // the controls a layer controls, per surface
   | { surface: string; controls?: Selector<ControlId> }       // whatever layer controls them
   | { group: string }                                         // (Later) any control in a control group
-  | { slot: string };                                         // (M9) inside a component: one of its slots
+  | { slot: string }                                          // (M9) inside a component: one of its slots
+  | { controls: Selector<ControlId> };                        // (M9) in a flow a layer owns: that layer's controls
 ```
 
 - **Every form reduces to a path pattern and a context filter.** `{layer: L, controls: [k0]}` is `{path: {match: "surface.*.controls.k0"}}` where the event's `layer` is `L`. `{target: {interface: "camera.ptz@1"}}` is the roots of every implementer, with names mapped through the interface. The matcher indexes them, so a trigger costs nothing until its events happen.
-- **The `trigger` payload is the same for every event:** `{path, event, payload, captures?, source?, surface?, layer?, control?, item?, index?}`. `source` is the target, for target events. `captures` are the pattern's matches.
+- **The `trigger` payload is the same for every event:** `{path, event, payload, captures?, source?, surface?, layer?, control?, item?, index?, instance?}`. `source` is the target, for target events. `captures` are the pattern's matches. **(M9)** `instance` is the chain of instances the event came from ([composition §5](composition.md)).
 - **A `layer` source matches per surface,** on whichever surfaces that layer controlled the control when the input arrived, as `control` triggers did (surfaces §7).
 
 ---
@@ -246,7 +247,7 @@ A **cell** is a source with a home in the state tree. It's how a computed or acc
 |---|---|---|
 | A variable (§6) | `vars.<slug>` | the `variable` entity's `value` |
 | A control's helper | `layer.<slug>.controls.<id>.<name>`, or with `scope: "surface"`, `surface.<slug>.controls.<id>.helpers.<name>` | a control binding's `helpers` (bindings §5) |
-| A composite's state (M9) | `<alias>.<path>` | the composite's `state` (composition §1) |
+| A composite's state (M9) | `<alias>.<path>`, or per item `<alias>.items[<key>].<path>` | the composite's `state` (composition §6) |
 
 ### 5.1 Writing
 - **A cell's value is state.** A change is journaled as a `state.patch` with origin `{core: "dataflow"}`, `cause` → the latest entry among its reads that changed (or the event that stepped it), so `why` on anything that read a cell reaches the input that moved it.
@@ -320,7 +321,7 @@ type Sink =
 
 ---
 
-## 8. Scope (M9 for `params` and `self` beyond layers)
+## 8. Scope (M9 for `params`, `self` beyond layers, and `forEach`)
 
 What an expression or `{scope}` ref can name depends on where it's evaluated. **Nothing is inherited implicitly:** a container that needs a value from around it declares a parameter, and whoever places it binds that parameter, the way a function takes arguments.
 
@@ -328,13 +329,14 @@ What an expression or `{scope}` ref can name depends on where it's evaluated. **
 |---|---|---|
 | state roots | everywhere | `<alias>`, `vars`, `sys`, `surface`, `layer`, `flow` |
 | `trigger`, `input`, `local`, `steps`, `error`, loop `<as>` and `index` | flows | flows §3 |
-| `params` | layers, components, composites, flows triggered by a control event | the **own** container's parameters. A flow triggered by a control event gets the controlling layer's |
+| `params` | the body of a template: a layer, a composite, a component, a flow, and the flows they own | the **own** instance's parameters ([composition §1](composition.md)). In a nested instance, the innermost one's. A free-standing flow sees only its own |
 | `self` | a layer's fields | the surface being resolved (surfaces §5.2) |
 | `self` | a control binding, a helper, a placement | `{surface, layer, control}`: where it's being evaluated |
 | `item`, `index`, `count`, `key` | a control group | the item the control shows (surfaces §6) |
+| `item`, `index`, `key` | an instance's `params` and placement fields, when it has `forEach` | the item this instance is for ([composition §4](composition.md)). Not inside the body |
 
 - **`params` replaces the `layer.params.<name>` shorthand** of [bindings §6](bindings.md), which collided with a layer whose slug is `params`. The absolute path is `layer.<slug>.params.<name>`.
-- **Placing binds parameters in the placer's scope.** A component placed on a layer gets `params: {camera: {ref: {scope: "params", path: ["camera"]}}}`, which reads the layer's `camera`; inside the component, `params.camera` is its own.
+- **Placing binds parameters in the placer's scope.** A component placed on a layer gets `params: {camera: {ref: {scope: "params", path: ["camera"]}}}`, which reads the layer's `camera`; inside the component, `params.camera` is its own. The same holds at every level of nesting, and for every template kind ([ADR 0032](../adr/0032-one-template-primitive.md)).
 
 ---
 

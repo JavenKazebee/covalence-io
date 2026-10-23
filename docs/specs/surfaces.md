@@ -44,8 +44,9 @@ interface Layer {                 // (Now) project entity `layer`, replacing `pa
   level?: "under" | "normal" | "over";   // (M8) §5.3; default "normal"
   rank?: Source<number>;          // (M8) within the level; default 0
   parent?: string;                // (Later) the tree preset, §5.3
-  params?: { [name: string]: ParamDef };        // (M9) makes it a template (composition §2)
+  params?: { [name: string]: ParamDef };        // (M9) makes it a template (composition §7)
   template?: string;                            // (M9) makes it an instance; `params` are then Sources
+  forEach?: ForEach;                            // (M9) one instance per item (composition §4)
 }
 
 interface LayerControl {          // (Now)
@@ -138,8 +139,10 @@ type OutputKind = OutputCap["kind"];
 | `surface.<slug>.controls.<id>.requested.<output>` | the output's value | **(Later)** The core: what it last sent to a `led`, `level` or `text` output (§4.4) |
 | `surface.<slug>.controls.<id>.helpers.<name>` | a helper's value | **(M8)** A helper with `scope: "surface"` (§4.3) |
 | `layer.<slug>.controls.<id>.<name>` | a helper's value | **(M8)** A helper on a layer (§4.3) |
-| `layer.<slug>.params.<name>` | a layer parameter | **(M9)** An instance's or a template's parameter (composition §2) |
-| `layer.<slug>.parts.<placement>.flows.<flow>` | owned flow status | **(M9)** A component placement's flows (composition §3) |
+| `layer.<slug>.params.<name>` | a layer parameter | **(M9)** An instance's or a template's parameter (composition §1) |
+| `layer.<slug>.flows.<flow>` | owned flow status | **(M9)** A flow the layer owns, per instance (composition §2) |
+| `layer.<slug>.items[<key>]` | a per-item instance | **(M9)** A layer with `forEach`: each item's params, cells and flows (composition §4) |
+| `layer.<slug>.parts.<placement>` | a placement | **(M9)** Its params, its parts and its flows' status (composition §8) |
 
 - `surface` and `layer` are reserved roots: a connection alias can't be either (state spec §1.1). **(Now)** `layer` replaces M5's `page` root.
 - **(M6) Each surface is a target** of the `core` connection, `{conn: "core", key: <surface ID>}`, with interface `surface@1`. `target(t)` on it reads `surface.<slug>` ([core actions §2](core-actions.md)).
@@ -296,7 +299,7 @@ type When =
 | **Always on** | `when: {always: true}`, usually `level: under` | A strip that shows wherever nothing else covers it |
 
 - **Navigation** is an API call (§9) and **(M6)** the `core` action `navigate` ([core actions §3.1](core-actions.md)). Each group keeps a short history for **(Later)** `back`.
-- **(M9) Layer parameters** (composition §2) are readable as `params` by the layer's own bindings, helpers and fields. The tree preset doesn't pass them to descendants: a child that needs one declares its own and binds it ([ADR 0031](../adr/0031-templates-instances-and-components.md)).
+- **(M9) Layer parameters** (composition §7) are readable as `params` by the layer's own bindings, helpers, fields and owned flows. The tree preset doesn't pass them to descendants: a child that needs one declares its own and binds it ([ADR 0031](../adr/0031-templates-instances-and-components.md)).
 
 ### 5.4 Fit
 
@@ -320,18 +323,20 @@ interface ControlGroup {          // project entity `control_group`
   key?: Expr;                     // each item's identity; default the item itself
   props?: { [prop in ControlProp]?: Source<Value> };   // `item`, `index` and `count` in scope
   helpers?: Helper[];
-  component?: string;             // (M9) or: place this component on each control
-  params?: { [name: string]: Source<Value> };   // (M9) the component's params, with `item` in scope
+  use?: {                         // (M9) or: place this component on each control (composition §8)
+    template: string;
+    params?: { [name: string]: Source<Value> };  // `item`, `index` and `key` in scope
+  };
   overflow?: "clip" | "scroll";   // scroll: the core holds an offset; keys outside the group move it
 }
 ```
 
 - **The group owns its controls.** A plain binding on one of them, a placement, or two groups that overlap, is `duplicateControl`. Controls with no item are blank.
 - **Bindings see the item.** A label of `{item.label}`, and a `rules` source on `background` that's red when `item.value == target(vars.selectedCam).iso.current`, give the current-setting indicator.
-- **(M9) Or a component per item,** with `item` bound into its params: a group of tally keys over a list of cameras (composition §3).
+- **(M9) Or a component per item,** with `item` bound into its params: a group of tally keys over a list of cameras. A group is the `forEach` of placements (composition §4): each item's placement lives at `layer.<slug>.groups.<group>.items[<key>]`.
 - **Triggers see the item.** An event trigger on `{group}` fires for any control in the group, with `trigger.item`, `trigger.index` and `trigger.key` the item the control showed at the `press`. One flow handles the whole grid.
 - **`overflow: "scroll"`** keeps the offset in `layer.<slug>.groups.<group>.offset`. Flows or keys outside the group move it.
-- **Nothing is generated.** A group is one saved entity evaluated over a live list. The core never creates bindings at run time.
+- **Nothing is saved per item.** A group is one saved entity evaluated over a live list. A component per item is an instance per item, created and ended with the list (composition §4), never a saved binding.
 
 ---
 
@@ -348,7 +353,8 @@ Flows can start from a control in two ways (flows §1.1). **A control's binding 
   | { layer: string; controls?: Selector<ControlId> }    // on any surface where the layer controls them
   | { surface: string; controls?: Selector<ControlId> }  // (Later) whatever layer controls them
   | { group: string }                                    // (Later) any control in a control group (§6)
-  | { slot: string }                                     // (M9) a component's slot (composition §3)
+  | { slot: string }                                     // (M9) a component's slot (composition §8)
+  | { controls: Selector<ControlId> }                    // (M9) in a flow a layer owns: that layer's controls (composition §2)
   | { path: Selector<Ref> }                              // any control by path: {match: "surface.*.controls.*"}
 ```
 

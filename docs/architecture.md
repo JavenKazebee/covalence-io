@@ -74,8 +74,8 @@ These are the user-facing terms. Product and component names use the chemistry t
 | **Layer** | A set of control bindings on the controls it covers. Which layer controls each control is computed from state: navigation, conditions and rank. Pages, shift layers, popovers, folders and sections are all layers. |
 | **Control group** | Spreads a live list (the selected camera's ISO values) over a set of controls in a layer, with `item` in bindings and triggers. |
 | **Binding** | Dataflow: a source per property of a control's look (label, colour, image) ([spec](specs/bindings.md)). A binding also holds the control's **helpers**, the input direction. |
-| **Template / instance** | A layer or composite with parameters, and entities that use it with their own parameter values. Instances never override what's inside ([ADR 0031](adr/0031-templates-instances-and-components.md)). |
-| **Component** | A reusable control: look, helpers, flows and parameters, placed on one or more controls of a layer. |
+| **Template / instance** | The one way to reuse: a layer, composite, component or flow that declares parameters, and entities that use it with their own values. Templates can contain instances of others, and `forEach` makes one instance per item of a live list. Instances never override what's inside ([ADR 0032](adr/0032-one-template-primitive.md)). |
+| **Component** | A template for a reusable control: look, helpers, flows, parameters and other components as parts. Its instances are **placements** on a layer's controls. |
 | **Flow** | The single unit of automation: trigger(s) + optional conditions + a tree of steps. Control flow only. Button action lists, rules and node graphs are all flows ([spec](specs/flows.md)). |
 | **Run** | One execution of a flow, with a handle, a status and a cancellation token. |
 | **Expression** | A JS expression, used in bindings, conditions and parameters. |
@@ -89,8 +89,8 @@ Covalence aims to be flexible without becoming hard to read. A few rules keep it
 - **Small primitives that combine.** Sources, selectors, transforms, cells and sinks are each defined once ([dataflow spec](specs/dataflow.md)) and used everywhere. A new selector form or transform works in every place at once.
 - **Flows do things in order; dataflow keeps things in step.** Anything with steps, waits or conditions is a flow. Anything that follows state continuously is a source, a cell or a sink.
 - **Everything the system can do is an action on a target,** including the core's own (navigate, inject input). Everything that happens is an event at a path.
-- **Reuse is by parameters, never by copying or overriding** ([composition spec](specs/composition.md)). Templates have instances; components have placements; composites wrap connections.
-- **Scope is explicit.** A container sees its own `params`. To pass a value in, bind a parameter where it's placed.
+- **Reuse is by parameters, never by copying or overriding** ([composition spec](specs/composition.md)). One primitive does it for every kind: a template declares `params`, an instance binds them. Templates nest by containing instances, never by deriving from each other.
+- **Scope is explicit.** A container sees its own `params`. To pass a value in, bind a parameter where it's placed, one level at a time.
 - **Extensions run where the guarantees are.** Plugins add devices (in the plugin host), and components and transforms (in the core's sandbox). They never add step kinds, scheduling or layer resolution.
 
 ## Three ways to edit one model
