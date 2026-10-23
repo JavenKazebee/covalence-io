@@ -6,13 +6,18 @@ import { hrefOf, navigate } from "../nav";
 import { buildTree, visibleRows } from "../state/tree";
 import { useCatalogStore } from "../stores/catalog";
 import { useLiveStore } from "../stores/live";
+import { useSurfacesStore } from "../stores/surfaces";
 
 const props = defineProps<{ path?: string }>();
 const catalog = useCatalogStore();
 const live = useLiveStore();
+const surfaces = useSurfacesStore();
 
-/** With no path in the URL, show the first connection. */
-const root = computed(() => props.path ?? catalog.connections[0]?.alias ?? "");
+/** With no path in the URL, show the first connection, or else the first surface's controls. */
+const root = computed(() => {
+  const surface = surfaces.surfaces[0];
+  return props.path ?? catalog.connections[0]?.alias ?? (surface === undefined ? "" : `surface.${surface.slug}.controls`);
+});
 const draft = ref(root.value);
 watch(root, (next) => (draft.value = next));
 
@@ -75,6 +80,14 @@ function time(ts: number): string {
           :href="hrefOf({ tab: 'state', path: conn.alias })"
           style="margin-right: 0.5rem"
         ><code>{{ conn.alias }}</code></a>
+        <!-- Each surface's control input: pressed, detents, value, touched (surfaces spec §3). -->
+        <a
+          v-for="s in surfaces.surfaces"
+          :key="s.id"
+          :href="hrefOf({ tab: 'state', path: `surface.${s.slug}.controls` })"
+          :title="`${s.name}: its controls' input`"
+          style="margin-right: 0.5rem"
+        ><code>surface.{{ s.slug }}.controls</code></a>
       </span>
     </form>
   </section>
@@ -84,7 +97,8 @@ function time(ts: number): string {
       v-if="root === ''"
       class="muted"
     >
-      No connections yet. Create one under <a :href="hrefOf({ tab: 'connections' })">Connections</a>.
+      No connections yet. Create one under <a :href="hrefOf({ tab: 'connections' })">Connections</a>, or look at a surface's
+      control input under <code>surface</code>.
     </p>
     <p
       v-else-if="rows.length === 0"

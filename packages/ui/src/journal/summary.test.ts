@@ -96,6 +96,27 @@ group("journal summaries", () => {
     expect(describeOrigin({ core: "system" }, ctx)).toBe("core system");
   });
 
+  it("reads control input as what happened to the control", () => {
+    const control = (id: string, leaf: string) => ({ conn: "surface", path: ["fohDeck", "controls", id, leaf] });
+    const input = (ops: unknown[], deviceTs?: number) => ({
+      ...entry("state.patch", deviceTs === undefined ? { ops } : { ops, deviceTs }),
+      origin: { surface: SURFACE },
+    });
+    expect(describe(input([{ path: control("k3", "pressed"), value: true }, { path: control("k3", "velocity"), value: 0.8 }], 12.5), ctx)).toBe(
+      "FOH deck k3 pressed, velocity 0.8",
+    );
+    expect(describe(input([{ path: control("dial", "detents"), value: -2 }], 13), ctx)).toBe("FOH deck dial at -2 detents");
+    expect(describe(input([{ path: control("pad.36", "touched"), value: false }], 14), ctx)).toBe("FOH deck pad.36 let go");
+    // A detach releases everything at once.
+    expect(
+      describe(input([{ path: control("k0", "pressed"), value: false }, { path: control("fader", "touched"), value: false }]), ctx),
+    ).toBe("FOH deck k0 released; fader let go");
+    // Other surface state reads as paths.
+    expect(describe(input([{ path: { conn: "surface", path: ["fohDeck", "connected"] }, value: true }]), ctx)).toBe(
+      "surface.fohDeck.connected = true",
+    );
+  });
+
   it("names control events by surface, control and layer", () => {
     expect(describe(entry("input.event", { surface: SURFACE, layer: LAYER, control: "k3", event: "press" }), ctx)).toBe(
       "FOH deck k3 press on Cameras",

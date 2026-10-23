@@ -110,18 +110,19 @@ The parts of ADR 0024 marked **Now**. They're the shape changes that would other
   - Done: `Trigger::Control`, matched on `input.event` with `trigger.event`, and `delta` and `value` when the event has them. `surface::input_for` gives the input each event needs, checked against the inputs the layer lists for the control. `echo`, and refs other than `{layer, control}`, are `unsupported`. Fixtures: `control.json` and `problems/controls.json`, which adds a `turn` on a key; `problems/unsupported.json` now has `echo` and a `{surface, control}` ref.
 - [x] **Bindings** ([bindings spec §1](../specs/bindings.md)): `page` becomes `layer`. A property can only be bound on a layer control that declares its output (`noOutput`). M5's three properties need `image`.
   - Done: `Prop::output` and `ControlBinding::outputs`; `problems/outputs.json` binds `k13`, which the fixtures' layer lists without outputs.
-- [ ] **UI:**
+- [x] **UI:**
   - [x] "Pages" become "Layers" throughout the Surfaces tab.
   - [x] The virtual deck attaches with capabilities and `at`.
   - [x] "New layer" on a surface copies its controls, and the layer editor draws the grid from `at`. Done: it copies what `/controls` returns, or the model's controls if the surface hasn't attached since the server started. Arrow keys move to the nearest control in that direction, and a control with no `image` output says there's nothing to bind on it yet.
   - [x] "Add key trigger" uses `control` and `event`. Done: it's "Add control trigger" now, and offers only the events the control's inputs can give; "When pressed" makes a `control` trigger.
-  - Journal summaries cover input patches and `input.event`, and the state view shows control input.
-- [ ] **Tests:**
+  - [x] Journal summaries cover input patches and `input.event`, and the state view shows control input. Done: an input patch reads as `FOH deck k3 pressed, velocity 0.8`, with a detach's release grouped by control. The state view links each surface's `surface.<slug>.controls`, and shows the first one when there are no connections.
+- [x] **Tests:**
   - the gesture recogniser's unit tests against input state
   - a tap shorter than a scheduler turn still fires a `state` trigger on `pressed` twice (rising, then falling)
   - input state is released on detach and absent after a restart
   - a `state` trigger on two keys' `pressed` works as a chord
   - an attach without `at`, or with overlapping controls, is refused
+  - Done: `surface::gesture`'s unit tests take `Change`s; `tests/surfaces.rs` has `a_tap_shorter_than_a_turn_still_gives_both_edges` (which fails without the turn wait), `a_state_trigger_on_two_keys_is_a_chord`, `detaching_disconnects_and_releases_held_keys` and `attaching_checks_the_surface_and_its_controls`; `surfaces_api.rs` checks input state is gone after a restart.
 - No migration: no saved projects use M5's shapes yet. A development database is reset.
 
 ### Phase 6: Acceptance

@@ -41,6 +41,47 @@ function textPath(p: IdPath | undefined, ctx: SummaryContext): string {
   return p === undefined ? "?" : formatPath(ctx.alias(p.conn), p.path ?? []);
 }
 
+/** What one change to a control's input state reads as (surfaces spec §3). */
+function describeInput(leaf: string, value: unknown): string {
+  switch (leaf) {
+    case "pressed":
+      return value === true ? "pressed" : "released";
+    case "velocity":
+      return `velocity ${json(value)}`;
+    case "detents":
+      return `at ${json(value)} detents`;
+    case "value":
+      return `at ${json(value, 30)}`;
+    case "touched":
+      return value === true ? "touched" : "let go";
+    default:
+      return `${leaf} = ${json(value, 30)}`;
+  }
+}
+
+/**
+ * A `state.patch` of control input (it has `deviceTs`, surfaces spec §4.1) as
+ * `FOH deck k3 pressed`, with each control's changes together. `undefined`
+ * for any other patch.
+ */
+function describeInputPatch(entry: JournalEntry, ctx: SummaryContext): string | undefined {
+  const d = (entry.data ?? {}) as Data;
+  const ops = (d.ops ?? []) as { path: IdPath; value?: unknown; delete?: boolean }[];
+  const isInput = (op: (typeof ops)[number]) =>
+    op.path.conn === "surface" && op.path.path[1] === "controls" && op.path.path.length === 4 && !op.delete;
+  if (ops.length === 0 || !ops.every(isInput)) return undefined;
+  // A detach's release has no `deviceTs`, but its origin is still the surface.
+  if (d.deviceTs === undefined && !("surface" in entry.origin)) return undefined;
+  const surfaceId = "surface" in entry.origin ? entry.origin.surface : undefined;
+  const name = surfaceId === undefined ? String(ops[0]!.path.path[0]) : (ctx.surfaceName?.(surfaceId) ?? surfaceId);
+  const byControl = new Map<string, string[]>();
+  for (const op of ops) {
+    const control = String(op.path.path[2]);
+    byControl.set(control, [...(byControl.get(control) ?? []), describeInput(String(op.path.path[3]), op.value)]);
+  }
+  return `${name} ${[...byControl].map(([control, parts]) => `${control} ${parts.join(", ")}`).join("; ")}`;
+}
+
 export function describeOrigin(origin: Origin, ctx: SummaryContext): string {
   if ("user" in origin) return `${origin.user} (${origin.client})`;
   if ("conn" in origin) return ctx.alias(origin.conn);
@@ -66,6 +107,8 @@ export function describe(entry: JournalEntry, ctx: SummaryContext): string {
     case "conn.status":
       return `${ctx.alias(String(d.conn))} ${String(d.status)}${d.message ? `: ${String(d.message)}` : ""}`;
     case "state.patch": {
+      const input = describeInputPatch(entry, ctx);
+      if (input !== undefined) return input;
       const ops = (d.ops ?? []) as ({ path: IdPath; value?: unknown; delete?: boolean })[];
       const shown = ops
         .slice(0, 2)
