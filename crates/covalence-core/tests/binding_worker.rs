@@ -11,19 +11,19 @@ use covalence_core::state::{Meta, Quality, Source, StatePath};
 use covalence_core::surface::gesture::Timing;
 use covalence_core::surface::render::{Look, Renderer, Rgb};
 use covalence_core::surface::{
-    Attach, ControlDef, Draw, ImageDef, InputCap, Layout, Link, OutputCap, Page, Placement,
-    Surface, Surfaces,
+    Attach, ControlDef, Draw, ImageDef, InputCap, Link, OutputCap, Placement, Surface, Surfaces,
 };
 use covalence_protocol::Value;
 use covalence_protocol::state::PathSegment;
 use serde_json::json;
+
+mod common;
 
 const VH: &str = "01JBZ7P0D3F5G7H9J1K3L5M7N9";
 const DECK: &str = "01JC5URFACE000000000000001";
 const OTHER: &str = "01JC5URFACE000000000000002";
 const CAMS: &str = "01JC5PAGE00000000000000001";
 const AUDIO: &str = "01JC5PAGE00000000000000002";
-const LAYOUT: Layout = Layout { cols: 5, rows: 3 };
 
 struct World {
     shared: Shared,
@@ -41,18 +41,13 @@ fn world() -> World {
                 slug: slug.into(),
                 model: "virtual.deck15".into(),
                 serial: None,
-                start_page: Some(CAMS.into()),
+                start_layer: Some(CAMS.into()),
             })
             .unwrap();
     }
     for (id, slug) in [(CAMS, "cams"), (AUDIO, "audio")] {
         surfaces
-            .set_page(Page {
-                id: id.into(),
-                name: slug.into(),
-                slug: slug.into(),
-                layout: LAYOUT,
-            })
+            .set_layer(common::deck_layer(id, slug, 5, 3))
             .unwrap();
     }
     surfaces.set_aliases([("vh".to_owned(), VH.to_owned())].into());
@@ -64,9 +59,7 @@ fn deck() -> Attach {
         model: "virtual.deck15".into(),
         serial: None,
         name: "Virtual deck".into(),
-        controls: (0..LAYOUT.cols * LAYOUT.rows)
-            .map(|i| key(i, LAYOUT.cols, 72))
-            .collect(),
+        controls: (0..15).map(|i| key(i, 5, 72)).collect(),
     }
 }
 
@@ -111,7 +104,7 @@ fn set(shared: &Shared, at: StatePath, v: Value) {
 
 fn binding(id: &str, page: &str, control: &str, props: serde_json::Value) -> ControlBinding {
     ControlBinding::parse(&json!({
-        "id": id, "page": page, "control": control, "props": props,
+        "id": id, "layer": page, "control": control, "props": props,
     }))
     .unwrap()
 }
@@ -401,15 +394,14 @@ async fn every_surface_showing_a_page_gets_its_keys() {
 async fn bench_a_full_page_of_expr_bindings() {
     for (cols, rows, size) in [(5u32, 3u32, 72u32), (5, 3, 144), (8, 4, 96)] {
         let w = world();
-        let layout = Layout { cols, rows };
         let page = format!("01JC5PAGEBENCH{cols}{rows}{size:0>9}");
         w.surfaces
-            .set_page(Page {
-                id: page.clone(),
-                name: "bench".into(),
-                slug: format!("bench{cols}{rows}"),
-                layout,
-            })
+            .set_layer(common::deck_layer(
+                &page,
+                &format!("bench{cols}{rows}"),
+                cols,
+                rows,
+            ))
             .unwrap();
         let surface = format!("01JC5URFACEBENCH{cols}{rows}{size:0>7}");
         w.surfaces
@@ -419,7 +411,7 @@ async fn bench_a_full_page_of_expr_bindings() {
                 slug: format!("bench{cols}{rows}{size}"),
                 model: "virtual".into(),
                 serial: None,
-                start_page: Some(page.clone()),
+                start_layer: Some(page.clone()),
             })
             .unwrap();
         let keys = cols * rows;

@@ -1,24 +1,24 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import { api } from "../api";
-import type { Page, SavedPage, SavedSurface, Surface } from "../surfaces/model";
+import type { Layer, SavedLayer, SavedSurface, Surface } from "../surfaces/model";
 
 /**
- * Surfaces and pages over HTTP. Neither is on the WebSocket, so this
+ * Surfaces and layers over HTTP. Neither is on the WebSocket, so this
  * refreshes after its own saves. What a surface shows is live state under
  * `surface` (surfaces spec §2).
  */
 export const useSurfacesStore = defineStore("surfaces", () => {
   const surfaces = ref<Surface[]>([]);
-  const pages = ref<Page[]>([]);
+  const layers = ref<Layer[]>([]);
   const loaded = ref(false);
   const error = ref<string | null>(null);
 
   async function refresh() {
     try {
-      const [s, p] = await Promise.all([api.surfaces(), api.pages()]);
+      const [s, p] = await Promise.all([api.surfaces(), api.layers()]);
       surfaces.value = s.sort((a, b) => a.name.localeCompare(b.name));
-      pages.value = p.sort((a, b) => a.name.localeCompare(b.name));
+      layers.value = p.sort((a, b) => a.name.localeCompare(b.name));
       error.value = null;
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e);
@@ -42,41 +42,41 @@ export const useSurfacesStore = defineStore("surfaces", () => {
     }
   }
 
-  async function savePage(page: Page): Promise<SavedPage> {
-    const saved = page.id === "" ? await api.createPage(page) : await api.updatePage(page);
+  async function saveLayer(layer: Layer): Promise<SavedLayer> {
+    const saved = layer.id === "" ? await api.createLayer(layer) : await api.updateLayer(layer);
     await refresh();
     return saved;
   }
 
-  /** Deletes the page and its bindings, and clears it as any surface's start page. */
-  async function removePage(id: string) {
+  /** Deletes the layer and its bindings, and clears it as any surface's start layer. */
+  async function removeLayer(id: string) {
     try {
-      await api.deletePage(id);
+      await api.deleteLayer(id);
     } finally {
       await refresh();
     }
   }
 
   const surfaceById = computed(() => new Map(surfaces.value.map((s) => [s.id, s])));
-  const pageById = computed(() => new Map(pages.value.map((p) => [p.id, p])));
-  const pageBySlug = computed(() => new Map(pages.value.map((p) => [p.slug, p])));
+  const layerById = computed(() => new Map(layers.value.map((p) => [p.id, p])));
+  const layerBySlug = computed(() => new Map(layers.value.map((p) => [p.slug, p])));
 
   return {
     surfaces,
-    pages,
+    layers,
     loaded,
     error,
     refresh,
     saveSurface,
     removeSurface,
-    savePage,
-    removePage,
+    saveLayer,
+    removeLayer,
     surface: (id: string) => surfaceById.value.get(id),
-    page: (id: string) => pageById.value.get(id),
-    /** `surface.<slug>.page` holds a page's slug. */
-    pageBySlug: (slug: string) => pageBySlug.value.get(slug),
+    layer: (id: string) => layerById.value.get(id),
+    /** `surface.<slug>.current.main` holds a layer's slug. */
+    layerBySlug: (slug: string) => layerBySlug.value.get(slug),
     /** A surface's name, or its ID if it isn't known. */
     surfaceName: (id: string) => surfaceById.value.get(id)?.name ?? id,
-    pageName: (id: string) => pageById.value.get(id)?.name ?? id,
+    layerName: (id: string) => layerById.value.get(id)?.name ?? id,
   };
 });

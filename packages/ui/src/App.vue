@@ -31,7 +31,7 @@ const titles: Record<Tab, string> = {
 
 // The header shows host status from the start, before any screen subscribes.
 useLiveClient();
-// Flow, surface and page names are for the journal too, not just their tabs.
+// Flow, surface and layer names are for the journal too, not just their tabs.
 onMounted(() => void Promise.all([catalog.refresh(), flows.refresh(), surfaces.refresh()]));
 // Manifests appear once the host has loaded the plugins.
 watch(
@@ -65,7 +65,7 @@ watch(
     <SurfacesView
       v-else-if="route.tab === 'surfaces'"
       :surface="route.surface"
-      :page="route.page"
+      :layer="route.layer"
       :control="route.control"
     />
     <FlowsView

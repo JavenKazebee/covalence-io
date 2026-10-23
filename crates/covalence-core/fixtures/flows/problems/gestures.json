@@ -6,17 +6,17 @@
     "triggers": [
       {
         "kind": "gesture",
-        "control": { "page": "01JBZ7P0D3F5G7H9J1K3L5M7PZ", "control": "k0" },
+        "control": { "layer": "01JBZ7P0D3F5G7H9J1K3L5M7PZ", "control": "k0" },
         "gesture": "press"
       },
       {
         "kind": "gesture",
-        "control": { "page": "01JBZ7P0D3F5G7H9J1K3L5M7PA", "control": "k15" },
+        "control": { "layer": "01JBZ7P0D3F5G7H9J1K3L5M7PA", "control": "k15" },
         "gesture": "press"
       },
       {
         "kind": "gesture",
-        "control": { "page": "01JBZ7P0D3F5G7H9J1K3L5M7PA", "control": "k01" },
+        "control": { "layer": "01JBZ7P0D3F5G7H9J1K3L5M7PA", "control": "k01" },
         "gesture": "double"
       }
     ],
@@ -24,7 +24,7 @@
     "body": []
   },
   "errors": [
-    { "path": ["triggers", 0, "control", "page"], "code": "unknownPage" },
+    { "path": ["triggers", 0, "control", "layer"], "code": "unknownLayer" },
     { "path": ["triggers", 1, "control", "control"], "code": "unknownControl" },
     { "path": ["triggers", 2, "control", "control"], "code": "unknownControl" }
   ],

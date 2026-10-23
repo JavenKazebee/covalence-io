@@ -1,13 +1,13 @@
-//! Surfaces and pages (surfaces spec, ADR 0022).
+//! Surfaces and layers (surfaces spec, ADR 0022).
 //!
-//! [`Surfaces`] holds the `surface` and `page` entities and the surfaces
+//! [`Surfaces`] holds the `surface` and `layer` entities and the surfaces
 //! attached right now. It doesn't know how a surface is connected: a
 //! transport (the web surface's WebSocket, later the plugin host) attaches
 //! one with its controls, feeds it [`Input`] and sends on the [`Draw`]s it
 //! gets back.
 //!
 //! What a surface shows is drawn by the binding worker
-//! ([`crate::binding::worker`]), which evaluates the bindings of the page it
+//! ([`crate::binding::worker`]), which evaluates the bindings of the layer it
 //! shows.
 //!
 //! Each attached surface has a task that applies its input to the controls'
@@ -32,8 +32,8 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
 
 use crate::journal::{
-    ControlEvent, InputEventRecord, InputKind, JournalError, JournalOp, NewEntry, Origin, Record,
-    Seq, StatePatchRecord,
+    ControlEvent, InputEventRecord, InputKind as SentKind, JournalError, JournalOp, NewEntry,
+    Origin, Record, Seq, StatePatchRecord,
 };
 use crate::state::{Meta, Quality, Source, StatePath};
 use crate::{Shared, clock};
@@ -48,7 +48,7 @@ use gesture::{Change, Detected, Recogniser, Timing};
 
 /// Entity types in the store.
 pub const SURFACE_ENTITY: &str = "surface";
-pub const PAGE_ENTITY: &str = "page";
+pub const LAYER_ENTITY: &str = "layer";
 /// The state root for surfaces: `{conn: "surface", path: [slug, ...]}`.
 pub const STATE_ROOT: &str = "surface";
 /// How many draws wait for a slow transport before more are dropped.
@@ -66,7 +66,7 @@ const TURN_LIMIT: Duration = Duration::from_millis(50);
 const DROP_LOG_EVERY: Duration = Duration::from_secs(1);
 
 pub type SurfaceId = String;
-pub type PageId = String;
+pub type LayerId = String;
 
 /// A control device (surfaces spec §1).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -84,46 +84,82 @@ pub struct Surface {
     pub serial: Option<String>,
     /// Shown when the surface first attaches.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub start_page: Option<PageId>,
+    pub start_layer: Option<LayerId>,
 }
 
-/// A layout of control bindings (surfaces spec §1).
+/// A set of control bindings on the controls it covers (surfaces spec §1).
+/// Every layer is in the `main` navigation group.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Page {
+pub struct Layer {
     #[serde(default)]
-    pub id: PageId,
+    pub id: LayerId,
     pub name: String,
     #[serde(default)]
     pub slug: String,
-    pub layout: Layout,
+    pub controls: Vec<LayerControl>,
 }
 
-/// A grid of buttons, named `k0`, `k1` … in row-major order.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Layout {
-    pub cols: u32,
-    pub rows: u32,
+/// A control a layer covers, and what it needs that control to do.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LayerControl {
+    /// Matches a [`ControlDef::id`] on the surfaces it fits.
+    pub id: String,
+    /// Where the editor draws it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<Placement>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<InputCapKind>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outputs: Vec<OutputCapKind>,
 }
 
-impl Layout {
-    /// Whether `control` is a button in this layout: `k<n>`, with no
-    /// leading zeros, `n` below `cols × rows`.
-    pub fn contains(&self, control: &str) -> bool {
-        let Some(n) = control.strip_prefix('k') else {
-            return false;
-        };
-        let canonical = n == "0" || (!n.is_empty() && !n.starts_with('0'));
-        canonical
-            && n.bytes().all(|b| b.is_ascii_digit())
-            && n.parse::<u64>()
-                .is_ok_and(|n| n < u64::from(self.cols) * u64::from(self.rows))
+impl Layer {
+    pub fn control(&self, id: &str) -> Option<&LayerControl> {
+        self.controls.iter().find(|c| c.id == id)
     }
+}
 
-    /// Its buttons, `k0` to `k<cols × rows - 1>`.
-    pub fn controls(&self) -> impl Iterator<Item = String> + use<> {
-        (0..u64::from(self.cols) * u64::from(self.rows)).map(|n| format!("k{n}"))
+/// An [`InputCap`]'s kind: what a layer can ask a control for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InputCapKind {
+    Momentary,
+    Relative,
+    Absolute,
+    Touch,
+}
+
+/// An [`OutputCap`]'s kind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OutputCapKind {
+    Image,
+    Led,
+    Level,
+    Text,
+}
+
+impl InputCapKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            InputCapKind::Momentary => "momentary",
+            InputCapKind::Relative => "relative",
+            InputCapKind::Absolute => "absolute",
+            InputCapKind::Touch => "touch",
+        }
+    }
+}
+
+impl OutputCapKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            OutputCapKind::Image => "image",
+            OutputCapKind::Led => "led",
+            OutputCapKind::Level => "level",
+            OutputCapKind::Text => "text",
+        }
     }
 }
 
@@ -208,12 +244,12 @@ pub enum InputCap {
 }
 
 impl InputCap {
-    pub fn kind(&self) -> &'static str {
+    pub fn kind(&self) -> InputCapKind {
         match self {
-            InputCap::Momentary { .. } => "momentary",
-            InputCap::Relative => "relative",
-            InputCap::Absolute { .. } => "absolute",
-            InputCap::Touch => "touch",
+            InputCap::Momentary { .. } => InputCapKind::Momentary,
+            InputCap::Relative => InputCapKind::Relative,
+            InputCap::Absolute { .. } => InputCapKind::Absolute,
+            InputCap::Touch => InputCapKind::Touch,
         }
     }
 }
@@ -240,12 +276,12 @@ pub enum OutputCap {
 }
 
 impl OutputCap {
-    pub fn kind(&self) -> &'static str {
+    pub fn kind(&self) -> OutputCapKind {
         match self {
-            OutputCap::Image(_) => "image",
-            OutputCap::Led { .. } => "led",
-            OutputCap::Level { .. } => "level",
-            OutputCap::Text { .. } => "text",
+            OutputCap::Image(_) => OutputCapKind::Image,
+            OutputCap::Led { .. } => OutputCapKind::Led,
+            OutputCap::Level { .. } => OutputCapKind::Level,
+            OutputCap::Text { .. } => OutputCapKind::Text,
         }
     }
 }
@@ -272,8 +308,18 @@ impl ControlDef {
         })
     }
 
-    fn input(&self, kind: &str) -> Option<&InputCap> {
+    fn input(&self, kind: InputCapKind) -> Option<&InputCap> {
         self.inputs.iter().find(|i| i.kind() == kind)
+    }
+
+    /// What a layer that lists this control copies from it.
+    pub fn to_layer_control(&self) -> LayerControl {
+        LayerControl {
+            id: self.id.clone(),
+            at: Some(self.at),
+            inputs: self.inputs.iter().map(InputCap::kind).collect(),
+            outputs: self.outputs.iter().map(OutputCap::kind).collect(),
+        }
     }
 }
 
@@ -293,7 +339,7 @@ pub struct Attach {
 #[serde(deny_unknown_fields)]
 pub struct Input {
     pub control: String,
-    pub kind: InputKind,
+    pub kind: SentKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value: Option<InputValue>,
     /// The host's timestamp, in milliseconds on its own clock.
@@ -345,10 +391,13 @@ pub enum AttachError {
 pub enum ShowError {
     #[error("no surface {0}")]
     UnknownSurface(SurfaceId),
-    #[error("no page {0}")]
-    UnknownPage(PageId),
-    #[error("page {page} doesn't fit: the surface has no key for {}", missing.join(", "))]
-    DoesNotFit { page: PageId, missing: Vec<String> },
+    #[error("no layer {0}")]
+    UnknownLayer(LayerId),
+    #[error("layer {layer} doesn't fit: the surface has no key for {}", missing.join(", "))]
+    DoesNotFit {
+        layer: LayerId,
+        missing: Vec<String>,
+    },
     #[error(transparent)]
     Journal(#[from] JournalError),
 }
@@ -368,10 +417,12 @@ struct Inner {
 #[derive(Default)]
 struct Book {
     surfaces: BTreeMap<SurfaceId, Surface>,
-    pages: BTreeMap<PageId, Page>,
+    layers: BTreeMap<LayerId, Layer>,
     attached: BTreeMap<SurfaceId, Attached>,
-    /// The page each surface last showed, kept while it's detached.
-    shown: BTreeMap<SurfaceId, Option<PageId>>,
+    /// The layer each surface last showed, kept while it's detached.
+    shown: BTreeMap<SurfaceId, Option<LayerId>>,
+    /// The controls each surface last attached with.
+    controls: BTreeMap<SurfaceId, Vec<ControlDef>>,
 }
 
 struct Attached {
@@ -421,43 +472,44 @@ impl Surfaces {
         };
         book.attached.remove(id);
         book.shown.remove(id);
+        book.controls.remove(id);
         inner.bindings.hide(id);
         let path = StatePath::new(STATE_ROOT, vec![key(&surface.slug)]);
         inner.patch(Origin::system(), None, vec![(path, None)])?;
         Ok(())
     }
 
-    /// Adds or replaces a page. Surfaces showing it whose layout no longer
+    /// Adds or replaces a layer. Surfaces showing it whose layout no longer
     /// fits stop showing it.
-    pub fn set_page(&self, page: Page) -> Result<(), JournalError> {
+    pub fn set_layer(&self, layer: Layer) -> Result<(), JournalError> {
         let inner = &self.inner;
         let mut book = inner.book();
-        book.pages.insert(page.id.clone(), page.clone());
+        book.layers.insert(layer.id.clone(), layer.clone());
         let showing: Vec<SurfaceId> = book
             .shown
             .iter()
-            .filter(|(_, p)| p.as_deref() == Some(page.id.as_str()))
+            .filter(|(_, p)| p.as_deref() == Some(layer.id.as_str()))
             .map(|(s, _)| s.clone())
             .collect();
         for surface in showing {
             let fits = book
                 .attached
                 .get(&surface)
-                .is_none_or(|a| missing(&page, &a.attach.controls).is_empty());
+                .is_none_or(|a| missing(&layer, &a.attach.controls).is_empty());
             if !fits {
                 book.shown.insert(surface.clone(), None);
             }
-            inner.publish_page(&book, &surface, Origin::system())?;
+            inner.publish_current(&book, &surface, Origin::system())?;
             inner.show_on(&book, &surface);
         }
         Ok(())
     }
 
-    /// Removes a page from the surfaces showing it.
-    pub fn remove_page(&self, id: &str) -> Result<(), JournalError> {
+    /// Removes a layer from the surfaces showing it.
+    pub fn remove_layer(&self, id: &str) -> Result<(), JournalError> {
         let inner = &self.inner;
         let mut book = inner.book();
-        book.pages.remove(id);
+        book.layers.remove(id);
         let showing: Vec<SurfaceId> = book
             .shown
             .iter()
@@ -466,23 +518,25 @@ impl Surfaces {
             .collect();
         for surface in showing {
             book.shown.insert(surface.clone(), None);
-            inner.publish_page(&book, &surface, Origin::system())?;
+            inner.publish_current(&book, &surface, Origin::system())?;
             inner.show_on(&book, &surface);
         }
         Ok(())
     }
 
-    /// Every page's layout, by ID, for validating `gesture` triggers.
-    pub fn layouts(&self) -> BTreeMap<PageId, Layout> {
-        let book = self.inner.book();
-        book.pages
-            .iter()
-            .map(|(id, p)| (id.clone(), p.layout))
-            .collect()
+    /// Every layer, by ID, for validating triggers and bindings.
+    pub fn layers(&self) -> BTreeMap<LayerId, Layer> {
+        self.inner.book().layers.clone()
     }
 
-    /// The page a surface shows, or last showed while detached.
-    pub fn shown(&self, surface: &str) -> Option<PageId> {
+    /// The controls a surface declared when it last attached, while this
+    /// core has been running.
+    pub fn controls(&self, surface: &str) -> Option<Vec<ControlDef>> {
+        self.inner.book().controls.get(surface).cloned()
+    }
+
+    /// The layer a surface shows, or last showed while detached.
+    pub fn shown(&self, surface: &str) -> Option<LayerId> {
         self.inner.book().shown.get(surface).cloned().flatten()
     }
 
@@ -506,7 +560,7 @@ impl Surfaces {
     }
 
     /// Returns once bindings have caught up with every change made before:
-    /// pages evaluated and drawn.
+    /// layers evaluated and drawn.
     pub async fn flush(&self) {
         self.inner.bindings.flush().await;
     }
@@ -515,32 +569,37 @@ impl Surfaces {
         self.inner.book().attached.contains_key(surface)
     }
 
-    /// Shows a page on a surface, or nothing (surfaces spec §5). It must fit
+    /// Shows a layer on a surface, or nothing (surfaces spec §5). It must fit
     /// an attached surface (§5.4).
-    pub fn show(&self, surface: &str, page: Option<&str>, origin: Origin) -> Result<(), ShowError> {
+    pub fn show(
+        &self,
+        surface: &str,
+        layer: Option<&str>,
+        origin: Origin,
+    ) -> Result<(), ShowError> {
         let inner = &self.inner;
         let mut book = inner.book();
         if !book.surfaces.contains_key(surface) {
             return Err(ShowError::UnknownSurface(surface.to_owned()));
         }
-        if let Some(id) = page {
-            let page = book
-                .pages
+        if let Some(id) = layer {
+            let layer = book
+                .layers
                 .get(id)
-                .ok_or_else(|| ShowError::UnknownPage(id.to_owned()))?;
+                .ok_or_else(|| ShowError::UnknownLayer(id.to_owned()))?;
             if let Some(attached) = book.attached.get(surface) {
-                let missing = missing(page, &attached.attach.controls);
+                let missing = missing(layer, &attached.attach.controls);
                 if !missing.is_empty() {
                     return Err(ShowError::DoesNotFit {
-                        page: id.to_owned(),
+                        layer: id.to_owned(),
                         missing,
                     });
                 }
             }
         }
         book.shown
-            .insert(surface.to_owned(), page.map(str::to_owned));
-        inner.publish_page(&book, surface, origin)?;
+            .insert(surface.to_owned(), layer.map(str::to_owned));
+        inner.publish_current(&book, surface, origin)?;
         inner.show_on(&book, surface);
         Ok(())
     }
@@ -560,17 +619,19 @@ impl Surfaces {
             .surfaces
             .get(surface)
             .ok_or_else(|| AttachError::UnknownSurface(surface.to_owned()))?;
-        // The page it showed last, or its start page the first time.
-        let page = match book.shown.get(surface) {
-            Some(page) => page.clone(),
-            None => entity.start_page.clone(),
+        // The layer it showed last, or its start layer the first time.
+        let layer = match book.shown.get(surface) {
+            Some(layer) => layer.clone(),
+            None => entity.start_layer.clone(),
         }
         .filter(|p| {
-            book.pages
+            book.layers
                 .get(p)
                 .is_some_and(|p| missing(p, &attach.controls).is_empty())
         });
-        book.shown.insert(surface.to_owned(), page);
+        book.shown.insert(surface.to_owned(), layer);
+        book.controls
+            .insert(surface.to_owned(), attach.controls.clone());
         book.attached.insert(
             surface.to_owned(),
             Attached {
@@ -628,10 +689,10 @@ fn check_attach(attach: &Attach) -> Result<(), AttachError> {
         let mut kinds = BTreeSet::new();
         for kind in control.inputs.iter().map(InputCap::kind) {
             if !kinds.insert(kind) {
-                return invalid(format!("control {id:?} has two {kind} inputs"));
+                return invalid(format!("control {id:?} has two {} inputs", kind.as_str()));
             }
         }
-        if let Some(InputCap::Absolute { axes: Some(axes) }) = control.input("absolute")
+        if let Some(InputCap::Absolute { axes: Some(axes) }) = control.input(InputCapKind::Absolute)
             && !(1..=2).contains(axes)
         {
             return invalid(format!("control {id:?} has {axes} axes: use 1 or 2"));
@@ -639,7 +700,10 @@ fn check_attach(attach: &Attach) -> Result<(), AttachError> {
         let mut kinds = BTreeSet::new();
         for output in &control.outputs {
             if !kinds.insert(output.kind()) {
-                return invalid(format!("control {id:?} has two {} outputs", output.kind()));
+                return invalid(format!(
+                    "control {id:?} has two {} outputs",
+                    output.kind().as_str()
+                ));
             }
             if let OutputCap::Image(image) = output
                 && !((1..=MAX_IMAGE).contains(&image.w) && (1..=MAX_IMAGE).contains(&image.h))
@@ -660,16 +724,24 @@ fn check_attach(attach: &Attach) -> Result<(), AttachError> {
     Ok(())
 }
 
-/// The page's controls the surface lacks (surfaces spec §5.4): each must be
-/// a key there, with a `momentary` input and an `image` output.
-fn missing(page: &Page, controls: &[ControlDef]) -> Vec<String> {
-    page.layout
-        .controls()
-        .filter(|id| {
-            !controls
-                .iter()
-                .any(|c| &c.id == id && c.input("momentary").is_some() && c.image().is_some())
+/// The layer's controls the surface lacks or can't support (surfaces spec
+/// §5.4): each must be there with at least the inputs and outputs the layer
+/// lists for it.
+fn missing(layer: &Layer, controls: &[ControlDef]) -> Vec<String> {
+    layer
+        .controls
+        .iter()
+        .filter(|needed| {
+            !controls.iter().any(|c| {
+                c.id == needed.id
+                    && needed.inputs.iter().all(|&k| c.input(k).is_some())
+                    && needed
+                        .outputs
+                        .iter()
+                        .all(|&k| c.outputs.iter().any(|o| o.kind() == k))
+            })
         })
+        .map(|c| c.id.clone())
         .collect()
 }
 
@@ -680,19 +752,19 @@ impl Surface {
     }
 }
 
-impl Page {
-    /// Reads a page from JSON, or one `invalid` problem.
-    pub fn parse(json: &serde_json::Value) -> Result<Page, Vec<Problem>> {
+impl Layer {
+    /// Reads a layer from JSON, or one `invalid` problem.
+    pub fn parse(json: &serde_json::Value) -> Result<Layer, Vec<Problem>> {
         crate::binding::deserialize(json, &[]).map_err(|p| vec![p])
     }
 }
 
 /// Checks a surface: a name, a slug no other surface has, a model, and a
-/// start page that exists.
+/// start layer that exists.
 pub fn validate_surface(
     surface: &Surface,
     taken_slugs: &BTreeSet<String>,
-    pages: &BTreeMap<PageId, Layout>,
+    layers: &BTreeMap<LayerId, Layer>,
 ) -> Report {
     let mut errors = named("surface", &surface.name, &surface.slug, taken_slugs);
     if surface.model.trim().is_empty() {
@@ -702,13 +774,13 @@ pub fn validate_surface(
             "model is required",
         ));
     }
-    if let Some(page) = &surface.start_page
-        && !pages.contains_key(page)
+    if let Some(layer) = &surface.start_layer
+        && !layers.contains_key(layer)
     {
         errors.push(Problem::new(
-            vec![key("startPage")],
-            Code::UnknownPage,
-            format!("no page {page:?}"),
+            vec![key("startLayer")],
+            Code::UnknownLayer,
+            format!("no layer {layer:?}"),
         ));
     }
     Report {
@@ -717,38 +789,58 @@ pub fn validate_surface(
     }
 }
 
-/// Checks a page: a name, a slug no other page has, and a layout that
-/// still holds every control bound on it.
-pub fn validate_page(
-    page: &Page,
+/// The most controls a layer can list.
+pub const MAX_LAYER_CONTROLS: usize = 256;
+
+/// Checks a layer (surfaces spec §9): a name, a slug no other layer has, at
+/// most 256 controls with unique IDs, and every control bound on it still
+/// listed with the outputs its bindings drive. `bound` has those outputs by
+/// control.
+pub fn validate_layer(
+    layer: &Layer,
     taken_slugs: &BTreeSet<String>,
-    bound: &BTreeSet<String>,
+    bound: &BTreeMap<String, BTreeSet<OutputCapKind>>,
 ) -> Report {
-    let mut errors = named("page", &page.name, &page.slug, taken_slugs);
-    let Layout { cols, rows } = page.layout;
-    if cols == 0 || rows == 0 || cols > 32 || rows > 32 {
+    let mut errors = named("layer", &layer.name, &layer.slug, taken_slugs);
+    if layer.controls.len() > MAX_LAYER_CONTROLS {
         errors.push(Problem::new(
-            vec![key("layout")],
+            vec![key("controls")],
             Code::Invalid,
-            format!("a {cols}×{rows} layout isn't supported: use 1 to 32 columns and rows"),
+            format!("a layer can have at most {MAX_LAYER_CONTROLS} controls"),
         ));
-    } else {
-        let outside: Vec<&str> = bound
-            .iter()
-            .filter(|c| !page.layout.contains(c))
-            .map(String::as_str)
-            .collect();
-        if !outside.is_empty() {
-            let verb = if outside.len() == 1 { "is" } else { "are" };
+    }
+    let mut seen = BTreeSet::new();
+    for (i, control) in layer.controls.iter().enumerate() {
+        let at = vec![key("controls"), PathSegment::Index(i as i64), key("id")];
+        if control.id.is_empty() {
+            errors.push(Problem::new(at, Code::Invalid, "a control needs an id"));
+        } else if !seen.insert(&control.id) {
             errors.push(Problem::new(
-                vec![key("layout")],
-                Code::UnknownControl,
-                format!(
-                    "{} {verb} bound, but a {cols}×{rows} layout ends at k{}",
-                    outside.join(", "),
-                    cols * rows - 1
-                ),
+                at,
+                Code::DuplicateControl,
+                format!("{:?} is listed twice", control.id),
             ));
+        }
+    }
+    for (id, outputs) in bound {
+        match layer.control(id) {
+            None => errors.push(Problem::new(
+                vec![key("controls")],
+                Code::UnknownControl,
+                format!("{id} is bound, but the layer doesn't list it"),
+            )),
+            Some(control) => {
+                for output in outputs.iter().filter(|o| !control.outputs.contains(o)) {
+                    errors.push(Problem::new(
+                        vec![key("controls")],
+                        Code::NoOutput,
+                        format!(
+                            "{id} has a binding that sets its {}, but the layer doesn't give it that output",
+                            output.as_str()
+                        ),
+                    ));
+                }
+            }
         }
     }
     Report {
@@ -757,7 +849,7 @@ pub fn validate_page(
     }
 }
 
-/// The name and slug problems of a surface or page.
+/// The name and slug problems of a surface or layer.
 fn named(kind: &str, name: &str, slug: &str, taken: &BTreeSet<String>) -> Vec<Problem> {
     let mut errors = Vec::new();
     if name.trim().is_empty() {
@@ -847,9 +939,9 @@ struct Task {
     recogniser: Recogniser,
     /// Each control's input state, as last written.
     controls: BTreeMap<String, InputState>,
-    /// The patch of each pressed control's press, and the page shown then:
+    /// The patch of each pressed control's press, and the layer shown then:
     /// the cause and layer of its `long`, `hold` and `release`.
-    downs: BTreeMap<String, (Seq, Option<PageId>)>,
+    downs: BTreeMap<String, (Seq, Option<LayerId>)>,
     drops: Drops,
 }
 
@@ -938,10 +1030,10 @@ impl Task {
     /// protocol §8).
     fn writes(&self, control: &ControlDef, input: &Input) -> Result<Vec<Write>, String> {
         let state = self.controls.get(&control.id);
-        let needs = |kind: &str| {
+        let needs = |kind: InputCapKind| {
             control
                 .input(kind)
-                .ok_or_else(|| format!("{:?} has no {kind} input", control.id))
+                .ok_or_else(|| format!("{:?} has no {} input", control.id, kind.as_str()))
         };
         let one = || match input.value {
             Some(InputValue::One(v)) if v.is_finite() => Ok(v),
@@ -960,8 +1052,8 @@ impl Task {
         };
         let was_pressed = state.is_some_and(|s| s.pressed);
         Ok(match input.kind {
-            InputKind::Down => {
-                let InputCap::Momentary { velocity } = needs("momentary")? else {
+            SentKind::Down => {
+                let InputCap::Momentary { velocity } = needs(InputCapKind::Momentary)? else {
                     unreachable!()
                 };
                 let velocity = if *velocity { Some(one()?) } else { None };
@@ -973,16 +1065,16 @@ impl Task {
                 writes.push(pressed(true, velocity));
                 writes
             }
-            InputKind::Up => {
-                needs("momentary")?;
+            SentKind::Up => {
+                needs(InputCapKind::Momentary)?;
                 if was_pressed {
                     vec![pressed(false, None)]
                 } else {
                     Vec::new()
                 }
             }
-            InputKind::Turn => {
-                needs("relative")?;
+            SentKind::Turn => {
+                needs(InputCapKind::Relative)?;
                 let n = one()?;
                 if n.fract() != 0.0 || n.abs() > 1e9 {
                     return Err("a turn must be a whole number of detents".into());
@@ -998,8 +1090,8 @@ impl Task {
                     edge: true,
                 }]
             }
-            InputKind::Value => {
-                let InputCap::Absolute { axes } = needs("absolute")? else {
+            SentKind::Value => {
+                let InputCap::Absolute { axes } = needs(InputCapKind::Absolute)? else {
                     unreachable!()
                 };
                 let unit = |v: f64| v.is_finite().then(|| v.clamp(0.0, 1.0));
@@ -1023,8 +1115,8 @@ impl Task {
                     edge: false,
                 }]
             }
-            InputKind::Touch => {
-                needs("touch")?;
+            SentKind::Touch => {
+                needs(InputCapKind::Touch)?;
                 let touched = one()? != 0.0;
                 if state.is_some_and(|s| s.touched) == touched {
                     return Ok(Vec::new());
@@ -1041,7 +1133,7 @@ impl Task {
     /// Writes one change and journals its events. `None` if the surface is
     /// no longer this task's, else the turn to wait for, if it's an edge.
     fn write(&mut self, input: &Input, write: Write) -> Option<Option<u64>> {
-        let (slug, page) = {
+        let (slug, layer) = {
             let book = self.inner.book();
             book.attached
                 .get(&self.surface)
@@ -1073,32 +1165,32 @@ impl Task {
                 }
             };
         let state = self.controls.entry(input.control.clone()).or_default();
-        // The layer of a release is its press's; of anything else, the page
+        // The layer of a release is its press's; of anything else, the layer
         // shown now.
         let layer = match &write.change {
             Change::Pressed(true) => {
                 state.pressed = true;
                 self.downs
-                    .insert(input.control.clone(), (seq, page.clone()));
-                page
+                    .insert(input.control.clone(), (seq, layer.clone()));
+                layer
             }
             Change::Pressed(false) => {
                 state.pressed = false;
                 self.downs
                     .remove(&input.control)
-                    .map_or(page, |(_, layer)| layer)
+                    .map_or(layer, |(_, layer)| layer)
             }
             Change::Turned(n) => {
                 state.detents += n;
-                page
+                layer
             }
             Change::Value(v) => {
                 state.value = Some(v.clone());
-                page
+                layer
             }
             Change::Touched(t) => {
                 state.touched = *t;
-                page
+                layer
             }
         };
         let found = self
@@ -1154,7 +1246,7 @@ impl Task {
         }
         book.attached.remove(&self.surface);
         inner.bindings.hide(&self.surface);
-        let page = book.shown.get(&self.surface).cloned().flatten();
+        let layer = book.shown.get(&self.surface).cloned().flatten();
         let slug = book.surfaces[&self.surface].slug.clone();
         drop(book);
         let origin = surface_origin(&self.surface);
@@ -1193,7 +1285,7 @@ impl Task {
             }
         };
         let released = self.recogniser.release_all();
-        self.journal_events(page.as_deref(), released, Some(cause));
+        self.journal_events(layer.as_deref(), released, Some(cause));
     }
 }
 
@@ -1306,7 +1398,7 @@ impl Inner {
         ops
     }
 
-    /// `connected`, `page` and, while attached, `model`.
+    /// `connected`, `current.main` and, while attached, `model`.
     fn surface_state(&self, book: &Book, surface: &str) -> Vec<(StatePath, Option<Value>)> {
         let Some(entity) = book.surfaces.get(surface) else {
             return Vec::new();
@@ -1323,43 +1415,127 @@ impl Inner {
             ));
         }
         ops.push((
-            Self::path(&entity.slug, "page"),
-            Some(Self::page_value(book, surface)),
+            Self::current_path(&entity.slug),
+            Some(Self::current_value(book, surface)),
         ));
         ops
     }
 
-    /// The slug of the page a surface shows, or `null`.
-    fn page_value(book: &Book, surface: &str) -> Value {
+    /// The slug of the layer a surface shows, or `null`.
+    fn current_value(book: &Book, surface: &str) -> Value {
         book.shown
             .get(surface)
             .and_then(|p| p.as_ref())
-            .and_then(|p| book.pages.get(p))
+            .and_then(|p| book.layers.get(p))
             .map_or(Value::Nil, |p| p.slug.as_str().into())
     }
 
-    fn publish_page(
+    fn publish_current(
         &self,
         book: &Book,
         surface: &str,
         origin: Origin,
     ) -> Result<Seq, JournalError> {
         let slug = &book.surfaces[surface].slug;
-        let value = Self::page_value(book, surface);
-        self.patch(origin, None, vec![(Self::path(slug, "page"), Some(value))])
+        let value = Self::current_value(book, surface);
+        self.patch(origin, None, vec![(Self::current_path(slug), Some(value))])
+    }
+
+    /// `surface.<slug>.current.main`: the layer of the `main` navigation
+    /// group (surfaces spec §5.3).
+    fn current_path(slug: &str) -> StatePath {
+        StatePath::new(STATE_ROOT, vec![key(slug), key("current"), key("main")])
     }
 
     /// Tells the binding worker what an attached surface shows, so it
-    /// evaluates the page and draws it.
+    /// evaluates the layer and draws it.
     fn show_on(&self, book: &Book, surface: &str) {
         if let Some(attached) = book.attached.get(surface) {
-            let page = book.shown.get(surface).cloned().flatten();
+            let layer = book.shown.get(surface).cloned().flatten();
             self.bindings.show(
                 surface,
-                page,
+                layer,
                 attached.attach.controls.clone(),
                 attached.draws.clone(),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn codes(report: &Report) -> Vec<(serde_json::Value, String)> {
+        report
+            .errors
+            .iter()
+            .map(|p| {
+                let json = serde_json::to_value(p).unwrap();
+                (
+                    json["path"].clone(),
+                    json["code"].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect()
+    }
+
+    fn control(id: &str, outputs: Vec<OutputCapKind>) -> LayerControl {
+        LayerControl {
+            id: id.into(),
+            at: None,
+            inputs: vec![InputCapKind::Momentary],
+            outputs,
+        }
+    }
+
+    fn layer(controls: Vec<LayerControl>) -> Layer {
+        Layer {
+            id: "l".into(),
+            name: "Cams".into(),
+            slug: "cams".into(),
+            controls,
+        }
+    }
+
+    #[test]
+    fn a_layer_lists_each_control_once_and_keeps_what_is_bound() {
+        let none = BTreeSet::new();
+        let ok = layer(vec![
+            control("k0", vec![OutputCapKind::Image]),
+            control("pad.36", vec![]),
+        ]);
+        let image: BTreeSet<_> = [OutputCapKind::Image].into();
+        let bound = BTreeMap::from([("k0".to_owned(), image.clone())]);
+        assert!(validate_layer(&ok, &none, &bound).errors.is_empty());
+
+        let twice = layer(vec![control("k0", vec![]), control("k0", vec![])]);
+        assert_eq!(
+            codes(&validate_layer(&twice, &none, &BTreeMap::new())),
+            [(
+                serde_json::json!(["controls", 1, "id"]),
+                "duplicateControl".into()
+            )]
+        );
+
+        let bound = BTreeMap::from([("k0".to_owned(), image.clone()), ("k9".to_owned(), image)]);
+        let lost = layer(vec![control("k0", vec![])]);
+        assert_eq!(
+            codes(&validate_layer(&lost, &none, &bound)),
+            [
+                (serde_json::json!(["controls"]), "noOutput".into()),
+                (serde_json::json!(["controls"]), "unknownControl".into()),
+            ]
+        );
+
+        let many = layer(
+            (0..257)
+                .map(|i| control(&format!("k{i}"), vec![]))
+                .collect(),
+        );
+        assert_eq!(
+            codes(&validate_layer(&many, &none, &BTreeMap::new())),
+            [(serde_json::json!(["controls"]), "invalid".into())]
+        );
     }
 }

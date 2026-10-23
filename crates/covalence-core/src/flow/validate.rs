@@ -12,7 +12,7 @@ use super::{Flow, Step, StepKind, Trigger, WaitFor, param_expr};
 use crate::expr::{At, Evaluator};
 use crate::schema;
 use crate::state::ConnId;
-use crate::surface::{Layout, PageId};
+use crate::surface::{Layer, LayerId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -36,12 +36,16 @@ pub enum Code {
     BadPath,
     /// A `branch` without arms.
     NoArms,
-    /// A `gesture` trigger or binding on a page that doesn't exist.
-    UnknownPage,
-    /// A `gesture` trigger or binding on a control outside its page's layout.
+    /// A `gesture` trigger, binding or start layer on a layer that doesn't exist.
+    UnknownLayer,
+    /// A `gesture` trigger or binding on a control its layer doesn't list.
     UnknownControl,
-    /// A second binding for a control on the same page.
+    /// A second binding for a control on the same layer, or a layer that
+    /// lists a control twice.
     DuplicateControl,
+    /// A binding on a control whose layer doesn't give it the output the
+    /// binding drives.
+    NoOutput,
     /// A binding value that doesn't fit its property: a colour that isn't one.
     BadValue,
     // Warnings.
@@ -95,8 +99,8 @@ pub struct Context<'a> {
     pub conns: &'a BTreeMap<ConnId, Option<&'a Manifest>>,
     /// Slugs taken by other flows.
     pub taken_slugs: &'a BTreeSet<String>,
-    /// Every page's layout, by page ID.
-    pub pages: &'a BTreeMap<PageId, Layout>,
+    /// Every layer, by ID.
+    pub layers: &'a BTreeMap<LayerId, Layer>,
     /// Compiles expressions.
     pub evaluator: &'a dyn Evaluator,
 }
@@ -326,22 +330,16 @@ pub fn validate(flow: &Flow, ctx: &Context) -> Report {
                 }
             }
             Trigger::State { when, .. } => v.expr(at("when"), when),
-            Trigger::Gesture { control, .. } => match ctx.pages.get(&control.page) {
+            Trigger::Gesture { control, .. } => match ctx.layers.get(&control.layer) {
                 None => v.error(
-                    path![key("triggers"), index(i), key("control"), key("page")],
-                    Code::UnknownPage,
-                    format!("no page {:?}", control.page),
+                    path![key("triggers"), index(i), key("control"), key("layer")],
+                    Code::UnknownLayer,
+                    format!("no layer {:?}", control.layer),
                 ),
-                Some(layout) if !layout.contains(&control.control) => v.error(
+                Some(layer) if layer.control(&control.control).is_none() => v.error(
                     path![key("triggers"), index(i), key("control"), key("control")],
                     Code::UnknownControl,
-                    format!(
-                        "the page is {}×{}, so its controls are k0 to k{}, not {:?}",
-                        layout.cols,
-                        layout.rows,
-                        (layout.cols * layout.rows).saturating_sub(1),
-                        control.control
-                    ),
+                    format!("the layer doesn't list a control {:?}", control.control),
                 ),
                 Some(_) => {}
             },

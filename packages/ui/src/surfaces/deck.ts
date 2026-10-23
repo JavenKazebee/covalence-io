@@ -3,7 +3,7 @@
 // and shows the key images the core draws.
 
 import type { Socket } from "../live/client";
-import { controlsOf, type Model } from "./model";
+import { deckControls, type Model } from "./model";
 
 export interface DeckState {
   status: "connecting" | "attached" | "closed";
@@ -35,17 +35,14 @@ export function newDeckState(): DeckState {
  * cell, each `momentary` with an `image`, placed with `at`.
  */
 export function attachMessage(slug: string, name: string, modelId: string, model: Model) {
-  const { cols } = model.layout;
   return {
     method: "surface.attach",
     params: {
       surface: slug,
       model: modelId,
       name,
-      controls: controlsOf(model.layout).map((id, i) => ({
-        id,
-        at: { x: i % cols, y: Math.floor(i / cols) },
-        inputs: [{ kind: "momentary" }],
+      controls: deckControls(model).map((c) => ({
+        ...c,
         outputs: [{ kind: "image", w: model.key, h: model.key, format: "png" }],
       })),
     },

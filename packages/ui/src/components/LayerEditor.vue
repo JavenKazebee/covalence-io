@@ -8,19 +8,20 @@ import { hrefOf, navigate } from "../nav";
 import { useCatalogStore } from "../stores/catalog";
 import { useFlowsStore } from "../stores/flows";
 import { useSurfacesStore } from "../stores/surfaces";
-import { controlsOf, type Page } from "../surfaces/model";
+import { gridOf, neighbour, type Layer } from "../surfaces/model";
 import BindingEditor from "./bindings/BindingEditor.vue";
 
 /**
- * A page: its key grid, drawn by the core from live state, and the bindings
- * of the key that's selected. The page's name and size are below.
+ * A layer: its controls where they are on the surface, keys drawn by the core
+ * from live state, and the bindings of the control that's selected. The
+ * layer's name is below.
  */
 const props = defineProps<{ id: string; control?: string }>();
 
 const surfaces = useSurfacesStore();
 const flows = useFlowsStore();
 const catalog = useCatalogStore();
-const page = computed(() => surfaces.page(props.id));
+const layer = computed(() => surfaces.layer(props.id));
 
 const bindings = ref<ControlBinding[]>([]);
 const runtime = ref<RuntimeProblem[]>([]);
@@ -53,35 +54,41 @@ onBeforeUnmount(() => clearInterval(problemTimer));
 
 const byControl = computed(() => new Map(bindings.value.map((b) => [b.control, b])));
 const { results } = usePreviews(() => bindings.value);
-const controls = computed(() => (page.value === undefined ? [] : controlsOf(page.value.layout)));
+const grid = computed(() => gridOf(layer.value?.controls ?? []));
+const controls = computed(() => grid.value.cells.map((c) => c.control.id));
+/** Whether a control shows an image, which is all M5's bindings can set. */
+const hasImage = (control: string) =>
+  layer.value?.controls.find((c) => c.id === control)?.outputs?.includes("image") ?? false;
 const failing = (control: string) => {
   const id = byControl.value.get(control)?.id;
   return id !== undefined && runtime.value.some((p) => p.binding === id);
 };
-/** Flows with a gesture trigger on each key, for the grid's corner mark. */
+/** Flows with a gesture trigger on each control, for the grid's corner mark. */
 const triggered = computed(() => {
   const out = new Set<string>();
   for (const f of flows.flows) {
-    for (const t of f.triggers) if (t.kind === "gesture" && t.control.page === props.id) out.add(t.control.control);
+    for (const t of f.triggers) if (t.kind === "gesture" && t.control.layer === props.id) out.add(t.control.control);
   }
   return out;
 });
 
 function select(control: string) {
-  navigate({ tab: "surfaces", page: props.id, control });
+  navigate({ tab: "surfaces", layer: props.id, control });
 }
 
-// Arrow keys move the selection around the grid.
+// Arrow keys move the selection to the nearest control that way.
+const steps: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
 function move(ev: KeyboardEvent) {
-  const p = page.value;
-  if (p === undefined || props.control === undefined) return;
-  const n = Number(props.control.slice(1));
-  const step: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -p.layout.cols, ArrowDown: p.layout.cols };
-  const next = n + (step[ev.key] ?? 0);
-  if (step[ev.key] === undefined || next < 0 || next >= controls.value.length) return;
+  const step = steps[ev.key];
+  if (step === undefined || props.control === undefined) return;
+  const next = neighbour(grid.value.cells, props.control, ...step);
+  if (next === undefined) return;
   ev.preventDefault();
-  select(`k${next}`);
-  (ev.currentTarget as HTMLElement).querySelector<HTMLElement>(`[data-control="k${next}"]`)?.focus();
+  select(next);
+  const target = [...(ev.currentTarget as HTMLElement).querySelectorAll<HTMLElement>("[data-control]")].find(
+    (el) => el.dataset.control === next,
+  );
+  target?.focus();
 }
 
 const runtimeFor = computed(() => {
@@ -94,21 +101,21 @@ const runtimeFor = computed(() => {
 const live = useLiveState("surface");
 const shownOn = computed(() =>
   surfaces.surfaces.filter((s) => {
-    const leaf = live.leaves.value.find((l) => l.path === `surface.${s.slug}.page`);
-    return page.value !== undefined && leaf?.value === page.value.slug;
+    const leaf = live.leaves.value.find((l) => l.path === `surface.${s.slug}.current.main`);
+    return layer.value !== undefined && leaf?.value === layer.value.slug;
   }),
 );
 
 // ---- Settings ----
 
-const draft = ref<Page | null>(null);
+const draft = ref<Layer | null>(null);
 const saveError = ref<string | null>(null);
 const savedNote = ref<string | null>(null);
 
 watch(
-  [() => props.id, () => page.value !== undefined],
+  [() => props.id, () => layer.value !== undefined],
   () => {
-    draft.value = page.value === undefined ? null : { ...page.value, layout: { ...page.value.layout } };
+    draft.value = layer.value === undefined ? null : { ...layer.value };
     saveError.value = null;
     savedNote.value = null;
   },
@@ -120,8 +127,8 @@ async function saveSettings() {
   saveError.value = null;
   savedNote.value = null;
   try {
-    const saved = await surfaces.savePage({ ...draft.value, name: draft.value.name.trim() });
-    draft.value = { ...saved.page, layout: { ...saved.page.layout } };
+    const saved = await surfaces.saveLayer({ ...draft.value, name: draft.value.name.trim() });
+    draft.value = { ...saved.layer };
     savedNote.value = saved.warnings.length > 0 ? saved.warnings.map((w) => w.message).join(" ") : "Saved.";
   } catch (e) {
     const found = e instanceof ApiError ? e.problems : null;
@@ -130,13 +137,13 @@ async function saveSettings() {
 }
 
 async function remove() {
-  const p = page.value;
+  const p = layer.value;
   if (p === undefined) return;
   const n = bindings.value.length;
   const also = n === 0 ? "" : ` Its ${n} ${n === 1 ? "binding is" : "bindings are"} deleted too.`;
-  if (!confirm(`Delete the page "${p.name}"?${also}`)) return;
+  if (!confirm(`Delete the layer "${p.name}"?${also}`)) return;
   try {
-    await surfaces.removePage(p.id);
+    await surfaces.removeLayer(p.id);
     navigate({ tab: "surfaces" });
   } catch (e) {
     saveError.value = e instanceof Error ? e.message : String(e);
@@ -146,18 +153,18 @@ async function remove() {
 
 <template>
   <p>
-    <a :href="hrefOf({ tab: 'surfaces' })">← Surfaces and pages</a>
+    <a :href="hrefOf({ tab: 'surfaces' })">← Surfaces and layers</a>
   </p>
   <p
-    v-if="page === undefined || draft === null"
+    v-if="layer === undefined || draft === null"
     class="muted panel"
   >
-    {{ surfaces.loaded ? "No such page." : "Loading…" }}
+    {{ surfaces.loaded ? "No such layer." : "Loading…" }}
   </p>
   <template v-else>
     <section class="panel">
       <div class="row title">
-        <h2>{{ page.name }}</h2>
+        <h2>{{ layer.name }}</h2>
         <span class="muted">
           <template v-if="shownOn.length > 0">
             Showing on
@@ -178,44 +185,55 @@ async function remove() {
       <div class="editor">
         <div
           class="grid"
-          :style="{ gridTemplateColumns: `repeat(${page.layout.cols}, var(--key))` }"
+          :style="{
+            gridTemplateColumns: `repeat(${grid.cols}, var(--key))`,
+            gridTemplateRows: `repeat(${grid.rows}, var(--key))`,
+          }"
           role="listbox"
-          aria-label="Keys"
+          aria-label="Controls"
           @keydown="move"
         >
           <button
-            v-for="c in controls"
-            :key="c"
+            v-for="cell in grid.cells"
+            :key="cell.control.id"
             type="button"
             class="key"
             role="option"
-            :aria-selected="c === control"
-            :aria-label="`Key ${c}${byControl.has(c) ? ', bound' : ''}`"
-            :class="{ selected: c === control, failing: failing(c) }"
-            :data-control="c"
-            @click="select(c)"
+            :style="{ gridColumn: `${cell.x + 1} / span ${cell.w}`, gridRow: `${cell.y + 1} / span ${cell.h}` }"
+            :aria-selected="cell.control.id === control"
+            :aria-label="`Control ${cell.control.id}${byControl.has(cell.control.id) ? ', bound' : ''}`"
+            :class="{ selected: cell.control.id === control, failing: failing(cell.control.id), plain: !hasImage(cell.control.id) }"
+            :data-control="cell.control.id"
+            @click="select(cell.control.id)"
           >
             <img
-              v-if="results.get(c)?.preview"
-              :src="`data:image/png;base64,${results.get(c)!.preview!.image}`"
+              v-if="results.get(cell.control.id)?.preview"
+              :src="`data:image/png;base64,${results.get(cell.control.id)!.preview!.image}`"
               alt=""
             >
             <span
               v-else
               class="key-id"
-            >{{ c }}</span>
+            >{{ cell.control.id }}</span>
             <span
-              v-if="triggered.has(c)"
+              v-if="triggered.has(cell.control.id)"
               class="mark"
               title="A flow triggers on this key"
             />
           </button>
         </div>
         <div class="selected-key">
+          <p
+            v-if="control !== undefined && controls.includes(control) && !hasImage(control)"
+            class="muted"
+          >
+            {{ control }} has no image output on this layer, so there's nothing to bind on it yet. Flows can still
+            trigger on it.
+          </p>
           <BindingEditor
-            v-if="control !== undefined && controls.includes(control)"
-            :key="`${page.id}/${control}`"
-            :page="page"
+            v-else-if="control !== undefined && controls.includes(control)"
+            :key="`${layer.id}/${control}`"
+            :layer="layer"
             :control="control"
             :stored="byControl.get(control)"
             :runtime="runtimeFor"
@@ -225,7 +243,7 @@ async function remove() {
             v-else
             class="muted"
           >
-            Pick a key to bind what it shows: a label, a text colour and a background, each from live state.
+            Pick a control to bind what it shows: a label, a text colour and a background, each from live state.
           </p>
         </div>
       </div>
@@ -236,37 +254,19 @@ async function remove() {
       novalidate
       @submit.prevent="saveSettings"
     >
-      <h3>Page</h3>
+      <h3>Layer</h3>
       <div class="row">
         <div class="field">
-          <label for="page-name">Name</label>
+          <label for="layer-name">Name</label>
           <input
-            id="page-name"
+            id="layer-name"
             v-model="draft.name"
             autocomplete="off"
           >
-        </div>
-        <div class="field">
-          <label for="page-cols">Size</label>
-          <span class="row size">
-            <input
-              id="page-cols"
-              v-model.number="draft.layout.cols"
-              type="number"
-              min="1"
-              max="32"
-              aria-label="Columns"
-            >
-            ×
-            <input
-              v-model.number="draft.layout.rows"
-              type="number"
-              min="1"
-              max="32"
-              aria-label="Rows"
-            >
-          </span>
-          <small class="hint">A surface shows it only if it's the same size.</small>
+          <small class="hint">
+            {{ layer.controls.length }} {{ layer.controls.length === 1 ? "control" : "controls" }}, copied from a
+            surface when it was made. A surface shows it if it has each of them.
+          </small>
         </div>
       </div>
       <div class="row">
@@ -325,8 +325,8 @@ async function remove() {
 
 .key {
   position: relative;
-  width: var(--key);
-  height: var(--key);
+  width: 100%;
+  height: 100%;
   padding: 0;
   border: none;
   border-radius: 8px;
@@ -378,8 +378,8 @@ async function remove() {
   min-width: min(100%, 26rem);
 }
 
-.size input {
-  width: 4.5rem;
+.key.plain {
+  background: #16171a;
 }
 
 button.danger {

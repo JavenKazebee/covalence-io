@@ -4,11 +4,11 @@ import { api, ApiError } from "../api";
 import { useLiveState } from "../live/useLiveState";
 import { hrefOf, navigate } from "../nav";
 import { useSurfacesStore } from "../stores/surfaces";
-import { layoutText, models, sameLayout, type Surface } from "../surfaces/model";
+import { deckControls, missingControls, models, type Surface } from "../surfaces/model";
 import VirtualDeck from "./VirtualDeck.vue";
 
 /**
- * One surface: its virtual deck, attached while this is open, the page it
+ * One surface: its virtual deck, attached while this is open, the layer it
  * shows, and its settings.
  */
 const props = defineProps<{ id: string }>();
@@ -19,23 +19,29 @@ const slug = computed(() => stored.value?.slug ?? "");
 const live = useLiveState(() => (slug.value === "" ? "" : `surface.${slug.value}`));
 
 const value = (field: string) => live.leaves.value.find((l) => l.path === `surface.${slug.value}.${field}`)?.value;
-/** The page shown now, from `surface.<slug>.page`, which holds its slug. */
+/** The layer shown now, from `surface.<slug>.current.main`, which holds its slug. */
 const shown = computed(() => {
-  const page = value("page");
-  return typeof page === "string" ? surfaces.pageBySlug(page) : undefined;
+  const layer = value("current.main");
+  return typeof layer === "string" ? surfaces.layerBySlug(layer) : undefined;
 });
-const layout = computed(() => (stored.value === undefined ? undefined : models[stored.value.model]?.layout));
-/** Pages this surface can show (M5: the same layout only). */
-const fitting = computed(() => surfaces.pages.filter((p) => layout.value !== undefined && sameLayout(p.layout, layout.value)));
+/** The controls the virtual deck attaches with. */
+const controls = computed(() => {
+  const model = stored.value === undefined ? undefined : models[stored.value.model];
+  return model === undefined ? undefined : deckControls(model);
+});
+/** Layers this surface can show: it has each of their controls (surfaces spec §5.4). */
+const fitting = computed(() =>
+  surfaces.layers.filter((l) => controls.value !== undefined && missingControls(l, controls.value).length === 0),
+);
 
 const showError = ref<string | null>(null);
 const switching = ref(false);
 
-async function show(page: string) {
+async function show(layer: string) {
   showError.value = null;
   switching.value = true;
   try {
-    await api.showPage(props.id, page === "" ? null : page);
+    await api.navigate(props.id, layer === "" ? null : layer);
   } catch (e) {
     showError.value = e instanceof Error ? e.message : String(e);
   } finally {
@@ -64,7 +70,7 @@ async function save() {
   saveError.value = null;
   savedNote.value = null;
   const surface = { ...draft.value, name: draft.value.name.trim() };
-  if (!surface.startPage) delete surface.startPage;
+  if (!surface.startLayer) delete surface.startLayer;
   try {
     const saved = await surfaces.saveSurface(surface);
     draft.value = { ...saved.surface };
@@ -104,9 +110,9 @@ async function remove() {
         <VirtualDeck :surface="stored" />
         <div class="side">
           <div class="field">
-            <label for="surface-page">Showing</label>
+            <label for="surface-layer">Showing</label>
             <select
-              id="surface-page"
+              id="surface-layer"
               :value="shown?.id ?? ''"
               :disabled="switching"
               @change="show(($event.target as HTMLSelectElement).value)"
@@ -125,8 +131,8 @@ async function remove() {
             <small
               v-if="fitting.length === 0"
               class="hint"
-            >No pages are {{ layout ? layoutText(layout) : "its size" }} yet.
-              <a :href="hrefOf({ tab: 'surfaces' })">Make one</a>.</small>
+            >No layers fit it yet.
+              <a :href="hrefOf({ tab: 'surfaces' })">Make one</a> from it.</small>
             <small
               v-if="showError"
               class="error"
@@ -136,12 +142,12 @@ async function remove() {
           <p v-if="shown">
             <a
               class="button"
-              :href="hrefOf({ tab: 'surfaces', page: shown.id })"
+              :href="hrefOf({ tab: 'surfaces', layer: shown.id })"
             >Edit {{ shown.name }}</a>
           </p>
           <p class="hint">
             Press keys with the mouse, or focus one and hold Space. Each press is a
-            <code>gesture</code> a flow can trigger on; the keys show what their page binds.
+            <code>gesture</code> a flow can trigger on; the keys show what their layer binds.
           </p>
         </div>
       </div>
@@ -164,10 +170,10 @@ async function remove() {
           <small class="hint">Its state is at <code>surface.{{ stored.slug }}</code>.</small>
         </div>
         <div class="field">
-          <label for="surface-start">Start page</label>
+          <label for="surface-start">Start layer</label>
           <select
             id="surface-start"
-            v-model="draft.startPage"
+            v-model="draft.startLayer"
           >
             <option :value="undefined">
               None
@@ -180,7 +186,7 @@ async function remove() {
               {{ p.name }}
             </option>
           </select>
-          <small class="hint">Shown the first time it attaches. After that it shows the page it last showed.</small>
+          <small class="hint">Shown the first time it attaches. After that it shows the layer it last showed.</small>
         </div>
       </div>
       <div class="row">

@@ -109,7 +109,7 @@ describe("binding model", () => {
   });
 
   it("leaves out properties left unbound, in the editor's order", () => {
-    const draft: ControlBinding = { id: "", page: "p", control: "k0", props: { background: newBinding("expr", "background"), label: undefined } };
+    const draft: ControlBinding = { id: "", layer: "p", control: "k0", props: { background: newBinding("expr", "background"), label: undefined } };
     expect(Object.keys(fromDraft(draft).props)).toEqual(["background"]);
     for (const kind of kinds) for (const prop of props) expect(newBinding(kind, prop).kind).toBe(kind);
   });

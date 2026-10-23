@@ -1,13 +1,13 @@
 //! Display bindings (bindings spec §1–§4, ADR 0023): how a control looks,
 //! kept in step with state.
 //!
-//! A [`ControlBinding`] binds properties of one control on one page. Each
+//! A [`ControlBinding`] binds properties of one control on one layer. Each
 //! property's [`Binding`] is one of five kinds. `value`, `template`,
 //! `rules` and `map` are evaluated natively ([`Binding::evaluate`]), reading
 //! the state tree directly; they also compile to an expression
 //! ([`Binding::to_expr`]), which the editor shows and which gives the same
 //! result. `expr` bindings run on QuickJS. The worker in [`worker`] keeps
-//! the bindings of shown pages evaluated and draws what changes.
+//! the bindings of shown layers evaluated and draws what changes.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -19,7 +19,7 @@ use crate::expr::{self, Evaluator};
 use crate::flow::{Code, Problem, Report};
 use crate::state::{ConnId, LiveState, StatePath};
 use crate::surface::render::{Look, Rgb};
-use crate::surface::{Layout, PageId};
+use crate::surface::{Layer, LayerId, OutputCapKind};
 use crate::text_path;
 
 pub mod js;
@@ -28,14 +28,14 @@ pub mod worker;
 /// Entity type in the store.
 pub const ENTITY: &str = "control_binding";
 
-/// The bindings of one control on one page (bindings spec §1).
+/// The bindings of one control on one layer (bindings spec §1).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ControlBinding {
     /// A ULID, assigned by the server.
     #[serde(default)]
     pub id: String,
-    pub page: PageId,
+    pub layer: LayerId,
     pub control: String,
     pub props: BTreeMap<Prop, Binding>,
 }
@@ -58,6 +58,13 @@ impl Prop {
             Prop::Label => "label",
             Prop::TextColor => "textColor",
             Prop::Background => "background",
+        }
+    }
+
+    /// The output it drives (bindings spec §1).
+    pub fn output(self) -> OutputCapKind {
+        match self {
+            Prop::Label | Prop::TextColor | Prop::Background => OutputCapKind::Image,
         }
     }
 }
@@ -136,7 +143,7 @@ pub enum Root {
     Vars,
     Sys,
     Surface,
-    Page,
+    Layer,
     Flow,
 }
 
@@ -146,7 +153,7 @@ impl Root {
             Root::Vars => "vars",
             Root::Sys => "sys",
             Root::Surface => "surface",
-            Root::Page => "page",
+            Root::Layer => "layer",
             Root::Flow => "flow",
         }
     }
@@ -548,10 +555,10 @@ impl PropValue {
 
 /// What validation checks a binding against.
 pub struct Context<'a> {
-    pub pages: &'a BTreeMap<PageId, Layout>,
+    pub layers: &'a BTreeMap<LayerId, Layer>,
     pub conns: &'a BTreeSet<ConnId>,
-    /// `(page, control)` pairs bound by other bindings.
-    pub taken: &'a BTreeSet<(PageId, String)>,
+    /// `(layer, control)` pairs bound by other bindings.
+    pub taken: &'a BTreeSet<(LayerId, String)>,
     pub evaluator: &'a dyn Evaluator,
 }
 
@@ -568,6 +575,12 @@ fn at(base: &[PathSegment], more: &[PathSegment]) -> Path {
 }
 
 impl ControlBinding {
+    /// The outputs its properties drive, which its layer must give the
+    /// control (`noOutput`).
+    pub fn outputs(&self) -> BTreeSet<OutputCapKind> {
+        self.props.keys().map(|p| p.output()).collect()
+    }
+
     /// Reads a binding from JSON. Properties and refs that a later milestone
     /// adds are `unsupported`; any other shape problem is one `invalid`.
     pub fn parse(json: &Json) -> Result<ControlBinding, Vec<Problem>> {
@@ -649,41 +662,62 @@ fn find_targets(json: &Json, here: &mut Path, out: &mut Vec<Problem>) {
     }
 }
 
-/// Checks a parsed binding against pages, connections and the property types.
+/// Checks a parsed binding against layers, connections and the property
+/// types.
 pub fn validate(binding: &ControlBinding, ctx: &Context) -> Report {
     let mut v = Validation {
         ctx,
         errors: Vec::new(),
     };
-    match ctx.pages.get(&binding.page) {
-        None => v.error(
-            vec![key("page")],
-            Code::UnknownPage,
-            format!("no page {:?}", binding.page),
-        ),
-        Some(layout) if !layout.contains(&binding.control) => v.error(
-            vec![key("control")],
-            Code::UnknownControl,
-            format!(
-                "the page is {}×{}, so its controls are k0 to k{}, not {:?}",
-                layout.cols,
-                layout.rows,
-                (layout.cols * layout.rows).saturating_sub(1),
-                binding.control
-            ),
-        ),
-        Some(_)
-            if ctx
-                .taken
-                .contains(&(binding.page.clone(), binding.control.clone())) =>
-        {
+    let control = match ctx.layers.get(&binding.layer) {
+        None => {
             v.error(
-                vec![key("control")],
-                Code::DuplicateControl,
-                format!("{} is already bound on this page", binding.control),
-            )
+                vec![key("layer")],
+                Code::UnknownLayer,
+                format!("no layer {:?}", binding.layer),
+            );
+            None
         }
-        Some(_) => {}
+        Some(layer) => match layer.control(&binding.control) {
+            None => {
+                v.error(
+                    vec![key("control")],
+                    Code::UnknownControl,
+                    format!("the layer doesn't list a control {:?}", binding.control),
+                );
+                None
+            }
+            Some(control) => {
+                if ctx
+                    .taken
+                    .contains(&(binding.layer.clone(), binding.control.clone()))
+                {
+                    v.error(
+                        vec![key("control")],
+                        Code::DuplicateControl,
+                        format!("{} is already bound on this layer", binding.control),
+                    );
+                }
+                Some(control)
+            }
+        },
+    };
+    if let Some(control) = control {
+        for prop in binding.props.keys() {
+            let output = prop.output();
+            if !control.outputs.contains(&output) {
+                v.error(
+                    vec![key("props"), key(prop.as_str())],
+                    Code::NoOutput,
+                    format!(
+                        "{} needs an {} output, and the layer doesn't give {} one",
+                        prop.as_str(),
+                        output.as_str(),
+                        binding.control
+                    ),
+                );
+            }
+        }
     }
     for (prop, b) in &binding.props {
         v.binding(*prop, b, &[key("props"), key(prop.as_str())]);

@@ -13,9 +13,9 @@ export interface Route {
   flow?: string;
   /** `#/surfaces/<id>`: the surface whose deck is open. */
   surface?: string;
-  /** `#/surfaces/pages/<id>`: the page being edited. */
-  page?: string;
-  /** `#/surfaces/pages/<id>/k3`: the key selected on it. */
+  /** `#/surfaces/layers/<id>`: the layer being edited. */
+  layer?: string;
+  /** `#/surfaces/layers/<id>/k3`: the control selected on it. */
   control?: string;
 }
 
@@ -33,10 +33,10 @@ export function parseHash(hash: string): Route {
   if (tab === "journal" && /^[1-9]\d*$/.test(rest)) return { tab, seq: Number(rest) };
   if (tab === "flows" && rest !== "") return { tab, flow: rest };
   if (tab === "surfaces" && rest !== "") {
-    // Surface IDs are ULIDs, so never `pages`.
-    const [first, page, control] = rest.split("/");
-    if (first !== "pages") return { tab, surface: rest };
-    if (page) return control ? { tab, page, control } : { tab, page };
+    // Surface IDs are ULIDs, so never `layers`.
+    const [first, layer, control] = rest.split("/");
+    if (first !== "layers") return { tab, surface: rest };
+    if (layer) return control ? { tab, layer, control } : { tab, layer };
   }
   return { tab };
 }
@@ -53,9 +53,9 @@ export function hrefOf(route: Route): string {
   if (route.tab === "state" && route.path) return `#/state/${encodeURIComponent(route.path)}`;
   if (route.tab === "journal" && route.seq !== undefined) return `#/journal/${route.seq}`;
   if (route.tab === "flows" && route.flow) return `#/flows/${encodeURIComponent(route.flow)}`;
-  if (route.tab === "surfaces" && route.page) {
-    const page = `#/surfaces/pages/${encodeURIComponent(route.page)}`;
-    return route.control ? `${page}/${encodeURIComponent(route.control)}` : page;
+  if (route.tab === "surfaces" && route.layer) {
+    const layer = `#/surfaces/layers/${encodeURIComponent(route.layer)}`;
+    return route.control ? `${layer}/${encodeURIComponent(route.control)}` : layer;
   }
   if (route.tab === "surfaces" && route.surface) return `#/surfaces/${encodeURIComponent(route.surface)}`;
   return `#/${route.tab}`;

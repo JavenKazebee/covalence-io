@@ -1,10 +1,10 @@
 //! The binding worker (bindings spec §3, ADR 0023): a thread of its own
-//! that keeps the bindings of shown pages evaluated and draws what changes.
+//! that keeps the bindings of shown layers evaluated and draws what changes.
 //!
 //! One turn takes every state change waiting on the feed, re-evaluates the
-//! properties whose reads they touch on pages some surface shows, and
+//! properties whose reads they touch on layers some surface shows, and
 //! redraws each control whose resolved look differs from what that surface
-//! last got. A page that comes into view is evaluated in full first.
+//! last got. A layer that comes into view is evaluated in full first.
 //! `expr` bindings run on the worker's own QuickJS, so bindings and flows
 //! never wait on each other.
 
@@ -19,7 +19,7 @@ use super::{Binding, ControlBinding, Prop, PropValue, prop_value};
 use crate::expr::{Evaluator, Limits, QuickJs, Scope, to_json};
 use crate::state::{ConnId, Dirty, LiveState, Quality, StatePath};
 use crate::surface::render::{Look, Renderer};
-use crate::surface::{ControlDef, Draw, PageId, SurfaceId};
+use crate::surface::{ControlDef, Draw, LayerId, SurfaceId};
 
 /// An `expr` binding's time limit (ADR 0023).
 pub const EXPR_TIME: Duration = Duration::from_millis(10);
@@ -37,10 +37,10 @@ enum Command {
     Set(ControlBinding),
     Remove(String),
     Aliases(Arc<BTreeMap<String, ConnId>>),
-    /// A surface shows `page` (or nothing) through `draws`.
+    /// A surface shows `layer` (or nothing) through `draws`.
     Show {
         surface: SurfaceId,
-        page: Option<PageId>,
+        layer: Option<LayerId>,
         controls: Vec<ControlDef>,
         draws: mpsc::Sender<Draw>,
     },
@@ -97,13 +97,13 @@ impl Bindings {
     pub fn show(
         &self,
         surface: &str,
-        page: Option<PageId>,
+        layer: Option<LayerId>,
         controls: Vec<ControlDef>,
         draws: mpsc::Sender<Draw>,
     ) {
         self.send(Command::Show {
             surface: surface.to_owned(),
-            page,
+            layer,
             controls,
             draws,
         });
@@ -145,17 +145,17 @@ struct Worker {
     evaluator: QuickJs,
     aliases: Arc<BTreeMap<String, ConnId>>,
     bindings: BTreeMap<String, ControlBinding>,
-    /// Binding IDs by `(page, control)`.
-    by_control: BTreeMap<(PageId, String), String>,
+    /// Binding IDs by `(layer, control)`.
+    by_control: BTreeMap<(LayerId, String), String>,
     shown: BTreeMap<SurfaceId, Shown>,
-    /// The bound controls of shown pages, evaluated.
-    resolved: BTreeMap<(PageId, String), Resolved>,
+    /// The bound controls of shown layers, evaluated.
+    resolved: BTreeMap<(LayerId, String), Resolved>,
     renderer: Renderer,
     problems: Arc<Mutex<Problems>>,
 }
 
 struct Shown {
-    page: Option<PageId>,
+    layer: Option<LayerId>,
     controls: Vec<ControlDef>,
     draws: mpsc::Sender<Draw>,
     /// What each control was last sent.
@@ -302,7 +302,7 @@ impl Worker {
                 Err(_) => break,
             }
         }
-        let keys: Vec<(PageId, String)> = self.resolved.keys().cloned().collect();
+        let keys: Vec<(LayerId, String)> = self.resolved.keys().cloned().collect();
         let mut changed = BTreeSet::new();
         for key in keys {
             if self.reevaluate(&key, dirty.as_ref()) {
@@ -321,7 +321,7 @@ impl Worker {
         match command {
             Command::Set(binding) => {
                 self.forget(&binding.id);
-                let key = (binding.page.clone(), binding.control.clone());
+                let key = (binding.layer.clone(), binding.control.clone());
                 self.by_control.insert(key.clone(), binding.id.clone());
                 self.bindings.insert(binding.id.clone(), binding);
                 if self.is_visible(&key.0) {
@@ -348,7 +348,7 @@ impl Worker {
             }
             Command::Show {
                 surface,
-                page,
+                layer,
                 controls,
                 draws,
             } => {
@@ -361,7 +361,7 @@ impl Worker {
                 self.shown.insert(
                     surface.clone(),
                     Shown {
-                        page,
+                        layer,
                         controls,
                         draws,
                         drawn,
@@ -382,29 +382,35 @@ impl Worker {
     }
 
     /// Removes a binding, returning where it was.
-    fn forget(&mut self, id: &str) -> Option<(PageId, String)> {
+    fn forget(&mut self, id: &str) -> Option<(LayerId, String)> {
         let old = self.bindings.remove(id)?;
-        let key = (old.page, old.control);
+        let key = (old.layer, old.control);
         self.by_control.remove(&key);
         let mut problems = lock(&self.problems);
         problems.retain(|(binding, _), _| binding != id);
         Some(key)
     }
 
-    fn is_visible(&self, page: &str) -> bool {
-        self.shown.values().any(|s| s.page.as_deref() == Some(page))
+    fn is_visible(&self, layer: &str) -> bool {
+        self.shown
+            .values()
+            .any(|s| s.layer.as_deref() == Some(layer))
     }
 
-    /// Evaluates pages that came into view in full, and drops pages that
+    /// Evaluates layers that came into view in full, and drops layers that
     /// nothing shows any more.
     fn track_visible(&mut self) {
-        let visible: BTreeSet<PageId> =
-            self.shown.values().filter_map(|s| s.page.clone()).collect();
-        self.resolved.retain(|(page, _), _| visible.contains(page));
-        let fresh: Vec<(PageId, String)> = self
+        let visible: BTreeSet<LayerId> = self
+            .shown
+            .values()
+            .filter_map(|s| s.layer.clone())
+            .collect();
+        self.resolved
+            .retain(|(layer, _), _| visible.contains(layer));
+        let fresh: Vec<(LayerId, String)> = self
             .by_control
             .keys()
-            .filter(|(page, _)| visible.contains(page))
+            .filter(|(layer, _)| visible.contains(layer))
             .filter(|key| !self.resolved.contains_key(*key))
             .cloned()
             .collect();
@@ -414,14 +420,14 @@ impl Worker {
     }
 
     /// Evaluates every property of one control.
-    fn resolve(&mut self, key: &(PageId, String)) {
+    fn resolve(&mut self, key: &(LayerId, String)) {
         self.resolved.insert(key.clone(), Resolved::default());
         self.reevaluate(key, None);
     }
 
     /// Re-evaluates the properties of one control whose reads `dirty`
     /// touches (all of them for `None`). Whether its look changed.
-    fn reevaluate(&mut self, key: &(PageId, String), dirty: Option<&Dirty>) -> bool {
+    fn reevaluate(&mut self, key: &(LayerId, String), dirty: Option<&Dirty>) -> bool {
         let Some(binding) = self
             .by_control
             .get(key)
@@ -505,9 +511,9 @@ impl Worker {
                 continue;
             };
             let look = shown
-                .page
+                .layer
                 .as_ref()
-                .and_then(|page| self.resolved.get(&(page.clone(), control.id.clone())))
+                .and_then(|layer| self.resolved.get(&(layer.clone(), control.id.clone())))
                 .map(|r| r.look.clone())
                 .unwrap_or_default();
             if shown.drawn.get(&control.id) == Some(&look) {

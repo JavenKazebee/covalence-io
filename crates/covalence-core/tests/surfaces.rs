@@ -20,8 +20,8 @@ use covalence_core::journal::{
 use covalence_core::state::StatePath;
 use covalence_core::surface::gesture::Timing;
 use covalence_core::surface::{
-    Attach, AttachError, ControlDef, Draw, ImageDef, Input, InputCap, InputValue, Layout, Link,
-    OutputCap, Page, Placement, ShowError, Surface, Surfaces,
+    Attach, AttachError, ControlDef, Draw, ImageDef, Input, InputCap, InputCapKind, InputValue,
+    Layer, LayerControl, Link, OutputCap, OutputCapKind, Placement, ShowError, Surface, Surfaces,
 };
 use covalence_protocol::Value;
 use covalence_protocol::state::PathSegment;
@@ -32,7 +32,8 @@ const DECK: &str = "01JC5URFACE000000000000001";
 const CAMS: &str = "01JC5PAGE00000000000000001";
 const AUDIO: &str = "01JC5PAGE00000000000000002";
 const WIDE: &str = "01JC5PAGE00000000000000003";
-const DECK_LAYOUT: Layout = Layout { cols: 5, rows: 3 };
+
+mod common;
 
 /// Flows here only `set` variables, so nothing asks for an action.
 struct NoActions;
@@ -61,21 +62,16 @@ fn world() -> World {
             slug: "fohDeck".into(),
             model: "virtual.deck15".into(),
             serial: None,
-            start_page: Some(CAMS.into()),
+            start_layer: Some(CAMS.into()),
         })
         .unwrap();
-    for (id, slug, layout) in [
-        (CAMS, "cams", DECK_LAYOUT),
-        (AUDIO, "audio", DECK_LAYOUT),
-        (WIDE, "wide", Layout { cols: 8, rows: 4 }),
+    for (id, slug, cols, rows) in [
+        (CAMS, "cams", 5, 3),
+        (AUDIO, "audio", 5, 3),
+        (WIDE, "wide", 8, 4),
     ] {
         surfaces
-            .set_page(Page {
-                id: id.into(),
-                name: slug.into(),
-                slug: slug.into(),
-                layout,
-            })
+            .set_layer(common::deck_layer(id, slug, cols, rows))
             .unwrap();
     }
     World { shared, surfaces }
@@ -131,6 +127,18 @@ fn mixer() -> Attach {
             ),
         ],
     }
+}
+
+/// `surface.fohDeck.current.main`: the layer shown.
+fn current(shared: &Shared) -> Option<Value> {
+    let path = StatePath::new(
+        "surface",
+        ["fohDeck", "current", "main"]
+            .into_iter()
+            .map(|k| PathSegment::Key(k.into()))
+            .collect(),
+    );
+    shared.state.value(&path)
 }
 
 fn state(shared: &Shared, leaf: &str) -> Option<Value> {
@@ -267,7 +275,7 @@ async fn attaching_publishes_state_and_draws_every_key() {
     let mut link = w.surfaces.attach(DECK, deck()).unwrap();
     assert_eq!(state(&w.shared, "connected"), Some(true.into()));
     assert_eq!(state(&w.shared, "model"), Some("virtual.deck15".into()));
-    assert_eq!(state(&w.shared, "page"), Some("cams".into()));
+    assert_eq!(current(&w.shared), Some("cams".into()));
     assert_eq!(w.surfaces.shown(DECK).as_deref(), Some(CAMS));
 
     let patch = entries(&w.shared).pop().unwrap();
@@ -459,8 +467,8 @@ async fn input_a_control_cant_give_is_dropped() {
 async fn dials_faders_and_touch_have_state_and_events() {
     let w = world();
     let link = w.surfaces.attach(DECK, mixer()).unwrap();
-    // No page fits a mixer.
-    assert_eq!(state(&w.shared, "page"), Some(Value::Nil));
+    // No layer fits a mixer.
+    assert_eq!(current(&w.shared), Some(Value::Nil));
     assert_eq!(control_state(&w.shared, "dial", "detents"), Some(0.into()));
     assert_eq!(
         control_state(&w.shared, "dial", "pressed"),
@@ -529,7 +537,7 @@ async fn detaching_disconnects_and_releases_held_keys() {
     assert!(!w.surfaces.is_attached(DECK));
     assert_eq!(state(&w.shared, "connected"), Some(false.into()));
     assert_eq!(
-        state(&w.shared, "page"),
+        current(&w.shared),
         Some("cams".into()),
         "kept while detached"
     );
@@ -603,7 +611,7 @@ async fn a_second_attach_replaces_the_first() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn showing_a_page_checks_it_fits() {
+async fn showing_a_layer_checks_it_fits() {
     let w = world();
     let mut link = w.surfaces.attach(DECK, deck()).unwrap();
     w.surfaces.flush().await;
@@ -614,15 +622,15 @@ async fn showing_a_page_checks_it_fits() {
     };
 
     w.surfaces.show(DECK, Some(AUDIO), user.clone()).unwrap();
-    assert_eq!(state(&w.shared, "page"), Some("audio".into()));
+    assert_eq!(current(&w.shared), Some("audio".into()));
     assert_eq!(entries(&w.shared).last().unwrap().origin, user);
     w.surfaces.flush().await;
-    // The audio page has no bindings either, so nothing looks different.
+    // The audio layer has no bindings either, so nothing looks different.
     assert_eq!(take_draws(&mut link).len(), 0);
 
     match w.surfaces.show(DECK, Some(WIDE), user.clone()) {
-        Err(ShowError::DoesNotFit { page, missing }) => {
-            assert_eq!(page, WIDE);
+        Err(ShowError::DoesNotFit { layer, missing }) => {
+            assert_eq!(layer, WIDE);
             assert_eq!(missing.len(), 32 - 15);
             assert_eq!(missing[0], "k15");
         }
@@ -630,21 +638,21 @@ async fn showing_a_page_checks_it_fits() {
     }
     assert!(matches!(
         w.surfaces.show(DECK, Some("nope"), user.clone()),
-        Err(ShowError::UnknownPage(_))
+        Err(ShowError::UnknownLayer(_))
     ));
-    assert_eq!(state(&w.shared, "page"), Some("audio".into()));
+    assert_eq!(current(&w.shared), Some("audio".into()));
 
     w.surfaces.show(DECK, None, user).unwrap();
-    assert_eq!(state(&w.shared, "page"), Some(Value::Nil));
+    assert_eq!(current(&w.shared), Some(Value::Nil));
 
-    // Input with no page shown is journaled, but can't match a trigger.
+    // Input with no layer shown is journaled, but can't match a trigger.
     send(&link, "k0", InputKind::Down, 0.0).await;
     settle(&w.surfaces).await;
     assert_eq!(events(&w.shared)[0].1.layer, None);
 }
 
 #[tokio::test(start_paused = true)]
-async fn reattaching_shows_the_page_it_showed_last() {
+async fn reattaching_shows_the_layer_it_showed_last() {
     let w = world();
     let link = w.surfaces.attach(DECK, deck()).unwrap();
     w.surfaces
@@ -653,15 +661,15 @@ async fn reattaching_shows_the_page_it_showed_last() {
     drop(link);
     settle(&w.surfaces).await;
     let _link = w.surfaces.attach(DECK, deck()).unwrap();
-    assert_eq!(state(&w.shared, "page"), Some("audio".into()));
+    assert_eq!(current(&w.shared), Some("audio".into()));
 }
 
 #[tokio::test(start_paused = true)]
-async fn removing_a_page_or_renaming_a_surface_updates_state() {
+async fn removing_a_layer_or_renaming_a_surface_updates_state() {
     let w = world();
     let _link = w.surfaces.attach(DECK, deck()).unwrap();
-    w.surfaces.remove_page(CAMS).unwrap();
-    assert_eq!(state(&w.shared, "page"), Some(Value::Nil));
+    w.surfaces.remove_layer(CAMS).unwrap();
+    assert_eq!(current(&w.shared), Some(Value::Nil));
 
     w.surfaces
         .set_surface(Surface {
@@ -670,7 +678,7 @@ async fn removing_a_page_or_renaming_a_surface_updates_state() {
             slug: "foh".into(),
             model: "virtual.deck15".into(),
             serial: None,
-            start_page: None,
+            start_layer: None,
         })
         .unwrap();
     assert_eq!(state(&w.shared, "connected"), None, "the old slug is gone");
@@ -703,7 +711,7 @@ async fn a_gesture_trigger_runs_its_flow_and_why_reaches_the_input_patch() {
         "enabled": true,
         "triggers": [{
             "kind": "gesture",
-            "control": { "page": CAMS, "control": "k4" },
+            "control": { "layer": CAMS, "control": "k4" },
             "gesture": "press",
         }],
         "concurrency": "parallel",
@@ -711,7 +719,7 @@ async fn a_gesture_trigger_runs_its_flow_and_why_reaches_the_input_patch() {
             "id": "note",
             "kind": "set",
             "path": "vars.pressed",
-            "value": "`${trigger.control} on ${trigger.page}`",
+            "value": "`${trigger.control} on ${trigger.layer}`",
         }],
     }))
     .unwrap();
@@ -758,7 +766,7 @@ async fn a_gesture_trigger_runs_its_flow_and_why_reaches_the_input_patch() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_gesture_trigger_only_matches_its_page() {
+async fn a_gesture_trigger_only_matches_its_layer() {
     let w = world();
     let runtime = Runtime::start(
         w.shared.clone(),
@@ -772,7 +780,7 @@ async fn a_gesture_trigger_only_matches_its_page() {
         "enabled": true,
         "triggers": [{
             "kind": "gesture",
-            "control": { "page": AUDIO, "control": "k0" },
+            "control": { "layer": AUDIO, "control": "k0" },
             "gesture": "double",
         }],
         "concurrency": "parallel",
@@ -783,15 +791,17 @@ async fn a_gesture_trigger_only_matches_its_page() {
     let link = w.surfaces.attach(DECK, deck()).unwrap();
     let doubled = StatePath::new("vars", vec![PathSegment::Key("doubled".into())]);
 
-    for (ts, page) in [(0.0, CAMS), (5000.0, AUDIO)] {
-        w.surfaces.show(DECK, Some(page), Origin::system()).unwrap();
+    for (ts, layer) in [(0.0, CAMS), (5000.0, AUDIO)] {
+        w.surfaces
+            .show(DECK, Some(layer), Origin::system())
+            .unwrap();
         send(&link, "k0", InputKind::Down, ts).await;
         send(&link, "k0", InputKind::Up, ts + 50.0).await;
         send(&link, "k0", InputKind::Down, ts + 150.0).await;
         send(&link, "k0", InputKind::Up, ts + 200.0).await;
         settle(&w.surfaces).await;
-        let expected = (page == AUDIO).then(|| Value::from(true));
-        assert_eq!(w.shared.state.value(&doubled), expected, "on {page}");
+        let expected = (layer == AUDIO).then(|| Value::from(true));
+        assert_eq!(w.shared.state.value(&doubled), expected, "on {layer}");
     }
     runtime.shutdown().await;
 }
@@ -855,4 +865,71 @@ async fn a_state_trigger_on_two_keys_is_a_chord() {
     settle(&w.surfaces).await;
     assert_eq!(var(&w.shared, "chord"), Some(true.into()));
     runtime.shutdown().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_layer_fits_by_capability_not_by_size() {
+    let w = world();
+    let _link = w.surfaces.attach(DECK, mixer()).unwrap();
+    let layer = |id: &str, slug: &str, controls: Vec<LayerControl>| Layer {
+        id: id.into(),
+        name: slug.into(),
+        slug: slug.into(),
+        controls,
+    };
+    let control = |id: &str, inputs: Vec<InputCapKind>, outputs: Vec<OutputCapKind>| LayerControl {
+        id: id.into(),
+        at: None,
+        inputs,
+        outputs,
+    };
+    // A dial and a key: fewer controls than the mixer has is fine.
+    const DIALS: &str = "01JC5PAGE00000000000000004";
+    w.surfaces
+        .set_layer(layer(
+            DIALS,
+            "dials",
+            vec![
+                control("dial", vec![InputCapKind::Relative], vec![]),
+                control("k0", vec![InputCapKind::Momentary], vec![]),
+            ],
+        ))
+        .unwrap();
+    w.surfaces
+        .show(DECK, Some(DIALS), Origin::system())
+        .unwrap();
+    assert_eq!(current(&w.shared), Some("dials".into()));
+
+    // A dial that turns, but the mixer's `k0` has no image.
+    const IMAGES: &str = "01JC5PAGE00000000000000005";
+    w.surfaces
+        .set_layer(layer(
+            IMAGES,
+            "images",
+            vec![
+                control("dial", vec![InputCapKind::Relative], vec![]),
+                control("k0", vec![], vec![OutputCapKind::Image]),
+                control("k9", vec![], vec![]),
+            ],
+        ))
+        .unwrap();
+    match w.surfaces.show(DECK, Some(IMAGES), Origin::system()) {
+        Err(ShowError::DoesNotFit { missing, .. }) => assert_eq!(missing, ["k0", "k9"]),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(current(&w.shared), Some("dials".into()));
+
+    // The surface's controls, as it attached, for "New layer".
+    let controls = w.surfaces.controls(DECK).unwrap();
+    assert_eq!(controls.len(), 3);
+    assert_eq!(
+        controls[1].to_layer_control(),
+        LayerControl {
+            id: "dial".into(),
+            at: Some(Placement::at(1, 0)),
+            inputs: vec![InputCapKind::Relative, InputCapKind::Momentary],
+            outputs: vec![],
+        }
+    );
+    assert_eq!(w.surfaces.controls("nope"), None);
 }

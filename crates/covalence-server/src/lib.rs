@@ -24,19 +24,20 @@
 //! | `POST /runs/{run}/cancel`    | Cancels a run: `202 {run, status}`                       |
 //! | `POST /expressions/evaluate` | Previews an expression: `{source, trigger?}` → `{value?, error?, reads}` |
 //!
-//! Surfaces, pages and control bindings are in surfaces spec §5 and
-//! bindings spec §4. Each entity type has the flows' five routes, with
-//! `{surface | page | binding, warnings}` in place of `{flow, warnings}`.
+//! Surfaces, layers and control bindings are in surfaces spec §9 and
+//! bindings spec §2. Each entity type has the flows' five routes, with
+//! `{surface | layer | binding, warnings}` in place of `{flow, warnings}`.
 //!
 //! | Method and path                     | Does                                              |
 //! |-------------------------------------|---------------------------------------------------|
 //! | `GET, POST /surfaces`               | Surfaces                                          |
 //! | `GET, PUT, DELETE /surfaces/{id}`   | One surface. Deleting it detaches it              |
-//! | `POST /surfaces/{id}/page`          | Shows a page: `{page: id \| null}`, once it's drawn |
+//! | `POST /surfaces/{id}/current`       | Navigates `main`: `{group?, layer: id \| null}`, once it's drawn |
+//! | `GET /surfaces/{id}/controls`       | The controls it last attached with                |
 //! | `GET /surface/{id}`                 | The web surface's WebSocket (see `web_surface`)    |
-//! | `GET, POST /pages`                  | Pages                                             |
-//! | `GET, PUT, DELETE /pages/{id}`      | One page. Deleting it deletes its bindings        |
-//! | `GET, POST /control-bindings?page`  | Control bindings, of one page with `page`         |
+//! | `GET, POST /layers`                 | Layers                                            |
+//! | `GET, PUT, DELETE /layers/{id}`     | One layer. Deleting it deletes its bindings       |
+//! | `GET, POST /control-bindings?layer` | Control bindings, of one layer with `layer`       |
 //! | `GET, PUT, DELETE /control-bindings/{id}` | One binding                                 |
 //! | `GET /control-bindings/problems`    | Each failing binding property's last error        |
 //! | `POST /control-bindings/preview`    | `{binding, size?}` → `{look, props, image}`, the key as it would be drawn |
@@ -60,7 +61,7 @@ use covalence_core::journal::{DEFAULT_RING_CAPACITY, Journal, JournalError};
 use covalence_core::state::ConnId;
 use covalence_core::surface::gesture::Timing;
 use covalence_core::surface::render::Renderer;
-use covalence_core::surface::{self, Page, PageId, Surface, SurfaceId, Surfaces};
+use covalence_core::surface::{self, Layer, LayerId, Surface, SurfaceId, Surfaces};
 use covalence_core::{Core, CoreError, Shared};
 use covalence_protocol::connection::{ConnCreate, ConnMode};
 use covalence_protocol::plugin::{Manifest, Permissions, PluginLoad};
@@ -83,7 +84,7 @@ pub use ui::{DEFAULT_UI_DIR, with_ui};
 const CONNECTION: &str = "connection";
 
 /// Roots that aliases may not take (state spec §1.1).
-const RESERVED_ROOTS: &[&str] = &["vars", "sys", "surface", "page", "flow"];
+const RESERVED_ROOTS: &[&str] = &["vars", "sys", "surface", "layer", "flow"];
 
 /// A plugin the server makes available: `io.covalence.videohub@0.1.0=plugins/videohub/mod.ts`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -211,9 +212,9 @@ pub struct App {
     /// Compiles and evaluates expressions, for the runtime and validation.
     evaluator: Arc<QuickJs>,
     surface_entities: RwLock<BTreeMap<SurfaceId, Surface>>,
-    pages: RwLock<BTreeMap<PageId, Page>>,
+    layers: RwLock<BTreeMap<LayerId, Layer>>,
     bindings: RwLock<BTreeMap<String, ControlBinding>>,
-    /// Attaches surfaces and draws the bindings of the pages they show.
+    /// Attaches surfaces and draws the bindings of the layers they show.
     surfaces: Surfaces,
     /// Evaluates `expr` bindings for previews, with the binding worker's limit.
     binding_evaluator: QuickJs,
@@ -256,12 +257,12 @@ impl App {
         // here (flow spec §8.4).
         let flows = load(&store, flow::ENTITY, |f: &Flow| f.id.clone())?;
         let surface_entities = load(&store, surface::SURFACE_ENTITY, |s: &Surface| s.id.clone())?;
-        let pages = load(&store, surface::PAGE_ENTITY, |p: &Page| p.id.clone())?;
+        let layers = load(&store, surface::LAYER_ENTITY, |p: &Layer| p.id.clone())?;
         let bindings = load(&store, binding::ENTITY, |b: &ControlBinding| b.id.clone())?;
         let surfaces = Surfaces::new(core.shared().clone(), Timing::default());
         surfaces.set_aliases(alias_map(&conns));
-        for page in pages.values() {
-            surfaces.set_page(page.clone())?;
+        for layer in layers.values() {
+            surfaces.set_layer(layer.clone())?;
         }
         for surface in surface_entities.values() {
             surfaces.set_surface(surface.clone())?;
@@ -290,7 +291,7 @@ impl App {
                 runtime,
                 evaluator,
                 surface_entities: RwLock::new(surface_entities),
-                pages: RwLock::new(pages),
+                layers: RwLock::new(layers),
                 bindings: RwLock::new(bindings),
                 surfaces,
                 binding_evaluator: QuickJs::new(expr::Limits {
@@ -407,13 +408,13 @@ impl App {
         if flow.slug.is_empty() {
             flow.slug = flow::derive_slug(&flow.name, &taken);
         }
-        let pages = self.surfaces.layouts();
+        let layers = self.surfaces.layers();
         let report = flow::validate(
             &flow,
             &flow::Context {
                 conns: &by_conn,
                 taken_slugs: &taken,
-                pages: &pages,
+                layers: &layers,
                 evaluator: self.evaluator.as_ref(),
             },
         );

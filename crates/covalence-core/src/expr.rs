@@ -27,7 +27,7 @@ pub const RESERVED_ROOTS: &[(&str, &str)] = &[
     ("sys", "sys"),
     ("flow", "flow"),
     ("surface", "surface"),
-    ("page", "page"),
+    ("layer", "layer"),
 ];
 
 /// JavaScript's reserved words, which can't be names in an expression.

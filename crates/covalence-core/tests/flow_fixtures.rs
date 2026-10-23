@@ -7,14 +7,15 @@ use std::path::{Path, PathBuf};
 
 use covalence_core::expr::QuickJs;
 use covalence_core::flow::{self, Context, Flow};
-use covalence_core::surface::Layout;
 use covalence_protocol::plugin::Manifest;
 use serde_json::{Value, json};
+
+mod common;
 
 const VH: &str = "01JBZ7P0D3F5G7H9J1K3L5M7N9";
 const VH2: &str = "01JBZ7P0D3F5G7H9J1K3L5M7NA";
 const UNLOADED: &str = "01JBZ7P0D3F5G7H9J1K3L5M7NB";
-const DECK_PAGE: &str = "01JBZ7P0D3F5G7H9J1K3L5M7PA";
+const DECK_LAYER: &str = "01JBZ7P0D3F5G7H9J1K3L5M7PA";
 
 /// The parts of the Videohub manifest that flows use.
 fn videohub() -> Manifest {
@@ -85,12 +86,16 @@ fn check(json: &Value) -> (Value, Value) {
     ]
     .into();
     let taken: BTreeSet<String> = ["taken".to_owned()].into();
-    let pages = [(DECK_PAGE.to_owned(), Layout { cols: 5, rows: 3 })].into();
+    let layers = [(
+        DECK_LAYER.to_owned(),
+        common::deck_layer(DECK_LAYER, "deck", 5, 3),
+    )]
+    .into();
     let evaluator = QuickJs::default();
     let ctx = Context {
         conns: &conns,
         taken_slugs: &taken,
-        pages: &pages,
+        layers: &layers,
         evaluator: &evaluator,
     };
     match Flow::parse(json) {
@@ -152,7 +157,7 @@ fn problems_say_what_is_wrong() {
         &Context {
             conns: &conns,
             taken_slugs: &BTreeSet::new(),
-            pages: &BTreeMap::new(),
+            layers: &BTreeMap::new(),
             evaluator: &QuickJs::default(),
         },
     );

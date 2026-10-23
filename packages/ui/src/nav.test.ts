@@ -19,8 +19,8 @@ describe("hash routes", () => {
       { tab: "journal", seq: 42 },
       { tab: "surfaces" },
       { tab: "surfaces", surface: "01JC0000000000000000000201" },
-      { tab: "surfaces", page: "01JBZ7P0D3F5G7H9J1K3L5M7PA" },
-      { tab: "surfaces", page: "01JBZ7P0D3F5G7H9J1K3L5M7PA", control: "k3" },
+      { tab: "surfaces", layer: "01JBZ7P0D3F5G7H9J1K3L5M7PA" },
+      { tab: "surfaces", layer: "01JBZ7P0D3F5G7H9J1K3L5M7PA", control: "k3" },
     ] as const) {
       expect(parseHash(hrefOf(route))).toEqual(route);
     }

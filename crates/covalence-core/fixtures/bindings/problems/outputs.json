@@ -1,0 +1,10 @@
+{
+  "binding": {
+    "layer": "01JBZ7P0D3F5G7H9J1K3L5M7PA",
+    "control": "k13",
+    "props": {
+      "label": { "kind": "expr", "source": "'Hi'" }
+    }
+  },
+  "errors": [{ "path": ["props", "label"], "code": "noOutput" }]
+}

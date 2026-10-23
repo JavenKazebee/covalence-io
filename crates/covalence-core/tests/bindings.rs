@@ -13,13 +13,14 @@ use covalence_core::binding::{
 use covalence_core::expr::{Evaluator, QuickJs, Scope, to_json};
 use covalence_core::flow::Problem;
 use covalence_core::state::{LiveState, Meta, Quality, Source, StatePath};
-use covalence_core::surface::Layout;
 use covalence_protocol::Value;
 use covalence_protocol::state::PathSegment;
 use serde_json::{Value as Json, json};
 
+mod common;
+
 const VH: &str = "01JBZ7P0D3F5G7H9J1K3L5M7N9";
-const PAGE: &str = "01JBZ7P0D3F5G7H9J1K3L5M7PA";
+const LAYER: &str = "01JBZ7P0D3F5G7H9J1K3L5M7PA";
 
 fn fixtures(dir: &str) -> Vec<PathBuf> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -47,12 +48,14 @@ fn summary(problems: &[Problem]) -> Json {
 }
 
 fn check(json: &Json) -> Json {
-    let pages = [(PAGE.to_owned(), Layout { cols: 5, rows: 3 })].into();
+    let mut layer = common::deck_layer(LAYER, "deck", 5, 3);
+    layer.controls[13].outputs.clear();
+    let layers = [(LAYER.to_owned(), layer)].into();
     let conns = [VH.to_owned()].into();
-    let taken = [(PAGE.to_owned(), "k14".to_owned())].into();
+    let taken = [(LAYER.to_owned(), "k14".to_owned())].into();
     let evaluator = QuickJs::default();
     let ctx = Context {
-        pages: &pages,
+        layers: &layers,
         conns: &conns,
         taken: &taken,
         evaluator: &evaluator,

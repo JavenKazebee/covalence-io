@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, watch } from "vue";
 import { DeckClient, newDeckState } from "../surfaces/deck";
-import { controlsOf, models, type Surface } from "../surfaces/model";
+import { keysOf, models, type Surface } from "../surfaces/model";
 
 /**
  * A virtual Stream Deck (ADR 0012): attached to the core while it's on
@@ -34,7 +34,7 @@ watch(
 );
 onBeforeUnmount(() => client?.stop());
 
-const controls = computed(() => (model.value === undefined ? [] : controlsOf(model.value.layout)));
+const controls = computed(() => (model.value === undefined ? [] : keysOf(model.value.layout)));
 
 function down(control: string, ev: PointerEvent) {
   if (ev.button !== 0) return;

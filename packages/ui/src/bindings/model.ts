@@ -21,7 +21,7 @@ export const propType = (prop: Prop): "text" | "color" => (prop === "label" ? "t
 /** The look of a key with nothing bound, as the renderer draws it (ADR 0023). */
 export const defaults: Record<Prop, string> = { label: "", textColor: "#ffffff", background: "#000000" };
 
-export const roots = ["vars", "sys", "surface", "page", "flow"] as const;
+export const roots = ["vars", "sys", "surface", "layer", "flow"] as const;
 export type Root = (typeof roots)[number];
 
 /** A state reference, stored by connection ID so renaming an alias breaks nothing. */
@@ -73,7 +73,7 @@ export const kindNames: Record<BindingKind, string> = {
 export interface ControlBinding {
   /** Empty in a create request. */
   id: string;
-  page: string;
+  layer: string;
   control: string;
   props: Partial<Record<Prop, Binding>>;
 }
@@ -258,7 +258,7 @@ export function toDraft(binding: ControlBinding): ControlBinding {
 
 /** The binding to send: properties in the editor's order, and none left empty. */
 export function fromDraft(draft: ControlBinding): ControlBinding {
-  const out: ControlBinding = { id: draft.id, page: draft.page, control: draft.control, props: {} };
+  const out: ControlBinding = { id: draft.id, layer: draft.layer, control: draft.control, props: {} };
   for (const prop of props) {
     const binding = draft.props[prop];
     if (binding !== undefined) out.props[prop] = copyJson(binding);
@@ -266,8 +266,8 @@ export function fromDraft(draft: ControlBinding): ControlBinding {
   return out;
 }
 
-export function newDraft(page: string, control: string): ControlBinding {
-  return { id: "", page, control, props: {} };
+export function newDraft(layer: string, control: string): ControlBinding {
+  return { id: "", layer, control, props: {} };
 }
 
 /** Every ref a binding reads, for showing which connections it needs. */

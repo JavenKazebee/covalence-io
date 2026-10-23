@@ -401,7 +401,7 @@ fn names_aliases_cannot_take() {
         "sys",
         "flow",
         "surface",
-        "page",
+        "layer",
         "undefined",
     ] {
         assert!(is_taken_name(taken), "{taken}");

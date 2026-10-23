@@ -16,7 +16,7 @@ const api = [
   "/runs",
   "/expressions",
   "/surfaces",
-  "/pages",
+  "/layers",
   "/control-bindings",
 ];
 

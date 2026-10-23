@@ -7,13 +7,13 @@ const CALL = "01M5G0BXZ5X3WHGEVZW8PV0WQS";
 const FLOW = "01JC0000000000000000000001";
 const RUN = "01JC00000000000000000RUN042";
 const SURFACE = "01JC0000000000000000000201";
-const PAGE = "01JBZ7P0D3F5G7H9J1K3L5M7PA";
+const LAYER = "01JBZ7P0D3F5G7H9J1K3L5M7PA";
 const ctx: SummaryContext = {
   alias: (id) => (id === CONN ? "vh" : id),
   callName: (call) => (call === CALL ? "vh.route" : undefined),
   flowName: (id) => (id === FLOW ? "Route twice" : id),
   surfaceName: (id) => (id === SURFACE ? "FOH deck" : id),
-  pageName: (id) => (id === PAGE ? "Cameras" : id),
+  layerName: (id) => (id === LAYER ? "Cameras" : id),
 };
 
 function entry(kind: string, data: unknown): JournalEntry {
@@ -96,8 +96,8 @@ group("journal summaries", () => {
     expect(describeOrigin({ core: "system" }, ctx)).toBe("core system");
   });
 
-  it("names control events by surface, control and page", () => {
-    expect(describe(entry("input.event", { surface: SURFACE, layer: PAGE, control: "k3", event: "press" }), ctx)).toBe(
+  it("names control events by surface, control and layer", () => {
+    expect(describe(entry("input.event", { surface: SURFACE, layer: LAYER, control: "k3", event: "press" }), ctx)).toBe(
       "FOH deck k3 press on Cameras",
     );
     expect(describe(entry("input.event", { surface: SURFACE, control: "k0", event: "hold", delta: 2 }), ctx)).toBe("FOH deck k0 hold ×2");

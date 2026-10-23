@@ -3,7 +3,7 @@
 import type { ControlBinding, Preview, RuntimeProblem, SavedBinding } from "./bindings/model";
 import type { Evaluated, FireResult, Flow, Problem, RunInfo, Saved } from "./flows/model";
 import type { HostStatus, JournalEntry } from "./live/protocol";
-import type { Page, SavedPage, SavedSurface, Surface } from "./surfaces/model";
+import type { ControlDef, Layer, SavedLayer, SavedSurface, Surface } from "./surfaces/model";
 
 /** A JSON Schema, as plugin manifests write them. Only what the forms read is typed. */
 export interface JsonSchema {
@@ -156,14 +156,20 @@ export const api = {
   updateSurface: (surface: Surface) =>
     call<SavedSurface>("PUT", `/surfaces/${encodeURIComponent(surface.id)}`, surface),
   deleteSurface: (id: string) => call<null>("DELETE", `/surfaces/${encodeURIComponent(id)}`),
-  /** Answers once the surface has been sent its keys. */
-  showPage: (surface: string, page: string | null) =>
-    call<{ surface: string; page: string | null }>("POST", `/surfaces/${encodeURIComponent(surface)}/page`, { page }),
-  pages: () => call<Page[]>("GET", "/pages"),
-  createPage: (page: Page) => call<SavedPage>("POST", "/pages", page),
-  updatePage: (page: Page) => call<SavedPage>("PUT", `/pages/${encodeURIComponent(page.id)}`, page),
-  deletePage: (id: string) => call<null>("DELETE", `/pages/${encodeURIComponent(id)}`),
-  bindings: (page: string) => call<ControlBinding[]>("GET", `/control-bindings?page=${encodeURIComponent(page)}`),
+  /** Navigates the surface's `main` group. Answers once the surface has been sent its keys. */
+  navigate: (surface: string, layer: string | null) =>
+    call<{ surface: string; group: string; layer: string | null }>(
+      "POST",
+      `/surfaces/${encodeURIComponent(surface)}/current`,
+      { layer },
+    ),
+  /** The controls the surface last attached with; 404 if it hasn't attached since the server started. */
+  surfaceControls: (surface: string) => call<ControlDef[]>("GET", `/surfaces/${encodeURIComponent(surface)}/controls`),
+  layers: () => call<Layer[]>("GET", "/layers"),
+  createLayer: (layer: Layer) => call<SavedLayer>("POST", "/layers", layer),
+  updateLayer: (layer: Layer) => call<SavedLayer>("PUT", `/layers/${encodeURIComponent(layer.id)}`, layer),
+  deleteLayer: (id: string) => call<null>("DELETE", `/layers/${encodeURIComponent(id)}`),
+  bindings: (layer: string) => call<ControlBinding[]>("GET", `/control-bindings?layer=${encodeURIComponent(layer)}`),
   createBinding: (binding: ControlBinding) => call<SavedBinding>("POST", "/control-bindings", binding),
   updateBinding: (binding: ControlBinding) =>
     call<SavedBinding>("PUT", `/control-bindings/${encodeURIComponent(binding.id)}`, binding),

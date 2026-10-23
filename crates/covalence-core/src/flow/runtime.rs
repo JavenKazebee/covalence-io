@@ -428,16 +428,16 @@ async fn match_events(inner: Arc<Inner>) {
                 (candidates, Value::Map(payload), Origin::system())
             }
             Record::InputEvent(input) => {
-                let Some(page) = &input.layer else { continue };
+                let Some(layer) = &input.layer else { continue };
                 let candidates = inner.candidates(|t| {
                     matches!(t, Trigger::Gesture { control, gesture }
-                        if &control.page == page
+                        if &control.layer == layer
                             && control.control == input.control
                             && *gesture == input.event)
                 });
                 let mut payload = vec![
                     ("surface".into(), input.surface.as_str().into()),
-                    ("page".into(), page.as_str().into()),
+                    ("layer".into(), layer.as_str().into()),
                     ("control".into(), input.control.as_str().into()),
                     ("gesture".into(), input.event.as_str().into()),
                 ];

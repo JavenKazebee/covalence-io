@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::journal::ControlEvent;
 use crate::state::ConnId;
-use crate::surface::PageId;
+use crate::surface::LayerId;
 
 pub mod runtime;
 mod validate;
@@ -93,19 +93,19 @@ pub enum Trigger {
     },
     /// An expression over state, on an edge (spec §8.2).
     State { when: Expr, edge: Edge },
-    /// A gesture on a control of a page, on any surface showing it
-    /// (surfaces spec §3.1).
+    /// An event on a control of a layer, on any surface where that layer
+    /// controls it (surfaces spec §7).
     Gesture {
         control: ControlRef,
         gesture: ControlEvent,
     },
 }
 
-/// A control on a page.
+/// A control on a layer.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ControlRef {
-    pub page: PageId,
+    pub layer: LayerId,
     pub control: String,
 }
 

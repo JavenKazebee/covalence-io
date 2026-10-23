@@ -93,7 +93,7 @@ The parts of ADR 0024 marked **Now**. They're the shape changes that would other
 - [x] **Events** (surfaces spec §4.2): the gesture recogniser reads input state and journals `input.event` (`press`, `release`, `double`, `long`, `hold`, `turn`, `change`, `touch`, `untouch`) with `cause` → the patch and the controlling `layer`, replacing `input.gesture`.
   - Done: `gesture::Change` in, `ControlEvent` out. A `release` carries its press's layer, even after the page changes. Until pages become layers, `layer` is the shown page's ID and `gesture` triggers match on it; `turn`, `change`, `touch` and `untouch` gestures are `unsupported`. The UI's deck attaches with capabilities and `at`, and the journal summarises `input.event`.
 
-- [ ] **Pages become layers** (surfaces spec §1, §5):
+- [x] **Pages become layers** (surfaces spec §1, §5):
   - The `page` entity becomes `layer`, with `controls` replacing `layout`, and `Layout` goes. Routes move from `/pages` to `/layers`.
   - The `page` state root becomes `layer`, and `startPage` becomes `startLayer`.
   - `surface.<slug>.page` becomes `surface.<slug>.current.main`, and `POST /surfaces/{id}/page` becomes `POST /surfaces/{id}/current`.
@@ -101,16 +101,18 @@ The parts of ADR 0024 marked **Now**. They're the shape changes that would other
   - `GET /surfaces/{id}/controls` returns what the surface last attached with.
   - Layer validation: unique control IDs, at most 256, bound controls still present. `unknownPage` becomes `unknownLayer`.
   - Every layer is in the `main` navigation group, which is M5's behaviour.
+  - Done: `Layer` and `LayerControl`, with `InputCapKind` and `OutputCapKind` for what a layer needs (the journal's `InputKind` is still what a surface sends). `POST /current` takes `{group?, layer}` and refuses any group but `main`. `Surfaces::controls` is kept in memory, so `/controls` answers `404` until the surface attaches after a restart. A layer that loses a bound control's output is `noOutput` at `controls`. `gesture` triggers already name `{layer, control}`, which is the `control` trigger's `ControlRef`.
 - [ ] **`control` triggers** (surfaces spec §7, [flow spec §8.2](../specs/flows.md)):
   - `gesture` triggers become `{kind: "control", control: {layer, control}, event}`.
   - An event the control's inputs can't give is `unsupported`.
   - A `state` trigger over `pressed` sees every press, however short.
   - Fixtures renamed and updated.
-- [ ] **Bindings** ([bindings spec §1](../specs/bindings.md)): `page` becomes `layer`. A property can only be bound on a layer control that declares its output (`noOutput`). M5's three properties need `image`.
+- [x] **Bindings** ([bindings spec §1](../specs/bindings.md)): `page` becomes `layer`. A property can only be bound on a layer control that declares its output (`noOutput`). M5's three properties need `image`.
+  - Done: `Prop::output` and `ControlBinding::outputs`; `problems/outputs.json` binds `k13`, which the fixtures' layer lists without outputs.
 - [ ] **UI:**
-  - "Pages" become "Layers" throughout the Surfaces tab.
-  - The virtual deck attaches with capabilities and `at`.
-  - "New layer" on a surface copies its controls, and the layer editor draws the grid from `at`.
+  - [x] "Pages" become "Layers" throughout the Surfaces tab.
+  - [x] The virtual deck attaches with capabilities and `at`.
+  - [x] "New layer" on a surface copies its controls, and the layer editor draws the grid from `at`. Done: it copies what `/controls` returns, or the model's controls if the surface hasn't attached since the server started. Arrow keys move to the nearest control in that direction, and a control with no `image` output says there's nothing to bind on it yet.
   - "Add key trigger" uses `control` and `event`.
   - Journal summaries cover input patches and `input.event`, and the state view shows control input.
 - [ ] **Tests:**

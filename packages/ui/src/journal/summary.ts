@@ -12,8 +12,8 @@ export interface SummaryContext {
   flowName?(flow: string): string;
   /** A surface's name from its ID. */
   surfaceName?(surface: string): string;
-  /** A page's name from its ID. */
-  pageName?(page: string): string;
+  /** A layer's name from its ID. */
+  layerName?(layer: string): string;
 }
 
 type Data = Record<string, unknown>;
@@ -119,11 +119,11 @@ export function describe(entry: JournalEntry, ctx: SummaryContext): string {
       return `${shortRun(d.run)} ${String(d.status)}${d.error === undefined ? "" : `: ${errorText(d.error)}`}`;
     // Control events (surfaces spec §4.2). Input itself is a `state.patch`.
     case "input.event": {
-      const page = d.layer === undefined ? "" : ` on ${ctx.pageName?.(String(d.layer)) ?? String(d.layer)}`;
+      const layer = d.layer === undefined ? "" : ` on ${ctx.layerName?.(String(d.layer)) ?? String(d.layer)}`;
       const delta =
         typeof d.delta !== "number" ? "" : d.event === "turn" ? ` ${d.delta > 0 ? "+" : ""}${d.delta}` : ` ×${d.delta}`;
       const value = d.value === undefined ? "" : ` ${json(d.value, 20)}`;
-      return `${surface(d.surface)} ${String(d.control)} ${String(d.event)}${delta}${value}${page}`;
+      return `${surface(d.surface)} ${String(d.control)} ${String(d.event)}${delta}${value}${layer}`;
     }
     default:
       return json(entry.data);

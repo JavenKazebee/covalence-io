@@ -7,7 +7,7 @@ import { usePreviews } from "../../bindings/usePreviews";
 import { firesOn, newFlowDraft, type ShownProblem } from "../../flows/model";
 import { navigate } from "../../nav";
 import { useFlowsStore } from "../../stores/flows";
-import type { Page } from "../../surfaces/model";
+import type { Layer } from "../../surfaces/model";
 import PropEditor from "./PropEditor.vue";
 
 /**
@@ -16,7 +16,7 @@ import PropEditor from "./PropEditor.vue";
  * deletes the binding.
  */
 const props = defineProps<{
-  page: Page;
+  layer: Layer;
   control: string;
   stored: ControlBinding | undefined;
   runtime: RuntimeProblem[];
@@ -26,8 +26,8 @@ const emit = defineEmits<{ saved: [] }>();
 const flows = useFlowsStore();
 const invalid = provideInvalid();
 
-// Mounted per key (keyed by the page editor), so the draft starts from what's stored.
-const draft = ref<ControlBinding>(props.stored === undefined ? newDraft(props.page.id, props.control) : toDraft(props.stored));
+// Mounted per control (keyed by the layer editor), so the draft starts from what's stored.
+const draft = ref<ControlBinding>(props.stored === undefined ? newDraft(props.layer.id, props.control) : toDraft(props.stored));
 const problems = ref<ShownProblem[]>([]);
 const saving = ref(false);
 const saveError = ref<string | null>(null);
@@ -39,12 +39,12 @@ const result = computed(() => results.get(props.control));
 const preview = computed(() => result.value?.preview);
 
 const empty = computed(() => Object.keys(sending.value.props).length === 0);
-const baseline = computed(() => JSON.stringify(props.stored === undefined ? newDraft(props.page.id, props.control) : fromDraft(props.stored)));
+const baseline = computed(() => JSON.stringify(props.stored === undefined ? newDraft(props.layer.id, props.control) : fromDraft(props.stored)));
 const dirty = computed(() => JSON.stringify(sending.value) !== baseline.value);
 
 const runtimeOf = (prop: string) => props.runtime.find((p) => p.prop === prop)?.message;
 const problemsOf = (prop: string) => problems.value.filter((p) => p.path[0] === "props" && p.path[1] === prop);
-/** Problems no property shows: the page, the control, the binding as a whole. */
+/** Problems no property shows: the layer, the control, the binding as a whole. */
 const otherProblems = computed(() => [
   ...problems.value.filter((p) => !(p.path[0] === "props" && allProps.includes(p.path[1] as never))),
   ...(result.value?.problems ?? []).map((p) => ({ ...p, warning: false })),
@@ -61,7 +61,7 @@ async function save() {
   try {
     if (empty.value) {
       if (props.stored !== undefined) await api.deleteBinding(props.stored.id);
-      draft.value = newDraft(props.page.id, props.control);
+      draft.value = newDraft(props.layer.id, props.control);
       problems.value = [];
       savedNote.value = "Unbound.";
     } else {
@@ -88,7 +88,7 @@ async function save() {
 }
 
 function revert() {
-  draft.value = props.stored === undefined ? newDraft(props.page.id, props.control) : toDraft(props.stored);
+  draft.value = props.stored === undefined ? newDraft(props.layer.id, props.control) : toDraft(props.stored);
   problems.value = [];
   saveError.value = null;
   savedNote.value = null;
@@ -97,7 +97,7 @@ function revert() {
 // ---- When pressed ----
 
 /** The flow that runs when this key is pressed, if there is one. */
-const pressFlow = computed(() => flows.flows.find((f) => f.triggers.some((t) => firesOn(t, props.page.id, props.control, "press"))));
+const pressFlow = computed(() => flows.flows.find((f) => f.triggers.some((t) => firesOn(t, props.layer.id, props.control, "press"))));
 
 function whenPressed() {
   if (pressFlow.value !== undefined) {
@@ -107,8 +107,8 @@ function whenPressed() {
   // A Button-view flow: this key's press, then steps in order.
   const flow = newFlowDraft();
   const label = preview.value?.look.label.trim();
-  flow.name = `${props.page.name} ${props.control}${label ? ` (${label})` : ""}`;
-  flow.triggers = [{ kind: "gesture", control: { page: props.page.id, control: props.control }, gesture: "press" }];
+  flow.name = `${props.layer.name} ${props.control}${label ? ` (${label})` : ""}`;
+  flow.triggers = [{ kind: "gesture", control: { layer: props.layer.id, control: props.control }, gesture: "press" }];
   flows.prefill = flow;
   navigate({ tab: "flows", flow: "new" });
 }

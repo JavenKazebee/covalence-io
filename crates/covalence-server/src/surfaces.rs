@@ -1,5 +1,5 @@
-//! Surfaces, pages and control bindings over HTTP (surfaces spec §5,
-//! bindings spec §4). The web surface's WebSocket is in `web_surface`.
+//! Surfaces, layers and control bindings over HTTP (surfaces spec §9,
+//! bindings spec §2). The web surface's WebSocket is in `web_surface`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -17,7 +17,9 @@ use covalence_core::flow;
 use covalence_core::journal::Origin;
 use covalence_core::state::ConnId;
 use covalence_core::surface::render::Rgb;
-use covalence_core::surface::{self, Page, PageId, ShowError, Surface, SurfaceId, Surfaces};
+use covalence_core::surface::{
+    self, ControlDef, Layer, LayerId, OutputCapKind, ShowError, Surface, SurfaceId, Surfaces,
+};
 use covalence_core::text_path;
 use serde::Deserialize;
 use serde_json::{Value as JsonValue, json};
@@ -38,12 +40,13 @@ pub(crate) fn routes() -> Router<Arc<App>> {
                 .put(replace_surface)
                 .delete(remove_surface),
         )
-        .route("/surfaces/{id}/page", post(show_page))
+        .route("/surfaces/{id}/current", post(navigate))
+        .route("/surfaces/{id}/controls", get(surface_controls))
         .route("/surface/{id}", get(crate::web_surface::upgrade))
-        .route("/pages", get(list_pages).post(create_page))
+        .route("/layers", get(list_layers).post(create_layer))
         .route(
-            "/pages/{id}",
-            get(read_page).put(replace_page).delete(remove_page),
+            "/layers/{id}",
+            get(read_layer).put(replace_layer).delete(remove_layer),
         )
         .route("/control-bindings", get(list_bindings).post(create_binding))
         .route("/control-bindings/problems", get(binding_problems))
@@ -67,8 +70,8 @@ impl App {
         read(&self.surface_entities).clone()
     }
 
-    pub fn pages(&self) -> BTreeMap<PageId, Page> {
-        read(&self.pages).clone()
+    pub fn layers(&self) -> BTreeMap<LayerId, Layer> {
+        read(&self.layers).clone()
     }
 
     pub fn control_bindings(&self) -> BTreeMap<String, ControlBinding> {
@@ -91,7 +94,7 @@ impl App {
         if surface.slug.is_empty() {
             surface.slug = flow::derive_slug_for("surface", &surface.name, &taken);
         }
-        let report = surface::validate_surface(&surface, &taken, &self.surfaces.layouts());
+        let report = surface::validate_surface(&surface, &taken, &self.surfaces.layers());
         if !report.is_ok() {
             return Err(SaveError::Invalid {
                 errors: report.errors,
@@ -114,45 +117,50 @@ impl App {
         Ok(removed)
     }
 
-    /// Parses, checks and stores a page from the API.
-    pub fn save_page(&self, json: &JsonValue, id: Option<&str>) -> SaveResult<Page> {
-        let mut page = Page::parse(json).map_err(SaveError::invalid)?;
-        assign_id(&mut page.id, id, |id| read(&self.pages).contains_key(id))?;
+    /// Parses, checks and stores a layer from the API.
+    pub fn save_layer(&self, json: &JsonValue, id: Option<&str>) -> SaveResult<Layer> {
+        let mut layer = Layer::parse(json).map_err(SaveError::invalid)?;
+        assign_id(&mut layer.id, id, |id| read(&self.layers).contains_key(id))?;
         let _saving = self.saving.lock().unwrap_or_else(|e| e.into_inner());
-        let taken: BTreeSet<String> = read(&self.pages)
+        let taken: BTreeSet<String> = read(&self.layers)
             .values()
-            .filter(|p| p.id != page.id)
+            .filter(|p| p.id != layer.id)
             .map(|p| p.slug.clone())
             .collect();
-        if page.slug.is_empty() {
-            page.slug = flow::derive_slug_for("page", &page.name, &taken);
+        if layer.slug.is_empty() {
+            layer.slug = flow::derive_slug_for("layer", &layer.name, &taken);
         }
-        let bound: BTreeSet<String> = read(&self.bindings)
+        let mut bound: BTreeMap<String, BTreeSet<OutputCapKind>> = BTreeMap::new();
+        for b in read(&self.bindings)
             .values()
-            .filter(|b| b.page == page.id)
-            .map(|b| b.control.clone())
-            .collect();
-        let report = surface::validate_page(&page, &taken, &bound);
+            .filter(|b| b.layer == layer.id)
+        {
+            bound
+                .entry(b.control.clone())
+                .or_default()
+                .extend(b.outputs());
+        }
+        let report = surface::validate_layer(&layer, &taken, &bound);
         if !report.is_ok() {
             return Err(SaveError::Invalid {
                 errors: report.errors,
                 warnings: report.warnings,
             });
         }
-        self.put_entity(surface::PAGE_ENTITY, &page.id, &page)?;
-        self.surfaces.set_page(page.clone())?;
-        write(&self.pages).insert(page.id.clone(), page.clone());
-        Ok((page, report.warnings))
+        self.put_entity(surface::LAYER_ENTITY, &layer.id, &layer)?;
+        self.surfaces.set_layer(layer.clone())?;
+        write(&self.layers).insert(layer.id.clone(), layer.clone());
+        Ok((layer, report.warnings))
     }
 
-    /// Removes a page, its bindings, and any surface's use of it as a start
-    /// page. Flows whose `gesture` triggers name it keep them, and are told
+    /// Removes a layer, its bindings, and any surface's use of it as a start
+    /// layer. Flows whose `gesture` triggers name it keep them, and are told
     /// when they're next saved.
-    pub fn delete_page(&self, id: &str) -> Result<Option<Page>, SaveError> {
+    pub fn delete_layer(&self, id: &str) -> Result<Option<Layer>, SaveError> {
         let _saving = self.saving.lock().unwrap_or_else(|e| e.into_inner());
         let bound: Vec<String> = read(&self.bindings)
             .values()
-            .filter(|b| b.page == id)
+            .filter(|b| b.layer == id)
             .map(|b| b.id.clone())
             .collect();
         for binding in bound {
@@ -162,18 +170,18 @@ impl App {
         }
         let starting: Vec<Surface> = read(&self.surface_entities)
             .values()
-            .filter(|s| s.start_page.as_deref() == Some(id))
+            .filter(|s| s.start_layer.as_deref() == Some(id))
             .cloned()
             .collect();
         for mut surface in starting {
-            surface.start_page = None;
+            surface.start_layer = None;
             self.put_entity(surface::SURFACE_ENTITY, &surface.id, &surface)?;
             self.surfaces.set_surface(surface.clone())?;
             write(&self.surface_entities).insert(surface.id.clone(), surface);
         }
-        self.delete_entity(surface::PAGE_ENTITY, id)?;
-        self.surfaces.remove_page(id)?;
-        Ok(write(&self.pages).remove(id))
+        self.delete_entity(surface::LAYER_ENTITY, id)?;
+        self.surfaces.remove_layer(id)?;
+        Ok(write(&self.layers).remove(id))
     }
 
     /// Parses, checks and stores a control binding from the API.
@@ -183,16 +191,16 @@ impl App {
             read(&self.bindings).contains_key(id)
         })?;
         let _saving = self.saving.lock().unwrap_or_else(|e| e.into_inner());
-        let taken: BTreeSet<(PageId, String)> = read(&self.bindings)
+        let taken: BTreeSet<(LayerId, String)> = read(&self.bindings)
             .values()
             .filter(|b| b.id != binding.id)
-            .map(|b| (b.page.clone(), b.control.clone()))
+            .map(|b| (b.layer.clone(), b.control.clone()))
             .collect();
         let conns: BTreeSet<ConnId> = self.conns().keys().cloned().collect();
         let report = binding::validate(
             &binding,
             &binding::Context {
-                pages: &self.surfaces.layouts(),
+                layers: &self.surfaces.layers(),
                 conns: &conns,
                 taken: &taken,
                 evaluator: self.evaluator.as_ref(),
@@ -285,16 +293,20 @@ async fn remove_surface(
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ShowBody {
-    page: Option<PageId>,
+struct NavigateBody {
+    /// Only `main` until navigation groups arrive.
+    #[serde(default)]
+    group: Option<String>,
+    layer: Option<LayerId>,
 }
 
-/// Shows a page on a surface (surfaces spec §5) and answers once the
-/// surface has been sent its keys: `{surface, page}`.
-async fn show_page(
+/// Navigates a surface's `main` group to a layer, or to nothing (surfaces
+/// spec §5.3), and answers once the surface has been sent its controls'
+/// outputs: `{surface, group, layer}`.
+async fn navigate(
     State(app): State<Arc<App>>,
     Path(id): Path<String>,
-    Json(body): Json<ShowBody>,
+    Json(body): Json<NavigateBody>,
 ) -> Response {
     let origin = Origin::User {
         user: "api".into(),
@@ -303,22 +315,29 @@ async fn show_page(
     let problem = |status: StatusCode, code: &str, message: String| {
         (status, Json(json!({ "error": message, "code": code }))).into_response()
     };
-    match app.surfaces().show(&id, body.page.as_deref(), origin) {
+    if let Some(group) = body.group.as_deref().filter(|g| *g != "main") {
+        return problem(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "unsupported",
+            format!("only the main group can be navigated, not {group:?}"),
+        );
+    }
+    match app.surfaces().show(&id, body.layer.as_deref(), origin) {
         Ok(()) => {
             app.surfaces().flush().await;
-            Json(json!({ "surface": id, "page": body.page })).into_response()
+            Json(json!({ "surface": id, "group": "main", "layer": body.layer })).into_response()
         }
         Err(e @ ShowError::UnknownSurface(_)) => {
             ApiError::new(StatusCode::NOT_FOUND, e.to_string()).into_response()
         }
-        Err(e @ ShowError::UnknownPage(_)) => problem(
+        Err(e @ ShowError::UnknownLayer(_)) => problem(
             StatusCode::UNPROCESSABLE_ENTITY,
-            "unknownPage",
+            "unknownLayer",
             e.to_string(),
         ),
-        Err(ShowError::DoesNotFit { page, missing }) => {
+        Err(ShowError::DoesNotFit { layer, missing }) => {
             let message = ShowError::DoesNotFit {
-                page,
+                layer,
                 missing: missing.clone(),
             }
             .to_string();
@@ -329,43 +348,62 @@ async fn show_page(
     }
 }
 
-async fn list_pages(State(app): State<Arc<App>>) -> Json<Vec<Page>> {
-    Json(app.pages().into_values().collect())
+/// The controls a surface declared when it last attached, for "New layer".
+async fn surface_controls(
+    State(app): State<Arc<App>>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Vec<ControlDef>>> {
+    if !app.surface_entities().contains_key(&id) {
+        return Err(not_found("surface", &id));
+    }
+    app.surfaces().controls(&id).map(Json).ok_or_else(|| {
+        ApiError::new(
+            StatusCode::NOT_FOUND,
+            format!("surface {id:?} hasn't attached since the server started"),
+        )
+    })
 }
 
-async fn read_page(State(app): State<Arc<App>>, Path(id): Path<String>) -> ApiResult<Json<Page>> {
-    app.pages()
+async fn list_layers(State(app): State<Arc<App>>) -> Json<Vec<Layer>> {
+    Json(app.layers().into_values().collect())
+}
+
+async fn read_layer(State(app): State<Arc<App>>, Path(id): Path<String>) -> ApiResult<Json<Layer>> {
+    app.layers()
         .remove(&id)
         .map(Json)
-        .ok_or_else(|| not_found("page", &id))
+        .ok_or_else(|| not_found("layer", &id))
 }
 
-async fn create_page(State(app): State<Arc<App>>, Json(body): Json<JsonValue>) -> Response {
-    saved(app.save_page(&body, None), "page", StatusCode::CREATED)
+async fn create_layer(State(app): State<Arc<App>>, Json(body): Json<JsonValue>) -> Response {
+    saved(app.save_layer(&body, None), "layer", StatusCode::CREATED)
 }
 
-async fn replace_page(
+async fn replace_layer(
     State(app): State<Arc<App>>,
     Path(id): Path<String>,
     Json(body): Json<JsonValue>,
 ) -> Response {
-    let result = app.save_page(&body, Some(&id));
+    let result = app.save_layer(&body, Some(&id));
     app.surfaces().flush().await;
-    saved(result, "page", StatusCode::OK)
+    saved(result, "layer", StatusCode::OK)
 }
 
-async fn remove_page(State(app): State<Arc<App>>, Path(id): Path<String>) -> ApiResult<StatusCode> {
-    let removed = app.delete_page(&id).map_err(ApiError::internal)?;
+async fn remove_layer(
+    State(app): State<Arc<App>>,
+    Path(id): Path<String>,
+) -> ApiResult<StatusCode> {
+    let removed = app.delete_layer(&id).map_err(ApiError::internal)?;
     app.surfaces().flush().await;
     match removed {
         Some(_) => Ok(StatusCode::NO_CONTENT),
-        None => Err(not_found("page", &id)),
+        None => Err(not_found("layer", &id)),
     }
 }
 
 #[derive(Deserialize)]
 struct BindingsQuery {
-    page: Option<PageId>,
+    layer: Option<LayerId>,
 }
 
 async fn list_bindings(
@@ -375,7 +413,7 @@ async fn list_bindings(
     Json(
         app.control_bindings()
             .into_values()
-            .filter(|b| query.page.as_ref().is_none_or(|p| *p == b.page))
+            .filter(|b| query.layer.as_ref().is_none_or(|p| *p == b.layer))
             .collect(),
     )
 }
@@ -390,7 +428,7 @@ async fn read_binding(
         .ok_or_else(|| not_found("binding", &id))
 }
 
-/// Answers once surfaces showing the binding's page have been redrawn.
+/// Answers once surfaces showing the binding's layer have been redrawn.
 async fn create_binding(State(app): State<Arc<App>>, Json(body): Json<JsonValue>) -> Response {
     let result = app.save_binding(&body, None);
     app.surfaces().flush().await;

@@ -23,7 +23,7 @@ import { hrefOf, navigate } from "../nav";
 import { useCatalogStore } from "../stores/catalog";
 import { useFlowsStore } from "../stores/flows";
 import { useSurfacesStore } from "../stores/surfaces";
-import { controlsOf, gestureHelp, gestures } from "../surfaces/model";
+import { gestureHelp, gestures } from "../surfaces/model";
 import ExprInput from "./ExprInput.vue";
 import FlowRuns from "./FlowRuns.vue";
 import StepList from "./StepList.vue";
@@ -115,8 +115,12 @@ function eventsOf(connId: string) {
 function addTrigger(kind: "api" | "event" | "state" | "gesture") {
   if (draft.value === null) return;
   if (kind === "gesture") {
-    const page = surfaces.pages[0]?.id ?? "";
-    draft.value.triggers.push({ kind: "gesture", control: { page, control: "k0" }, gesture: "press" });
+    const layer = surfaces.layers[0];
+    draft.value.triggers.push({
+      kind: "gesture",
+      control: { layer: layer?.id ?? "", control: layer?.controls[0]?.id ?? "" },
+      gesture: "press",
+    });
     return;
   }
   if (kind === "api") {
@@ -137,11 +141,10 @@ const edgeHelp: Record<Edge, string> = {
   change: "Whenever its value changes",
 };
 
-/** The keys of a trigger's page, keeping the one it names if the page has shrunk or gone. */
-function keysOf(pageId: string, current: string): string[] {
-  const page = surfaces.page(pageId);
-  const keys = page === undefined ? [] : controlsOf(page.layout);
-  return keys.includes(current) ? keys : [current, ...keys];
+/** The controls of a trigger's layer, keeping the one it names if the layer has lost it or gone. */
+function controlsOf(layerId: string, current: string): string[] {
+  const ids = surfaces.layer(layerId)?.controls.map((c) => c.id) ?? [];
+  return ids.includes(current) ? ids : [current, ...ids];
 }
 
 /** A sample event trigger for previewing a filter: the payload isn't known until it fires. */
@@ -297,17 +300,17 @@ async function remove() {
           <template v-else-if="trigger.kind === 'gesture'">
             <strong>Key</strong>
             <select
-              v-model="trigger.control.page"
-              :aria-label="`Trigger ${i + 1} page`"
+              v-model="trigger.control.layer"
+              :aria-label="`Trigger ${i + 1} layer`"
             >
               <option
-                v-if="!surfaces.page(trigger.control.page)"
-                :value="trigger.control.page"
+                v-if="!surfaces.layer(trigger.control.layer)"
+                :value="trigger.control.layer"
               >
-                {{ trigger.control.page || "Pick a page" }}
+                {{ trigger.control.layer || "Pick a layer" }}
               </option>
               <option
-                v-for="p in surfaces.pages"
+                v-for="p in surfaces.layers"
                 :key="p.id"
                 :value="p.id"
               >
@@ -316,10 +319,10 @@ async function remove() {
             </select>
             <select
               v-model="trigger.control.control"
-              :aria-label="`Trigger ${i + 1} key`"
+              :aria-label="`Trigger ${i + 1} control`"
             >
               <option
-                v-for="k in keysOf(trigger.control.page, trigger.control.control)"
+                v-for="k in controlsOf(trigger.control.layer, trigger.control.control)"
                 :key="k"
                 :value="k"
               >
@@ -345,10 +348,10 @@ async function remove() {
               </option>
             </select>
             <a
-              v-if="surfaces.page(trigger.control.page)"
+              v-if="surfaces.layer(trigger.control.layer)"
               class="muted"
-              :href="hrefOf({ tab: 'surfaces', page: trigger.control.page, control: trigger.control.control })"
-            >Open the page</a>
+              :href="hrefOf({ tab: 'surfaces', layer: trigger.control.layer, control: trigger.control.control })"
+            >Open the layer</a>
           </template>
           <template v-else-if="trigger.kind === 'state'">
             <strong>State</strong>
@@ -499,8 +502,8 @@ async function remove() {
         <button
           type="button"
           class="secondary"
-          :disabled="surfaces.pages.length === 0"
-          :title="surfaces.pages.length === 0 ? 'Make a page in Surfaces first' : ''"
+          :disabled="surfaces.layers.length === 0"
+          :title="surfaces.layers.length === 0 ? 'Make a layer in Surfaces first' : ''"
           @click="addTrigger('gesture')"
         >
           Add key trigger

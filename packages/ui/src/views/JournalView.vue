@@ -33,7 +33,7 @@ const ctx: SummaryContext = {
   callName: (call) => calls.value.get(call),
   flowName: (id) => flows.name(id),
   surfaceName: (id) => surfaces.surfaceName(id),
-  pageName: (id) => surfaces.pageName(id),
+  layerName: (id) => surfaces.layerName(id),
 };
 
 const rows = computed(() => {
