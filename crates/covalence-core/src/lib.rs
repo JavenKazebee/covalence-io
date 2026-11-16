@@ -11,9 +11,11 @@ pub mod gate;
 pub mod host;
 pub mod journal;
 pub mod schema;
+pub mod source;
 pub mod state;
 pub mod surface;
 pub mod text_path;
+pub mod transform;
 
 pub use covalence_protocol::PROTOCOL_VERSION;
 pub use engine::{ActionOutcome, ActionRequest, Core, CoreError};

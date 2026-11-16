@@ -6,12 +6,14 @@
 //! Anything outside the subset is rejected by [`Flow::parse`], never stored
 //! and ignored.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::time::Duration as StdDuration;
 
 use serde::{Deserialize, Serialize};
 
 use crate::journal::ControlEvent;
+use crate::source::Source;
 use crate::state::ConnId;
 use crate::surface::LayerId;
 
@@ -151,14 +153,16 @@ impl Step {
 #[derive(Clone, Debug, PartialEq)]
 pub enum StepKind {
     Action {
-        target: ConnRef,
+        /// Only a literal target runs until dynamic targets (ADR 0019).
+        target: Source<ConnRef>,
         /// The action's ID in the plugin manifest, e.g. `route`.
         action: String,
-        /// Literal values, or `{expr}` at the top level (spec §8.3).
-        params: serde_json::Map<String, serde_json::Value>,
+        /// Each a source (dataflow §1), evaluated once when the step starts.
+        params: BTreeMap<String, Source<serde_json::Value>>,
     },
     Wait {
-        duration: WaitFor,
+        /// A duration, or a source giving a duration string or milliseconds.
+        duration: Source<Duration>,
     },
     WaitUntil {
         until: Expr,
@@ -193,59 +197,6 @@ pub struct Arm {
     pub steps: Vec<Step>,
 }
 
-/// A `wait` duration: literal, or an expression giving a duration string or
-/// milliseconds (spec §8.3).
-#[derive(Clone, Debug, PartialEq)]
-pub enum WaitFor {
-    Literal(Duration),
-    Expr(Expr),
-}
-
-impl Serialize for WaitFor {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match self {
-            WaitFor::Literal(d) => d.serialize(serializer),
-            WaitFor::Expr(e) => ExprValue { expr: e.clone() }.serialize(serializer),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for WaitFor {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum Wire {
-            Text(String),
-            Expr(ExprValue),
-        }
-        match Wire::deserialize(deserializer).map_err(|_| {
-            serde::de::Error::custom("expected a duration like \"2s\", or {\"expr\": ...}")
-        })? {
-            Wire::Text(text) => text
-                .parse()
-                .map(WaitFor::Literal)
-                .map_err(serde::de::Error::custom),
-            Wire::Expr(e) => Ok(WaitFor::Expr(e.expr)),
-        }
-    }
-}
-
-/// `{expr: "..."}`, where a value may be an expression.
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ExprValue {
-    expr: Expr,
-}
-
-/// The expression in a parameter value shaped `{expr: "..."}`, if it is one.
-pub fn param_expr(value: &serde_json::Value) -> Option<&str> {
-    let object = value.as_object()?;
-    match (object.len(), object.get("expr")) {
-        (1, Some(serde_json::Value::String(e))) => Some(e),
-        _ => None,
-    }
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OnError {
@@ -276,10 +227,10 @@ enum WireStep {
         timeout: Option<Duration>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         on_error: Option<OnError>,
-        target: ConnRef,
+        target: Source<ConnRef>,
         action: String,
         #[serde(default)]
-        params: serde_json::Map<String, serde_json::Value>,
+        params: BTreeMap<String, Source<serde_json::Value>>,
     },
     Wait {
         id: String,
@@ -292,7 +243,7 @@ enum WireStep {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         on_error: Option<OnError>,
         #[serde(rename = "for")]
-        duration: WaitFor,
+        duration: Source<Duration>,
     },
     WaitUntil {
         id: String,
@@ -523,7 +474,7 @@ mod tests {
         let step: Step = serde_json::from_value(json.clone()).unwrap();
         assert_eq!(step.on_error, Some(OnError::Continue));
         assert!(
-            matches!(&step.kind, StepKind::Wait { duration: WaitFor::Literal(d) } if d.as_str() == "1s")
+            matches!(&step.kind, StepKind::Wait { duration: Source::Literal(d) } if d.as_str() == "1s")
         );
         assert_eq!(serde_json::to_value(&step).unwrap(), json);
     }

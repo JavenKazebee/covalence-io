@@ -23,16 +23,17 @@ use tokio::sync::{broadcast, watch};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
-use super::{Edge, Flow, FlowId, OnError, SetTarget, Step, StepKind, Trigger, WaitFor};
+use super::{Edge, Flow, FlowId, OnError, SetTarget, Step, StepKind, Trigger};
 use crate::engine::{ActionRequest, Actions, CoreError};
-use crate::expr::{Evaluation, Evaluator, ExprError, Reads, Scope, to_json, truthy};
+use crate::expr::{Evaluation, Evaluator, ExprError, Reads, Scope, truthy};
 use crate::gate::Verdict;
 use crate::journal::{
     BlockReason, JournalError, JournalOp, NewEntry, Origin, Record, RunError, RunFinishedRecord,
     RunStartedRecord, RunStatus, RunStepRecord, Seq, StatePatchRecord, StepDetail, StepStatus,
     TriggerMatchedRecord,
 };
-use crate::state::{ConnId, Dirty, Meta, Quality, Source, StatePath, TurnFeed};
+use crate::source::{self, Source};
+use crate::state::{self as st, ConnId, Dirty, Meta, Quality, StatePath, TurnFeed};
 use crate::{Shared, clock, schema};
 
 /// The most runs a `queue` flow holds waiting (flow spec §8.5).
@@ -408,7 +409,7 @@ async fn match_events(inner: Arc<Inner>) {
         };
         let (candidates, payload, origin) = match &entry.record {
             Record::Event(event) => {
-                let Source::Conn(conn) = &event.source else {
+                let st::Source::Conn(conn) = &event.source else {
                     continue;
                 };
                 let candidates = inner.candidates(|t| {
@@ -566,6 +567,28 @@ impl Inner {
             scope.cancel = Some(run.cancel);
         }
         self.evaluator.evaluate(source, &scope)
+    }
+
+    /// Evaluates a source as [`Self::evaluate`] does an expression.
+    fn evaluate_source<T: serde::Serialize>(
+        &self,
+        source: &Source<T>,
+        trigger: Option<&Value>,
+        run: Option<RunScope<'_>>,
+    ) -> source::Outcome {
+        let aliases = self
+            .aliases
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let mut scope = Scope::new(&self.shared.state, &aliases);
+        scope.trigger = trigger;
+        if let Some(run) = run {
+            scope.local = run.local;
+            scope.steps = run.steps;
+            scope.cancel = Some(run.cancel);
+        }
+        source.evaluate(&scope, self.evaluator.as_ref())
     }
 
     /// Whether a filter or condition is truthy. A failure counts as false
@@ -910,7 +933,7 @@ impl Inner {
             ts: clock::epoch_ms(),
             seq,
             quality: Quality::Good,
-            source: Source::Core,
+            source: st::Source::Core,
         }
     }
 
@@ -1100,6 +1123,37 @@ impl RunTask {
             })
     }
 
+    /// A source's own result in the run's scope, without its fallback.
+    fn eval_raw<T: serde::Serialize>(
+        &self,
+        source: &Source<T>,
+    ) -> Result<Option<serde_json::Value>, RunError> {
+        self.inner
+            .evaluate_source(source, Some(&self.trigger), Some(self.scope()))
+            .value
+            .map_err(|e| {
+                if *self.cancel.borrow() {
+                    cancelled_error()
+                } else {
+                    expr_error(e)
+                }
+            })
+    }
+
+    /// A source in the run's scope, with its fallback when the result is
+    /// `undefined` or fails.
+    fn eval_source(
+        &self,
+        source: &Source<serde_json::Value>,
+    ) -> Result<Option<serde_json::Value>, RunError> {
+        match (self.eval_raw(source), source.fallback()) {
+            (Ok(Some(v)), _) => Ok(Some(v)),
+            (Err(e), _) if e.code == "cancelled" => Err(e),
+            (_, Some(f)) => Ok(Some(f.clone())),
+            (result, None) => result,
+        }
+    }
+
     /// Journals the run from `run.started` to `run.finished`. Returns how it
     /// ended, its error, the `run.finished` seq and its duration.
     async fn execute(
@@ -1276,9 +1330,15 @@ impl RunTask {
                     target,
                     action,
                     params,
-                } => Ok(self
-                    .action(id, &target.conn, action, params, step_started, timeout)
-                    .await),
+                } => match target.literal() {
+                    Some(target) => Ok(self
+                        .action(id, &target.conn, action, params, step_started, timeout)
+                        .await),
+                    None => Ok(Err(RunError::new(
+                        "unsupported",
+                        "targets that follow state aren't supported yet",
+                    ))),
+                },
                 StepKind::Wait { duration } => Ok(self.wait(duration).await),
                 StepKind::WaitUntil { until } => Ok(self.wait_until(until).await),
                 StepKind::Set { path, value } => self.set(id, path, value, step_started),
@@ -1304,27 +1364,27 @@ impl RunTask {
         step: &str,
         conn: &ConnId,
         action: &str,
-        params: &serde_json::Map<String, serde_json::Value>,
+        params: &BTreeMap<String, Source<serde_json::Value>>,
         step_started: Seq,
         timeout: Option<StdDuration>,
     ) -> Result<Done, RunError> {
-        // Expression parameters are evaluated now; an `undefined` one is left out.
+        // Parameters that follow state are evaluated now; an `undefined` one
+        // is left out.
         let mut computed = serde_json::Map::new();
-        let mut any_expr = false;
-        for (name, value) in params {
-            match super::param_expr(value) {
-                Some(source) => {
-                    any_expr = true;
-                    if let Some(v) = self.eval(source)? {
-                        computed.insert(name.clone(), to_json(&v));
-                    }
+        let mut any_dynamic = false;
+        for (name, param) in params {
+            let value = match param {
+                Source::Literal(v) => Some(v.clone()),
+                other => {
+                    any_dynamic = true;
+                    self.eval_source(other)?
                 }
-                None => {
-                    computed.insert(name.clone(), value.clone());
-                }
+            };
+            if let Some(v) = value {
+                computed.insert(name.clone(), v);
             }
         }
-        if any_expr && let Some(schema) = self.inner.actions.params_schema(conn, action).await {
+        if any_dynamic && let Some(schema) = self.inner.actions.params_schema(conn, action).await {
             let computed = serde_json::Value::Object(computed.clone());
             let problems = schema::check(&schema, &computed);
             if !problems.is_empty() {
@@ -1402,10 +1462,10 @@ impl RunTask {
         }
     }
 
-    async fn wait(&mut self, duration: &WaitFor) -> Result<Done, RunError> {
+    async fn wait(&mut self, duration: &Source<super::Duration>) -> Result<Done, RunError> {
         let duration = match duration {
-            WaitFor::Literal(d) => d.get(),
-            WaitFor::Expr(source) => {
+            Source::Literal(d) => d.get(),
+            other => {
                 let bad = |v: &dyn std::fmt::Debug| {
                     RunError::new(
                         "invalidDuration",
@@ -1414,21 +1474,25 @@ impl RunTask {
                         ),
                     )
                 };
-                match self.eval(source)? {
-                    Some(Value::String(s)) => {
-                        let text = s.as_str().unwrap_or_default();
-                        text.parse::<super::Duration>()
-                            .map_err(|_| bad(&text))?
-                            .get()
-                    }
-                    Some(Value::Integer(i)) => match i.as_u64() {
-                        Some(ms) => StdDuration::from_millis(ms),
-                        None => return Err(bad(&i)),
+                let evaluated = self.eval_raw(other).and_then(|v| match v {
+                    Some(serde_json::Value::String(text)) => text
+                        .parse::<super::Duration>()
+                        .map(|d| d.get())
+                        .map_err(|_| bad(&text)),
+                    Some(serde_json::Value::Number(n)) => match (n.as_u64(), n.as_f64()) {
+                        (Some(ms), _) => Ok(StdDuration::from_millis(ms)),
+                        (None, Some(f)) if f.is_finite() && f >= 0.0 => {
+                            Ok(StdDuration::from_secs_f64(f / 1000.0))
+                        }
+                        _ => Err(bad(&n)),
                     },
-                    Some(Value::F64(f)) if f.is_finite() && f >= 0.0 => {
-                        StdDuration::from_secs_f64(f / 1000.0)
-                    }
-                    other => return Err(bad(&other)),
+                    other => Err(bad(&other)),
+                });
+                match (evaluated, other.fallback()) {
+                    (Ok(d), _) => d,
+                    (Err(e), _) if e.code == "cancelled" => return Err(e),
+                    (Err(_), Some(fallback)) => fallback.get(),
+                    (Err(e), None) => return Err(e),
                 }
             }
         };

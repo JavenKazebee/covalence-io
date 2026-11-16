@@ -81,7 +81,7 @@ fn keys(n: u32) -> Vec<Value> {
 fn label_of(layer: &str, control: &str, conn: &str) -> Value {
     json!({
         "layer": layer, "control": control,
-        "props": { "label": { "kind": "value", "path": { "conn": conn, "path": ["outputs", 1, "source"] } } },
+        "props": { "label": { "ref": { "conn": conn, "path": ["outputs", 1, "source"] } } },
     })
 }
 
@@ -140,7 +140,7 @@ async fn surfaces_layers_and_bindings_are_validated_and_stored() {
         "binding",
         json!({
             "layer": id(&cams), "control": "k14",
-            "props": { "label": { "kind": "expr", "source": "'Hi'" } },
+            "props": { "label": { "expr": "'Hi'" } },
         }),
     )
     .await;
@@ -159,7 +159,7 @@ async fn surfaces_layers_and_bindings_are_validated_and_stored() {
             "/control-bindings",
             json!({
                 "layer": id(&cams), "control": "k0",
-                "props": { "background": { "kind": "expr", "source": "1 +", "fallback": "#000" } },
+                "props": { "background": { "expr": "1 +", "fallback": "#000" } },
             }),
         )
         .await;
@@ -217,7 +217,7 @@ async fn surfaces_layers_and_bindings_are_validated_and_stored() {
             "/control-bindings",
             json!({
                 "layer": id(&cams), "control": "k13",
-                "props": { "label": { "kind": "expr", "source": "'Hi'" } },
+                "props": { "label": { "expr": "'Hi'" } },
             }),
         )
         .await;
@@ -325,7 +325,7 @@ async fn surfaces_layers_and_bindings_survive_a_restart() {
         .unwrap();
     let (binding, _) = app
         .save_binding(
-            &json!({ "layer": layer.id, "control": "k0", "props": { "label": { "kind": "expr", "source": "'Hi'" } } }),
+            &json!({ "layer": layer.id, "control": "k0", "props": { "label": { "expr": "'Hi'" } } }),
             None,
         )
         .unwrap();
@@ -395,13 +395,13 @@ async fn bindings_preview_with_their_look_and_image() {
     let (status, body) = preview(json!({
         "layer": id(&layer), "control": "k0",
         "props": {
-            "label": { "kind": "template", "parts": ["Out 1: ", { "path": { "conn": vh, "path": ["outputs", 1, "source"] } }] },
+            "label": { "use": "template", "parts": ["Out 1: ", { "ref": { "conn": vh, "path": ["outputs", 1, "source"] } }] },
             "background": {
-                "kind": "rules",
-                "rules": [{ "when": { "path": { "conn": vh, "path": ["outputs", 1, "source"] }, "op": "==", "value": 1 }, "value": "#e02020" }],
+                "use": "rules",
+                "rules": [{ "when": { "use": "compare", "input": { "ref": { "conn": vh, "path": ["outputs", 1, "source"] } }, "op": "==", "value": 1 }, "value": "#e02020" }],
                 "else": "#333333",
             },
-            "textColor": { "kind": "expr", "source": "nope()", "fallback": "#ffff00" },
+            "textColor": { "expr": "nope()", "fallback": "#ffff00" },
         },
     }))
     .await;
@@ -435,9 +435,9 @@ async fn bindings_preview_with_their_look_and_image() {
     let (status, body) = preview(json!({
         "layer": id(&layer), "control": "k1",
         "props": {
-            "label": { "kind": "value", "path": { "conn": vh, "path": ["outputs", 1, "source"] } },
+            "label": { "ref": { "conn": vh, "path": ["outputs", 1, "source"] } },
             "background": {
-                "kind": "map", "path": { "conn": vh, "path": ["outputs", 1, "source"] },
+                "use": "map", "input": { "ref": { "conn": vh, "path": ["outputs", 1, "source"] } },
                 "from": [0, 12], "to": ["#00ff00", "#ffff00", "#ff0000"],
             },
         },
@@ -461,11 +461,11 @@ async fn bindings_preview_with_their_look_and_image() {
 
     // A binding that doesn't parse is a 422, as on save.
     let (status, body) = preview(
-        json!({ "layer": id(&layer), "control": "k0", "props": { "label": { "kind": "nope" } } }),
+        json!({ "layer": id(&layer), "control": "k0", "props": { "label": { "use": "nope" } } }),
     )
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
-    assert_eq!(codes(&body)[0].0, json!(["props", "label", "kind"]));
+    assert_eq!(codes(&body)[0].0, json!(["props", "label"]));
 
     server.stop().await;
 }
@@ -687,7 +687,7 @@ async fn a_web_surface_presses_routes_and_redraws() {
 
     // Editing a binding while shown redraws its key before the API answers.
     let mut edited = k0.clone();
-    edited["props"]["background"] = json!({ "kind": "expr", "source": "'#0000ff'" });
+    edited["props"]["background"] = json!({ "expr": "'#0000ff'" });
     let k0_id = server
         .get(&format!("/control-bindings?layer={}", id(&layer)))
         .await

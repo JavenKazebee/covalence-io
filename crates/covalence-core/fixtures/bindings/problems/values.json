@@ -4,20 +4,23 @@
     "control": "k5",
     "props": {
       "background": {
-        "kind": "rules",
+        "use": "rules",
         "rules": [
-          { "when": { "path": { "root": "vars", "path": ["live"] }, "op": "truthy" }, "value": "red" }
+          {
+            "when": {
+              "use": "compare",
+              "input": { "ref": { "root": "vars", "path": ["live"] } },
+              "op": "truthy"
+            },
+            "value": "red"
+          }
         ],
         "else": 0
       },
-      "label": {
-        "kind": "expr",
-        "source": "vars.name",
-        "fallback": { "text": "?" }
-      },
+      "label": { "expr": "vars.name", "fallback": { "text": "?" } },
       "textColor": {
-        "kind": "map",
-        "path": { "root": "vars", "path": ["level"] },
+        "use": "map",
+        "input": { "ref": { "root": "vars", "path": ["level"] } },
         "from": [1, 1],
         "to": [0, 255]
       }

@@ -1,18 +1,17 @@
-//! Bindings (M5 Phase 2): the shared fixtures (`fixtures/bindings/`, ADR
-//! 0020), and the rule from ADR 0023 that a structured binding evaluated
-//! natively gives what its compiled expression gives on QuickJS.
+//! Bindings: the shared fixtures (`fixtures/bindings/`, ADR 0020), and the
+//! rule from ADR 0023 that a source evaluated natively gives what its
+//! compiled expression gives on QuickJS, for every transform (ADR 0026).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use covalence_core::binding::{
-    self, Binding, Condition, Context, ControlBinding, Curve, Format, MapTo, Op, Part, Ref, Root,
-    Rule,
-};
+use covalence_core::binding::{self, Binding, Context, ControlBinding};
 use covalence_core::expr::{Evaluator, QuickJs, Scope, to_json};
 use covalence_core::flow::Problem;
-use covalence_core::state::{LiveState, Meta, Quality, Source, StatePath};
+use covalence_core::source::{Ref, Root, Source};
+use covalence_core::state::{self, LiveState, Meta, Quality, StatePath};
+use covalence_core::transform::{Curve, Format, MapTo, Op, Rule, Transform};
 use covalence_protocol::Value;
 use covalence_protocol::state::PathSegment;
 use serde_json::{Value as Json, json};
@@ -124,7 +123,7 @@ fn set(state: &LiveState, conn: &str, path: &[&str], v: Option<&Json>) {
         ts: 0,
         seq: 1,
         quality: Quality::Good,
-        source: Source::Core,
+        source: state::Source::Core,
     };
     state.mutate(|tree| {
         let dirty = match v {
@@ -147,6 +146,7 @@ fn fixture_state() -> Arc<LiveState> {
     }
     set(&state, "vars", &["preview"], Some(&json!(4)));
     set(&state, "vars", &["selectedCam"], Some(&json!(2)));
+    set(&state, "vars", &["live"], Some(&json!(true)));
     state
 }
 
@@ -164,10 +164,12 @@ fn normal(v: Option<Json>) -> Option<Json> {
 fn both_ways(state: &Arc<LiveState>, b: &Binding, what: &str) -> Option<Json> {
     let aliases: BTreeMap<String, String> = [("vh".to_owned(), VH.to_owned())].into();
     let by_id: BTreeMap<String, String> = [(VH.to_owned(), "vh".to_owned())].into();
-    let native = b.evaluate(state).expect("a structured kind");
+    let quickjs = QuickJs::default();
+    let scope = Scope::new(state, &aliases);
+    let native = b.evaluate(&scope, &quickjs);
     let source = b.to_expr(&by_id).unwrap();
-    let evaluation = QuickJs::default().evaluate(&source, &Scope::new(state, &aliases));
-    let native_value = normal(native.value.clone().unwrap());
+    let evaluation = quickjs.evaluate(&source, &scope);
+    let native_value = normal(native.value.clone().ok().flatten());
     let expr_value = normal(
         evaluation
             .value
@@ -209,7 +211,7 @@ fn fixtures_give_the_same_result_both_ways() {
     for path in fixtures("") {
         let b = ControlBinding::parse(&read(&path)).unwrap();
         for (prop, binding) in &b.props {
-            if matches!(binding, Binding::Expr { .. }) {
+            if matches!(binding, Source::Expr { .. }) {
                 continue;
             }
             let what = format!("{} {}", path.display(), prop.as_str());
@@ -227,6 +229,9 @@ fn fixtures_give_the_same_result_both_ways() {
             ("k1.label".into(), Some(json!("04:59"))),
             ("k1.textColor".into(), Some(json!("#ffffff"))),
             ("k3.background".into(), Some(json!("#000000"))),
+            ("k4.background".into(), Some(json!("#e02020"))),
+            ("k4.label".into(), Some(json!("Lv 42%"))),
+            ("k4.textColor".into(), Some(json!("#ffffff"))),
             (
                 "k3.label".into(),
                 Some(json!(-60.0 + 70.0 * (1.0f64 + 9.0 * 0.42).log10()))
@@ -239,6 +244,31 @@ fn var(name: &str) -> Ref {
     Ref::Root {
         root: Root::Vars,
         path: vec![PathSegment::Key(name.into())],
+    }
+}
+
+fn at(name: &str) -> Binding {
+    Source::Ref {
+        at: var(name),
+        fallback: None,
+    }
+}
+
+fn using(transform: Transform) -> Binding {
+    Source::Use {
+        transform: Box::new(transform),
+        fallback: None,
+    }
+}
+
+/// A value read as is (`None`), or formatted.
+fn shown(name: &str, format: Option<Format>) -> Binding {
+    match format {
+        None => at(name),
+        Some(format) => using(Transform::Format {
+            input: at(name),
+            format,
+        }),
     }
 }
 
@@ -294,22 +324,14 @@ fn every_format_matches_its_expression() {
     for sample in samples() {
         set(&state, "vars", &["v"], sample.as_ref());
         for format in formats {
-            let b = Binding::Value {
-                path: var("v"),
-                format,
-                fallback: None,
-            };
-            both_ways(&state, &b, &format!("{sample:?} as {format:?}"));
-            let t = Binding::Template {
-                parts: vec![
-                    Part::Text("a `${b}` \\ ".into()),
-                    Part::Value {
-                        path: var("v"),
-                        format,
-                    },
-                ],
-                fallback: None,
-            };
+            both_ways(
+                &state,
+                &shown("v", format),
+                &format!("{sample:?} as {format:?}"),
+            );
+            let t = using(Transform::Template {
+                parts: vec![Source::Literal(json!("a `${b}` \\ ")), shown("v", format)],
+            });
             both_ways(
                 &state,
                 &t,
@@ -346,17 +368,17 @@ fn every_condition_matches_its_expression() {
         set(&state, "vars", &["v"], sample.as_ref());
         for op in ops {
             for value in &against {
-                let b = Binding::Rules {
+                let b = using(Transform::Rules {
                     rules: vec![Rule {
-                        when: Condition {
-                            path: var("v"),
+                        when: using(Transform::Compare {
+                            input: at("v"),
                             op,
-                            value: value.clone(),
-                        },
-                        value: json!("#ffffff"),
+                            value: value.clone().map(Source::Literal),
+                        }),
+                        value: Source::Literal(json!("#ffffff")),
                     }],
-                    otherwise: json!("#000000"),
-                };
+                    otherwise: Source::Literal(json!("#000000")),
+                });
                 both_ways(&state, &b, &format!("{sample:?} {op:?} {value:?}"));
             }
         }
@@ -382,13 +404,13 @@ fn every_map_matches_its_expression() {
         for to in &tos {
             for curve in [None, Some(Curve::Log), Some(Curve::Exp)] {
                 for clamp in [None, Some(false)] {
-                    let b = Binding::Map {
-                        path: var("v"),
+                    let b = using(Transform::Map {
+                        input: at("v"),
                         from: [n(0.0), n(100.0)],
                         to: to.clone(),
                         curve,
                         clamp,
-                    };
+                    });
                     both_ways(
                         &state,
                         &b,
@@ -396,6 +418,53 @@ fn every_map_matches_its_expression() {
                     );
                 }
             }
+        }
+    }
+}
+
+#[test]
+fn every_combination_matches_its_expression() {
+    let state = Arc::new(LiveState::new());
+    let samples = samples();
+    for a in &samples {
+        set(&state, "vars", &["a"], a.as_ref());
+        for b in [Some(json!(1)), Some(json!("")), None] {
+            set(&state, "vars", &["b"], b.as_ref());
+            let what = format!("{a:?} {b:?}");
+            for t in [
+                Transform::All {
+                    of: vec![at("a"), at("b")],
+                },
+                Transform::Any {
+                    of: vec![at("a"), at("b")],
+                },
+                Transform::All { of: vec![] },
+                Transform::Any { of: vec![] },
+                Transform::Not { input: at("a") },
+            ] {
+                both_ways(&state, &using(t.clone()), &format!("{what} {}", t.id()));
+            }
+            // Chained, with a fallback on a nested source.
+            let chained = using(Transform::Template {
+                parts: vec![
+                    using(Transform::Compare {
+                        input: using(Transform::Any {
+                            of: vec![at("a"), at("b")],
+                        }),
+                        op: Op::Eq,
+                        value: Some(Source::Literal(json!(true))),
+                    }),
+                    Source::Ref {
+                        at: var("b"),
+                        fallback: Some(json!("none")),
+                    },
+                    Source::Expr {
+                        expr: "vars.missing.x".into(),
+                        fallback: Some(json!("!")),
+                    },
+                ],
+            });
+            both_ways(&state, &chained, &format!("{what} chained"));
         }
     }
 }
@@ -410,7 +479,7 @@ fn compiled_expressions_read_like_the_spec() {
     let background = b.props[&binding::Prop::Background].to_expr(&by_id).unwrap();
     assert_eq!(
         background,
-        r##"(vh.outputs[1].source) === 3 ? "#e02020" : (vars.preview) === 3 ? "#20a040" : "#333333""##
+        r##"(vh.outputs[1].source === 3) ? "#e02020" : (vars.preview === 3) ? "#20a040" : "#333333""##
     );
     // A connection with no alias can't be written as an expression.
     assert_eq!(

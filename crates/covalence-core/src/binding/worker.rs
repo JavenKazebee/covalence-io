@@ -12,11 +12,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-use serde_json::Value as Json;
 use tokio::sync::{broadcast, mpsc};
 
 use super::{Binding, ControlBinding, Prop, PropValue, prop_value};
-use crate::expr::{Evaluator, Limits, QuickJs, Scope, to_json};
+use crate::expr::{Evaluator, Limits, QuickJs, Scope};
 use crate::state::{ConnId, Dirty, LiveState, Quality, StatePath};
 use crate::surface::render::{Look, Renderer};
 use crate::surface::{ControlDef, Draw, LayerId, SurfaceId};
@@ -187,21 +186,8 @@ pub fn evaluate(
     aliases: &BTreeMap<String, ConnId>,
     evaluator: &dyn Evaluator,
 ) -> Evaluated {
-    let (value, reads) = match b.evaluate(state) {
-        Some(outcome) => (outcome.value, outcome.reads),
-        None => {
-            let Binding::Expr { source, .. } = b else {
-                unreachable!("only expr bindings need the evaluator")
-            };
-            let scope = Scope::new(state, aliases);
-            let evaluation = evaluator.evaluate(source, &scope);
-            let value = evaluation
-                .value
-                .map(|v| v.as_ref().map(to_json))
-                .map_err(|e| e.to_string());
-            (value, evaluation.reads.paths)
-        }
-    };
+    let outcome = b.evaluate(&Scope::new(state, aliases), evaluator);
+    let (value, reads) = (outcome.value.map_err(|e| e.to_string()), outcome.reads);
     let (value, error) = match value {
         Ok(Some(v)) => match prop_value(prop, &v) {
             Ok(pv) => (Some(pv), None),
@@ -210,7 +196,7 @@ pub fn evaluate(
         Ok(None) => (None, None),
         Err(e) => (None, Some(e)),
     };
-    let value = value.or_else(|| b.fallback().and_then(|f: Json| prop_value(prop, &f).ok()));
+    let value = value.or_else(|| b.fallback().and_then(|f| prop_value(prop, f).ok()));
     Evaluated {
         value,
         error,

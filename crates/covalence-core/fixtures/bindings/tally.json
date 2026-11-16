@@ -4,22 +4,35 @@
   "control": "k0",
   "props": {
     "background": {
-      "kind": "rules",
+      "use": "rules",
       "rules": [
         {
-          "when": { "path": { "conn": "01JBZ7P0D3F5G7H9J1K3L5M7N9", "path": ["outputs", 1, "source"] }, "op": "==", "value": 3 },
+          "when": {
+            "use": "compare",
+            "input": { "ref": { "conn": "01JBZ7P0D3F5G7H9J1K3L5M7N9", "path": ["outputs", 1, "source"] } },
+            "op": "==",
+            "value": 3
+          },
           "value": "#e02020"
         },
         {
-          "when": { "path": { "root": "vars", "path": ["preview"] }, "op": "==", "value": 3 },
+          "when": {
+            "use": "compare",
+            "input": { "ref": { "root": "vars", "path": ["preview"] } },
+            "op": "==",
+            "value": 3
+          },
           "value": "#20a040"
         }
       ],
       "else": "#333333"
     },
     "label": {
-      "kind": "template",
-      "parts": ["Out 1: ", { "path": { "conn": "01JBZ7P0D3F5G7H9J1K3L5M7N9", "path": ["outputs", 1, "source"] } }],
+      "use": "template",
+      "parts": [
+        "Out 1: ",
+        { "ref": { "conn": "01JBZ7P0D3F5G7H9J1K3L5M7N9", "path": ["outputs", 1, "source"] } }
+      ],
       "fallback": "Out 1"
     }
   }

@@ -154,10 +154,10 @@ async fn a_bound_key_shows_its_value_and_redraws_only_when_it_changes() {
         CAMS,
         "k0",
         json!({
-            "label": { "kind": "template", "parts": ["Out 1: ", { "path": source(&["outputs", "1", "source"]) }] },
+            "label": { "use": "template", "parts": ["Out 1: ", { "ref": source(&["outputs", "1", "source"]) }] },
             "background": {
-                "kind": "rules",
-                "rules": [{ "when": { "path": source(&["outputs", "1", "source"]), "op": "==", "value": 3 }, "value": "#e02020" }],
+                "use": "rules",
+                "rules": [{ "when": { "use": "compare", "input": { "ref": source(&["outputs", "1", "source"]) }, "op": "==", "value": 3 }, "value": "#e02020" }],
                 "else": "#000000",
             },
         }),
@@ -199,15 +199,15 @@ async fn missing_values_fall_back_and_errors_are_reported() {
         CAMS,
         "k0",
         json!({
-            "label": { "kind": "value", "path": source(&["name"]), "fallback": "No name" },
-            "background": { "kind": "expr", "source": "vh.level > 0.5 ? \"#00ff00\" : \"nope\"", "fallback": "#202020" },
+            "label": { "ref": source(&["name"]), "fallback": "No name" },
+            "background": { "expr": "vh.level > 0.5 ? \"#00ff00\" : \"nope\"", "fallback": "#202020" },
         }),
     ));
     w.surfaces.set_binding(binding(
         "b2",
         CAMS,
         "k1",
-        json!({ "label": { "kind": "expr", "source": "vh.name.toUpperCase()" } }),
+        json!({ "label": { "expr": "vh.name.toUpperCase()" } }),
     ));
     let mut link = w.surfaces.attach(DECK, deck()).unwrap();
     w.surfaces.flush().await;
@@ -267,13 +267,13 @@ async fn a_stale_value_dims_its_key() {
         "b1",
         CAMS,
         "k0",
-        json!({ "label": { "kind": "value", "path": source(&["name"]) } }),
+        json!({ "label": { "ref": source(&["name"]) } }),
     ));
     w.surfaces.set_binding(binding(
         "b2",
         CAMS,
         "k1",
-        json!({ "label": { "kind": "expr", "source": "\"fixed\"" } }),
+        json!({ "label": { "expr": "\"fixed\"" } }),
     ));
     let mut link = w.surfaces.attach(DECK, deck()).unwrap();
     w.surfaces.flush().await;
@@ -305,7 +305,7 @@ async fn only_shown_pages_are_evaluated() {
         "b1",
         AUDIO,
         "k0",
-        json!({ "label": { "kind": "expr", "source": "vh.missing.deeper" } }),
+        json!({ "label": { "expr": "vh.missing.deeper" } }),
     ));
     let mut link = w.surfaces.attach(DECK, deck()).unwrap();
     w.surfaces.flush().await;
@@ -342,7 +342,7 @@ async fn bindings_follow_dynamic_reads_and_edits() {
         "b1",
         CAMS,
         "k4",
-        json!({ "label": { "kind": "expr", "source": "vh.inputs[vars.cam].name" } }),
+        json!({ "label": { "expr": "vh.inputs[vars.cam].name" } }),
     ));
     w.surfaces.flush().await;
     assert_eq!(
@@ -379,7 +379,7 @@ async fn every_surface_showing_a_page_gets_its_keys() {
         "b1",
         CAMS,
         "k2",
-        json!({ "label": { "kind": "expr", "source": "String(vars.count ?? 0)" } }),
+        json!({ "label": { "expr": "String(vars.count ?? 0)" } }),
     ));
     let mut a = w.surfaces.attach(DECK, deck()).unwrap();
     let mut b = w.surfaces.attach(OTHER, deck()).unwrap();
@@ -428,8 +428,8 @@ async fn bench_a_full_page_of_expr_bindings() {
                 &page,
                 &format!("k{i}"),
                 json!({
-                    "label": { "kind": "expr", "source": format!("`Cam {i}: ${{mmss(vars.n + {i})}}`") },
-                    "background": { "kind": "expr", "source": format!("vars.n % 2 ? hsl({i} * 20, 70, 40) : \"#202020\"") },
+                    "label": { "expr": format!("`Cam {i}: ${{mmss(vars.n + {i})}}`") },
+                    "background": { "expr": format!("vars.n % 2 ? hsl({i} * 20, 70, 40) : \"#202020\"") },
                 }),
             ));
         }
@@ -494,8 +494,8 @@ async fn bench_key_down_to_first_action() {
             CAMS,
             &format!("k{i}"),
             json!({
-                "label": { "kind": "expr", "source": format!("`Cam {i}: ${{mmss(vars.n + {i})}}`") },
-                "background": { "kind": "expr", "source": format!("vars.n % 2 ? hsl({i} * 20, 70, 40) : \"#202020\"") },
+                "label": { "expr": format!("`Cam {i}: ${{mmss(vars.n + {i})}}`") },
+                "background": { "expr": format!("vars.n % 2 ? hsl({i} * 20, 70, 40) : \"#202020\"") },
             }),
         ));
     }

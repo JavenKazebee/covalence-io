@@ -1,0 +1,26 @@
+{
+  "binding": {
+    "layer": "01JBZ7P0D3F5G7H9J1K3L5M7PA",
+    "control": "k9",
+    "props": {
+      "background": { "use": "format", "input": { "ref": { "root": "vars", "path": ["x"] } }, "format": "upper" },
+      "label": {
+        "use": "any",
+        "of": [
+          { "expr": "vars.a +" },
+          { "ref": { "conn": "01JBZ7P0D3F5G7H9J1K3L5M7XX", "path": ["on"] } }
+        ]
+      },
+      "textColor": {
+        "use": "not",
+        "input": { "use": "compare", "input": { "ref": { "root": "vars", "path": ["x"] } }, "op": "truthy" }
+      }
+    }
+  },
+  "errors": [
+    { "path": ["props", "background", "use"], "code": "badValue" },
+    { "path": ["props", "label", "of", 0, "expr"], "code": "exprSyntax" },
+    { "path": ["props", "label", "of", 1, "ref", "conn"], "code": "unknownConnection" },
+    { "path": ["props", "textColor", "use"], "code": "badValue" }
+  ]
+}

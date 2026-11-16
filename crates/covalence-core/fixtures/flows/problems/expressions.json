@@ -103,7 +103,8 @@
         "body",
         3,
         "params",
-        "input"
+        "input",
+        "expr"
       ],
       "code": "exprSyntax"
     },

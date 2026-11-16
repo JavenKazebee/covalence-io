@@ -8,9 +8,10 @@ use covalence_protocol::state::{Path, PathSegment};
 use serde::Serialize;
 use serde_json::Value;
 
-use super::{Flow, Step, StepKind, Trigger, WaitFor, param_expr};
+use super::{Flow, Step, StepKind, Trigger};
 use crate::expr::{At, Evaluator};
 use crate::schema;
+use crate::source::{Part, Ref, Source};
 use crate::state::ConnId;
 use crate::surface::{self, Layer, LayerId};
 
@@ -116,6 +117,13 @@ fn index(i: usize) -> PathSegment {
 /// Builds a path from segments: `path![key("body"), index(1)]`.
 macro_rules! path {
     ($($seg:expr),* $(,)?) => { vec![$($seg),*] };
+}
+
+/// What a source walk found to check.
+enum Found {
+    Expr(String),
+    Conn(ConnId),
+    Bad(String),
 }
 
 /// `base` followed by `more`.
@@ -227,7 +235,8 @@ fn unsupported_steps(
             }
             Some("action") => {
                 let target = step.get("target");
-                if target.is_some_and(|t| t.get("expr").is_some()) {
+                if target.is_some_and(|t| ["expr", "ref", "use"].iter().any(|k| t.get(k).is_some()))
+                {
                     not_yet(at("target"), "dynamic targets");
                 } else if target.is_some_and(|t| t.get("key").is_some()) {
                     not_yet(at("target"), "targets narrowed with a key");
@@ -414,6 +423,35 @@ impl<'a> Validation<'a> {
     }
 
     /// Reports an expression that doesn't compile.
+    /// Checks the expressions, paths and transforms in a source.
+    fn source<T>(&mut self, path: Path, source: &Source<T>) {
+        let mut found = Vec::new();
+        source.walk(&mut path.clone(), &mut |at, part| match part {
+            Part::Expr(e) => found.push((at.clone(), Found::Expr(e.to_owned()))),
+            Part::Ref(Ref::Conn { conn, .. }) => {
+                found.push((at.clone(), Found::Conn(conn.clone())))
+            }
+            Part::Ref(Ref::Root { .. }) => {}
+            Part::Transform(t) => {
+                for (rel, message) in t.problems() {
+                    found.push((join(at, &rel), Found::Bad(message)));
+                }
+            }
+        });
+        for (at, f) in found {
+            match f {
+                Found::Expr(e) => self.expr(at, &e),
+                Found::Conn(conn) if !self.ctx.conns.contains_key(&conn) => self.error(
+                    join(&at, &[key("conn")]),
+                    Code::UnknownConnection,
+                    format!("no connection {conn:?}"),
+                ),
+                Found::Conn(_) => {}
+                Found::Bad(message) => self.error(at, Code::BadValue, message),
+            }
+        }
+    }
+
     fn expr(&mut self, path: Path, source: &str) {
         if let Err(e) = self.ctx.evaluator.check(source) {
             self.report.errors.push(Problem {
@@ -479,14 +517,14 @@ impl<'a> Validation<'a> {
                 action,
                 params,
             } => {
-                self.acted_on.insert(target.conn.clone());
-                let mut literal = true;
-                for (name, value) in params {
-                    if let Some(e) = param_expr(value) {
-                        literal = false;
-                        self.expr(join(here, &[key("params"), key(name)]), e);
-                    }
+                for (name, param) in params {
+                    self.source(join(here, &[key("params"), key(name)]), param);
                 }
+                // `find_unsupported` has turned away targets that follow state.
+                let Some(target) = target.literal() else {
+                    return;
+                };
+                self.acted_on.insert(target.conn.clone());
                 let Some(manifest) = self.manifest_of(&target.conn, at("target")) else {
                     return;
                 };
@@ -497,14 +535,17 @@ impl<'a> Validation<'a> {
                 };
                 let schema =
                     serde_json::to_value(&def.params).expect("manifest values encode as JSON");
-                // Expression parameters are checked when the step runs.
-                let is_expr = |path: &Path| {
-                    !literal
-                        && matches!(path.first(), Some(PathSegment::Key(k))
-                            if params.get(k).and_then(param_expr).is_some())
+                // Parameters that follow state are checked when the step runs.
+                let stored: serde_json::Map<String, Value> = params
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.to_json().expect("a source encodes as JSON")))
+                    .collect();
+                let dynamic = |path: &Path| {
+                    matches!(path.first(), Some(PathSegment::Key(k))
+                        if params.get(k).is_some_and(|p| p.literal().is_none()))
                 };
-                for mismatch in schema::check(&schema, &Value::Object(params.clone())) {
-                    if is_expr(&mismatch.path) {
+                for mismatch in schema::check(&schema, &Value::Object(stored)) {
+                    if dynamic(&mismatch.path) {
                         continue;
                     }
                     self.error(
@@ -514,11 +555,7 @@ impl<'a> Validation<'a> {
                     );
                 }
             }
-            StepKind::Wait { duration } => {
-                if let WaitFor::Expr(e) = duration {
-                    self.expr(join(here, &[key("for"), key("expr")]), e);
-                }
-            }
+            StepKind::Wait { duration } => self.source(at("for"), duration),
             StepKind::WaitUntil { until } => {
                 self.expr(at("until"), until);
                 if step.timeout.is_none() {

@@ -825,6 +825,53 @@ async fn expressions_read_vars_locals_and_earlier_steps() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn parameters_and_waits_are_sources() {
+    let world = World::new();
+    world.set_state("vars", &["nextSource"], Value::from(7));
+    world.set_state("vars", &["big"], Value::from(true));
+    world.add(api_flow(
+        "sources",
+        "parallel",
+        json!([
+            {
+                "id": "route1", "kind": "action", "target": { "conn": VH },
+                "action": "route",
+                "params": {
+                    "input": { "ref": { "root": "vars", "path": ["nextSource"] } },
+                    "output": {
+                        "use": "rules",
+                        "rules": [{ "when": { "use": "compare", "input": { "ref": { "root": "vars", "path": ["big"] } }, "op": "truthy" }, "value": 2 }],
+                        "else": 1,
+                    },
+                },
+            },
+            {
+                "id": "route2", "kind": "action", "target": { "conn": VH },
+                "action": "route",
+                "params": {
+                    "output": 3,
+                    "input": { "ref": { "root": "vars", "path": ["missing"] }, "fallback": 4 },
+                },
+            },
+            // `undefined` with no usable result: the fallback duration.
+            { "id": "pause", "kind": "wait", "for": { "ref": { "root": "vars", "path": ["missing"] }, "fallback": "2s" } },
+        ]),
+    ));
+    let run = world.start("sources");
+    let started = tokio::time::Instant::now();
+    let info = world.finished(&run).await;
+    assert_eq!(info.status, RunPhase::Ok, "{info:?}");
+    assert_eq!(
+        world.requested_params(),
+        [
+            json!({ "output": 2, "input": 7 }),
+            json!({ "output": 3, "input": 4 })
+        ]
+    );
+    assert!(started.elapsed() >= std::time::Duration::from_secs(2));
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_failing_expression_fails_its_step() {
     let world = World::new();
     world.add(api_flow(
