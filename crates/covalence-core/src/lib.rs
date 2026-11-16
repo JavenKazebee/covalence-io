@@ -11,6 +11,7 @@ pub mod gate;
 pub mod host;
 pub mod journal;
 pub mod schema;
+pub mod select;
 pub mod source;
 pub mod state;
 pub mod surface;

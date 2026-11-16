@@ -1,6 +1,6 @@
 # Milestone 6: Primitives
 
-- **Status:** In progress (Phases 0 and 1 done)
+- **Status:** In progress (Phases 0–2 done)
 
 The shapes M5 stored get their general form before hardware surfaces start creating entities in real projects ([M7](m7-surfaces-from-plugins.md) creates them on plug-in). Three changes:
 - **One way to give a value and one way to pick things:** `Source<T>` and `Selector` ([ADR 0026](../adr/0026-sources-and-selectors.md)). The binding kinds become stateless transforms.
@@ -38,8 +38,8 @@ Nothing here adds a new kind of thing for users to learn. It makes the existing 
 - [ ] **Left for Phase 5:** the UI's binding model and editor still use M5's shapes, so `bindings/model.test.ts` fails on the migrated fixtures and the binding editor saves shapes the server now rejects.
 
 ### Phase 2: Selectors (Rust)
-- [ ] `covalence_core::select`: `Selector<Id>` with the shared forms (ID, list, `expr`, `any`, `all`, `not`) and resolvers for controls (`region`, `near`, `has`), targets (`plugin`, `interface`) and paths (`match`, with captures). Stable domain order.
-- [ ] Tests per domain, including selectors whose `expr` follows state and re-resolve.
+- [x] `covalence_core::select`: `Selector<D>` with the shared forms (ID, list, `expr`, `any`, `all`, `not`) and resolvers for controls (`region`, `near`, `has`), targets (`plugin`, `interface`) and paths (`match`, with captures). Controls and targets resolve within a universe the caller gives, in the domain's order (controls by `at`, row-major, unplaced ones last; targets by connection ID). Paths are a test on one path at a time, so `not` only narrows inside `all`, and `patterns()` gives what an index can key on. `all` of nothing is everything.
+- [x] Tests per domain (`tests/selectors.rs`), including an `expr` that follows state and re-resolves, and validation of IDs written outside an `expr`. Targets with a `key` (items within a connection) are `unsupported` until ADR 0019's targets.
 
 ### Phase 3: Events by path (Rust)
 - [ ] The `event` journal record gains `path` and context fields; `input.event` is folded into it. Control events are journaled at `surface.<slug>.controls.<id>`.
