@@ -43,6 +43,7 @@ interface Layer {                 // (Now) project entity `layer`, replacing `pa
   when?: When;                    // (M8) §5.3; default { nav: "main" }
   level?: "under" | "normal" | "over";   // (M8) §5.3; default "normal"
   rank?: Source<number>;          // (M8) within the level; default 0
+  cascade?: "replace" | "through";  // (M8, proposed) §5.2.1; default "replace"
   parent?: string;                // (Later) the tree preset, §5.3
   params?: { [name: string]: ParamDef };        // (M9) makes it a template (composition §7)
   template?: string;                            // (M9) makes it an instance; `params` are then Sources
@@ -130,7 +131,8 @@ type OutputKind = OutputCap["kind"];
 | `surface.<slug>.model` | `string` | The core, on attach |
 | `surface.<slug>.current.<group>` | layer slug, or `null` | **(Now)** The core and the API: the current layer of a navigation group (§5.3). `main` replaces M5's `surface.<slug>.page`, and is set on attach as `page` was |
 | `surface.<slug>.layers` | layer slugs, highest first | **(M8)** The core: the active layers in resolution order (§5.2) |
-| `surface.<slug>.controls.<id>.layer` | layer slug, or `null` | **(M8)** The core: the layer controlling the control (§5.2) |
+| `surface.<slug>.controls.<id>.layer` | layer slug, or `null` | **(M8)** The core: the layer controlling the control (§5.2). With `through` layers (§5.2.1), the layer that has its input |
+| `surface.<slug>.controls.<id>.look` | `{[prop]: layer slug}` | **(M8, proposed)** The core: which layer each bound property comes from (§5.2.1) |
 | `surface.<slug>.controls.<id>.pressed` | `boolean` | **(Now)** The device: `momentary` input |
 | `surface.<slug>.controls.<id>.velocity` | `number`, 0 to 1 | **(Now)** The device: the last `down`, if the capability has `velocity` |
 | `surface.<slug>.controls.<id>.detents` | integer | **(Now)** The device: the running total of `relative` input since the attach |
@@ -276,6 +278,29 @@ The highest `level` wins, then the highest `rank`. A tie goes to the layer that 
 - **Guards.** A layer's sources can't read resolution results (`surface.<slug>.layers`, `.controls.<id>.layer`); saving such a layer fails with `resolutionCycle`. Resolution runs once per scheduler turn, after cells have settled (dataflow §5.3).
 - **Armed layers.** A layer whose `when` reads input state is evaluated and rendered ahead of time while inactive, so that holding shift redraws within the 16 ms budget.
 - **The editor shows a control's candidates:** "k3: Shift (over, while k15 is held), otherwise Cameras (main)". It can simulate a state ("hold k15") to show what would change.
+- **(M8, proposed) Ties are flagged.** Two layers that can be active at once, at the same level and rank, on the same control, get an `ambiguousOrder` warning in the editor. Recency still breaks ties at run time, since popovers in different navigation groups rely on it, but a project shouldn't depend on it by accident.
+
+### 5.2.1 Cascading through (M8, proposed)
+
+A `replace` layer, the default, works as above: it sets the whole look of the controls it covers and gets their input. A layer with `cascade: "through"` sets only what it binds, and everything else comes from the layers below.
+
+- **Each property is resolved on its own.** For each control and each `ControlProp` (bindings §1), the property comes from the highest layer, by the order of §5.2, that either binds it or is a `replace` layer. A `replace` layer that doesn't bind a property leaves it blank, so a page never shows properties from layers under it.
+- **Input is resolved the same way, as one more property.** A binding's `input` (bindings §1) is `claim`, `pass` or `block`. The highest layer whose binding on the control claims or blocks it, or the highest `replace` layer, gets the control's input, and that's the layer in `.controls.<id>.layer`, in events' `layer` context and in `{layer, controls}` triggers. `block` takes the input and does nothing with it.
+- **Defaults.** On a `replace` layer, input is `claim`. On a `through` layer it's `pass`. The editor sets `claim` when you add an action, a helper or a flow trigger to a key on a `through` layer, so it's always stored, never inferred.
+- **Helpers and gestures belong to the input.** They run on the layer that has the control's input, as now.
+- **`why` explains each property.** `.controls.<id>.look` names the source layer per bound property and is journaled, so "why is k3 red?" answers "background from Cameras, label from Shift".
+- **Rendering doesn't change.** The renderer already draws from properties. It now takes them from more than one layer, and armed layers (§5.2) still let a `through` shift layer redraw within 16 ms.
+
+Some examples:
+
+| Layer | Cascade | Binds | Effect |
+|---|---|---|---|
+| Shift | `through`, `level: over` | `label`; `input: claim` | Keys show their alternate action and keep the base layer's colour and tally |
+| Lock | `through`, `level: over`, `when: {while: vars.locked}` | `icon` (a padlock); `input: block` | Every key keeps its live look and ignores presses |
+| Rehearsal | `through`, `level: over`, `when: {while: sys.simulate}` | `background` | Keys go grey while simulating; labels, input and everything else are unchanged |
+| Confidence | `through`, `level: over` | `text` on the deck's display | Shows a clock and status without taking any keys |
+
+**Rejected:** reading the look underneath (`below.background`), which open question 11 asked about. It would make a binding depend on resolution, which the `resolutionCycle` guard forbids, and it only helps a layer that sets the property anyway.
 
 ### 5.3 Presets
 
@@ -441,4 +466,4 @@ Surfaces, layers and control bindings have the same routes and answers as flows 
 8. **Time-based output:** blinking and animation. Bindings follow state, not time.
 9. **Sequences** ("A then B within 1 s"): these need recent history, not current state. A reducer (dataflow §4.2) that steps on both events and emits `matched` may be enough.
 10. **Orbitals while the core is unreachable:** should an Orbital keep showing the last outputs, or run some feedback locally?
-11. **Reading the look underneath:** a shift layer that relabels a key has to set its colour too. Should a binding be able to read the look the next layer down would give (`below.background`)? Or should layers stack per property, so a layer that binds only `label` leaves the other properties to the layer below? That covers shift layers, a rehearsal layer that only greys backgrounds, and a lock overlay, with nothing reading what's underneath.
+11. ~~**Reading the look underneath:** a shift layer that relabels a key has to set its colour too.~~ Proposed in §5.2.1: `through` layers cascade per property, with input as one more property. Reading the look underneath is rejected.

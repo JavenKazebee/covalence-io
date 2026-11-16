@@ -18,6 +18,7 @@ Helpers on controls are reducers whose input defaults to their control. Layers b
 - [ ] A virtual encoder with a `position` helper that `follow`s `vh`'s simulated volume and has `to: {action: setVolume}`. Turning it sends rate-limited actions with the latest value. When the volume changes from elsewhere, the helper follows it and sends nothing back.
 - [ ] A virtual encoder with a `select` helper over `core` surfaces' layers and `to: {action: navigate}` pages a deck.
 - [ ] A shift layer (`level: over`, `when: {while: …k15.pressed}`) takes over three keys while `k15` is held and redraws within 16 ms. A latching shift reads a `toggle`.
+- [ ] (Proposed) The same shift layer with `cascade: through` binds only `label` and claims input: the keys keep the base layer's background and tally, and `why` on k3's background names the base layer. A lock layer that binds an icon and `input: block` leaves every key's look live and ignores presses. Two layers that tie on a control get `ambiguousOrder` in the editor.
 - [ ] Every built-in reducer has a `defineTransform` definition and a conformance suite. Any native implementation passes it.
 - [ ] A cycle between two computed variables is reported as `cycle` on both, and the rest of the turn goes on.
 - [ ] A declared variable with `persist: true` keeps its value across a server restart.
@@ -54,6 +55,7 @@ Helpers on controls are reducers whose input defaults to their control. Layers b
 
 ### Phase 5: Layer resolution (Rust)
 - [ ] `when`, `level`, `rank` and `on` as sources and selectors; the resolution rule of surfaces §5.2; `surface.<slug>.layers` and `.controls.<id>.layer`; `resolutionCycle`.
+- [ ] (Proposed) `cascade: through`: per-property resolution and input as a property (surfaces §5.2.1), `.controls.<id>.look`, the binding's `input`, and `ambiguousOrder`.
 - [ ] Armed layers, evaluated ahead while inactive.
 - [ ] Presets: navigation group, levels, shift, popover, always on.
 
