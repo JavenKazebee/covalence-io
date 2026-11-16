@@ -57,7 +57,7 @@ These are the user-facing terms. Product and component names use the chemistry t
 | **Manifest** | What a plugin declares: config, permissions, actions, events, state schema, presets. |
 | **Action** | Something a connection can do, with typed parameters (`videohub.route`). |
 | **Target** | What an action acts on: a connection, optionally narrowed to one item it controls. Fixed, or chosen at run time ([ADR 0019](adr/0019-dynamic-action-targets-and-interfaces.md)). |
-| **Interface** | A versioned contract for one kind of device (`camera.ptz@1`) that plugins implement, so one action or binding works across brands. |
+| **Interface** | A versioned contract for one way of controlling something (`ptz.speed@1`, `ptz.presets@1`, `tally@1`), with units and ranges. Plugins implement the ones their device really does, so one action or binding works across brands ([ADR 0019](adr/0019-dynamic-action-targets-and-interfaces.md)). |
 | **Event** | Something that happened at a moment in time, at a node in the state tree (`pp:timerEnded`, `surface.deck.controls.k3:press`) ([ADR 0027](adr/0027-events-addressed-by-path.md)). |
 | **State** | Typed values that persist over time, held in one tree (`pp.timers.countdown.remaining`). |
 | **Variable** | User-defined state (`vars.serviceStarted`): written by flows, or computed from a source. |

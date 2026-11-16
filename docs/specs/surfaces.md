@@ -441,4 +441,4 @@ Surfaces, layers and control bindings have the same routes and answers as flows 
 8. **Time-based output:** blinking and animation. Bindings follow state, not time.
 9. **Sequences** ("A then B within 1 s"): these need recent history, not current state. A reducer (dataflow §4.2) that steps on both events and emits `matched` may be enough.
 10. **Orbitals while the core is unreachable:** should an Orbital keep showing the last outputs, or run some feedback locally?
-11. **Reading the look underneath:** a shift layer that relabels a key has to set its colour too. Should a binding be able to read the look the next layer down would give (`below.background`)?
+11. **Reading the look underneath:** a shift layer that relabels a key has to set its colour too. Should a binding be able to read the look the next layer down would give (`below.background`)? Or should layers stack per property, so a layer that binds only `label` leaves the other properties to the layer below? That covers shift layers, a rehearsal layer that only greys backgrounds, and a lock overlay, with nothing reading what's underneath.
