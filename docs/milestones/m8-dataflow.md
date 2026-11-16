@@ -16,6 +16,7 @@ Helpers on controls are reducers whose input defaults to their control. Layers b
 - [ ] A GPIO-style contact from a test plugin latches the same way, through a variable whose `value` is a `toggle` on the plugin's events. No surface is involved.
 - [ ] `vars.isLive` declared as `{expr: "atem.program == 3"}` (against a simulated switcher) is a read-only cell. A binding and a `state` trigger read it, and `why` on the trigger's action passes through the variable's patch to the switcher's.
 - [ ] A virtual encoder with a `position` helper that `follow`s `vh`'s simulated volume and has `to: {action: setVolume}`. Turning it sends rate-limited actions with the latest value. When the volume changes from elsewhere, the helper follows it and sends nothing back.
+- [ ] The virtual fader in motor mode: `value` bound to `vh`'s simulated volume moves it, and the fader's own report of that move is an echo (surfaces §4.4). It updates `value` with `cause` → the output's patch, gives no `change`, and its `absolute` helper sends nothing. Touching and moving it sends rate-limited actions again, and `requested.level` and `value` are both readable.
 - [ ] A virtual encoder with a `select` helper over `core` surfaces' layers and `to: {action: navigate}` pages a deck.
 - [ ] A shift layer (`level: over`, `when: {while: …k15.pressed}`) takes over three keys while `k15` is held and redraws within 16 ms. A latching shift reads a `toggle`.
 - [ ] (Proposed) The same shift layer with `cascade: through` binds only `label` and claims input: the keys keep the base layer's background and tally, and `why` on k3's background names the base layer. A lock layer that binds an icon and `input: block` leaves every key's look live and ignores presses. Two layers that tie on a control get `ambiguousOrder` in the editor.
@@ -51,7 +52,8 @@ Helpers on controls are reducers whose input defaults to their control. Layers b
 ### Phase 4: Helpers on controls (Rust)
 - [ ] `ControlBinding.helpers` and `gestures`. Helper cells under the layer or the surface; helper events at their cell; `{layer, controls}` triggers matching helper event names.
 - [ ] `follow`, `holdoff` and `pickup`.
-- [ ] The virtual surface gains an optional encoder (`relative` + `momentary`) and fader (`absolute` + `touch`) for tests and the UI.
+- [ ] Echoes (surfaces §4.4): `requested.<output>`, echo marking by the host (`echo: true`) and by `echoWindow`, no events from echoes unless a trigger opts in.
+- [ ] The virtual surface gains an optional encoder (`relative` + `momentary`) and fader (`absolute` + `touch`, with a `level` output and a motor mode that echoes) for tests and the UI.
 
 ### Phase 5: Layer resolution (Rust)
 - [ ] `when`, `level`, `rank` and `on` as sources and selectors; the resolution rule of surfaces §5.2; `surface.<slug>.layers` and `.controls.<id>.layer`; `resolutionCycle`.
@@ -76,4 +78,4 @@ Phase 0 first. Phases 1 and 2 can run side by side; 3 and 4 need 2; 5 needs 2 an
 
 ## Out of scope
 
-Plugin- and project-defined transforms, composites, templates and components ([M9](m9-composition.md)) · `led`, `level` and `text` outputs on hardware · control groups and surface groups · `back` history · echo detection by timing (surfaces §4.4).
+Plugin- and project-defined transforms, composites, templates and components ([M9](m9-composition.md)) · `led`, `level` and `text` outputs on hardware · control groups and surface groups · `back` history.
