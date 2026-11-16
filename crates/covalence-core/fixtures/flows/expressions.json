@@ -6,7 +6,7 @@
   "triggers": [
     {
       "kind": "event",
-      "source": { "conn": "01JBZ7P0D3F5G7H9J1K3L5M7N9" },
+      "from": { "target": "01JBZ7P0D3F5G7H9J1K3L5M7N9" },
       "event": "routeChanged",
       "filter": "trigger.payload?.output == 1"
     },
@@ -16,12 +16,7 @@
   "concurrency": "restart",
   "failover": "abort",
   "body": [
-    {
-      "id": "remember",
-      "kind": "set",
-      "path": "local.input",
-      "value": "vars.nextSource ?? 2"
-    },
+    { "id": "remember", "kind": "set", "path": "local.input", "value": "vars.nextSource ?? 2" },
     {
       "id": "decide",
       "kind": "branch",

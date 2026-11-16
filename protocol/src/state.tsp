@@ -57,6 +57,9 @@ model EventEmit {
   event: string;
   payload?: unknown;
 
+  /** The node the event happened at, relative to the connection root (`["outputs", 3]`). Absent, it's the root. */
+  at?: PathSegment[];
+
   /** The `action.invoke` call that produced this event, if any. */
   call?: string;
 

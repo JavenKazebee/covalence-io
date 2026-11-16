@@ -1,6 +1,6 @@
 # Milestone 6: Primitives
 
-- **Status:** In progress (Phases 0–2 done)
+- **Status:** In progress (Phases 0–3 done)
 
 The shapes M5 stored get their general form before hardware surfaces start creating entities in real projects ([M7](m7-surfaces-from-plugins.md) creates them on plug-in). Three changes:
 - **One way to give a value and one way to pick things:** `Source<T>` and `Selector` ([ADR 0026](../adr/0026-sources-and-selectors.md)). The binding kinds become stateless transforms.
@@ -42,12 +42,13 @@ Nothing here adds a new kind of thing for users to learn. It makes the existing 
 - [x] Tests per domain (`tests/selectors.rs`), including an `expr` that follows state and re-resolves, and validation of IDs written outside an `expr`. Targets with a `key` (items within a connection) are `unsupported` until ADR 0019's targets.
 
 ### Phase 3: Events by path (Rust)
-- [ ] The `event` journal record gains `path` and context fields; `input.event` is folded into it. Control events are journaled at `surface.<slug>.controls.<id>`.
-- [ ] `event.emit` accepts `at` (plugin protocol §6) in TypeSpec, the Rust protocol types and the SDK.
-- [ ] Flows emit `started`, `finished` and `failed`; the core emits `sys:startup`.
-- [ ] One event matcher in the flow runtime, indexed by path pattern, serving `{path}`, `{target}` (with interface name mapping), `{layer, controls}` and `{surface, controls}` sources. The `control` trigger kind is removed, and `fixtures/flows/control.json` migrated.
-- [ ] Pattern `state` triggers (`match`), with `{path, captures, value, previous, ts}`.
-- [ ] The trigger payload of dataflow §3.1, and validation: `unknownLayer`, `unknownControl`, `unsupported` across a control selector.
+- [x] The `event` journal record gains `path` and context fields (`conn`, `surface`, `layer`, `control`); `input.event` is folded into it. Control events are journaled at `surface.<slug>.controls.<id>`, with `{delta}` or `{value}` as their payload.
+- [x] `event.emit` accepts `at` (plugin protocol §6) in TypeSpec, the Rust protocol types and the SDK (`emit(event, payload, {at})`), with fixtures regenerated on both sides.
+- [x] Flows emit `started`, `finished` and `failed` at `flow.<slug>`, caused by `run.started` and `run.finished` (a queued run that's dropped emits only `finished`); the server journals `sys:startup` with `{reason: "boot"}` once the flows are loaded.
+- [x] One event matcher in the flow runtime, indexed by the root of the paths each trigger can match, serving `{path}` (text for reserved roots: `"sys"`, `"flow.<slug>"`), `{target}`, `{layer, controls}` and `{surface, controls}` sources, and `event` as a name, a list or `"*"`. The `control` trigger kind is removed and the fixtures migrated. Interface name mapping waits for manifests that declare interfaces (ADR 0019): the server gives none yet, and `{interface}` is tested with one set by hand.
+- [x] Pattern `state` triggers (`match`), with `{path, captures, value, previous, ts}`, and `when` as an expression or any source. With `when`, the edge is judged on its result per path.
+- [x] The trigger payload of dataflow §3.1, and validation: `unknownLayer`, `unknownControl`, `unknownEvent` for names a control or plugin can't give, and `unsupported` for `region`, `near` and `has` in event sources, control groups and component slots.
+- [ ] **Left for Phase 5:** the UI's flow editor still writes `control` triggers and `source`, and the journal view reads `input.event`.
 
 ### Phase 4: The core connection (Rust)
 - [ ] `core` reserved as an ID, alias and root. The engine routes `conn: "core"` to an in-process handler; the `Actions` trait is unchanged.

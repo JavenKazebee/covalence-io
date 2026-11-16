@@ -12,7 +12,7 @@ use std::time::Duration as StdDuration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::journal::ControlEvent;
+use crate::select::{Controls, Paths, Selector, Targets};
 use crate::source::Source;
 use crate::state::ConnId;
 use crate::surface::LayerId;
@@ -85,30 +85,108 @@ pub enum Failover {
 pub enum Trigger {
     /// `POST /flows/{id}/run`.
     Api {},
-    /// A plugin event from one connection.
+    /// Events named `event` from the nodes `from` picks (dataflow §3.1).
     Event {
-        source: ConnRef,
-        event: String,
+        from: EventSource,
+        event: Names,
         /// Runs only when truthy, with `trigger` in scope.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         filter: Option<Expr>,
     },
-    /// An expression over state, on an edge (spec §8.2).
-    State { when: Expr, edge: Edge },
-    /// An event on a control of a layer, on any surface where that layer
-    /// controlled it (surfaces spec §7).
-    Control {
-        control: ControlRef,
-        event: ControlEvent,
+    /// A value over state, on an edge (spec §8.2). With `match`, one value
+    /// per path matching the pattern, and `when` is optional.
+    State {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        when: Option<Cond>,
+        #[serde(default, rename = "match", skip_serializing_if = "Option::is_none")]
+        pattern: Option<String>,
+        edge: Edge,
     },
 }
 
-/// A control on a layer.
+/// Where an event trigger's events come from (dataflow §3.1).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged, deny_unknown_fields)]
+pub enum EventSource {
+    /// Any node or nodes; `{match}` for patterns.
+    Path { path: Selector<Paths> },
+    /// Connections, by ID, plugin or interface.
+    Target { target: Selector<Targets> },
+    /// The controls a layer controls, on whichever surface. Absent
+    /// `controls` is every control of the layer.
+    Layer {
+        layer: LayerId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        controls: Option<Selector<Controls>>,
+    },
+    /// A surface's controls, whatever layer controls them.
+    Surface {
+        surface: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        controls: Option<Selector<Controls>>,
+    },
+}
+
+/// One event name or several; `"*"` is any.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ControlRef {
-    pub layer: LayerId,
-    pub control: String,
+#[serde(untagged)]
+pub enum Names {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl Names {
+    pub fn contains(&self, name: &str) -> bool {
+        let is = |n: &String| n == "*" || n == name;
+        match self {
+            Names::One(n) => is(n),
+            Names::Many(ns) => ns.iter().any(is),
+        }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &String> {
+        match self {
+            Names::One(n) => std::slice::from_ref(n).iter(),
+            Names::Many(ns) => ns.iter(),
+        }
+    }
+}
+
+/// A condition: an expression's text, or any source (dataflow §1.1, "fields
+/// that are always expressions").
+#[derive(Clone, Debug, PartialEq)]
+pub struct Cond(pub Source<serde_json::Value>);
+
+impl Cond {
+    pub fn expr(source: impl Into<String>) -> Self {
+        Cond(Source::Expr {
+            expr: source.into(),
+            fallback: None,
+        })
+    }
+}
+
+impl Serialize for Cond {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match &self.0 {
+            Source::Expr {
+                expr,
+                fallback: None,
+            } => expr.serialize(serializer),
+            other => other.serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Cond {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        match serde_json::Value::deserialize(deserializer)? {
+            serde_json::Value::String(expr) => Ok(Cond::expr(expr)),
+            other => Source::from_json(other)
+                .map(Cond)
+                .map_err(serde::de::Error::custom),
+        }
+    }
 }
 
 /// Which change of a `state` trigger's value fires it.

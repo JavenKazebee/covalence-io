@@ -62,6 +62,10 @@ pub struct EventEmit {
     pub event: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload: Option<Value>,
+    /// The node the event happened at, relative to the connection root
+    /// (`["outputs", 3]`). Absent, it's the root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<Path>,
     /// The `action.invoke` call that produced this event, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub call: Option<String>,

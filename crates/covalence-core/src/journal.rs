@@ -17,7 +17,7 @@ use tokio::sync::broadcast;
 
 use crate::clock;
 use crate::flow::{Concurrency, FlowId};
-use crate::state::{ConnId, Quality, Source, StatePath};
+use crate::state::{ConnId, Quality, StatePath};
 
 pub type Seq = u64;
 
@@ -121,8 +121,6 @@ pub enum Record {
     RunStep(RunStepRecord),
     #[serde(rename = "run.finished")]
     RunFinished(RunFinishedRecord),
-    #[serde(rename = "input.event")]
-    InputEvent(InputEventRecord),
 }
 
 impl Record {
@@ -141,7 +139,6 @@ impl Record {
             Record::RunStarted(_) => "run.started",
             Record::RunStep(_) => "run.step",
             Record::RunFinished(_) => "run.finished",
-            Record::InputEvent(_) => "input.event",
         }
     }
 }
@@ -174,12 +171,46 @@ pub struct StateQualityRecord {
     pub quality: Quality,
 }
 
+/// `event`: something happened at a node of the state tree (dataflow spec
+/// §3). A plugin's, a control's, a flow's and the core's events are all
+/// this one kind; the context fields say which.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct EventRecord {
-    pub source: Source,
+    /// The node it happened at, in ID form: `{conn: "surface", path:
+    /// [slug, "controls", "k3"]}`.
+    pub path: StatePath,
     pub event: String,
+    /// The event's own data: `{delta}` for `turn` and `hold`, `{value}` for
+    /// `change`, a plugin's `EventDef` payload.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload: Option<Value>,
+    /// A target's event: its connection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conn: Option<ConnId>,
+    /// Control input: the surface's entity ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface: Option<String>,
+    /// Control input: the layer that controlled the control, by ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer: Option<String>,
+    /// Control input: the control's ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub control: Option<String>,
+}
+
+impl EventRecord {
+    /// An event with no context, at `path`.
+    pub fn at(path: StatePath, event: impl Into<String>, payload: Option<Value>) -> Self {
+        EventRecord {
+            path,
+            event: event.into(),
+            payload,
+            conn: None,
+            surface: None,
+            layer: None,
+            control: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -346,24 +377,6 @@ impl RunError {
 }
 
 /// An entry before it gets its `seq`, `term` and timestamps.
-/// `input.event`: an edge in a control's input state (surfaces spec §4.2).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct InputEventRecord {
-    /// The surface's entity ID.
-    pub surface: String,
-    /// The layer that controlled the control when the input arrived, by ID.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub layer: Option<String>,
-    pub control: String,
-    pub event: ControlEvent,
-    /// `hold`: the repeat count, from 1. `turn`: the change in detents.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub delta: Option<i64>,
-    /// `change`: the new value.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub value: Option<Value>,
-}
-
 /// What a surface sends (plugin protocol §8).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -787,9 +800,8 @@ mod tests {
                 quality: Quality::Stale,
             }),
             Record::Event(EventRecord {
-                source: Source::Conn("c1".into()),
-                event: "routeChanged".into(),
-                payload: Some(1.into()),
+                conn: Some("c1".into()),
+                ..EventRecord::at(StatePath::root("c1"), "routeChanged", Some(1.into()))
             }),
             requested("a"),
             Record::ActionSuppressed(ActionSuppressedRecord {

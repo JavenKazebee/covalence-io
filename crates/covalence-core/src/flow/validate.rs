@@ -8,9 +8,11 @@ use covalence_protocol::state::{Path, PathSegment};
 use serde::Serialize;
 use serde_json::Value;
 
-use super::{Flow, Step, StepKind, Trigger};
+use super::{Cond, EventSource, Flow, Names, Step, StepKind, Trigger};
 use crate::expr::{At, Evaluator};
+use crate::journal::ControlEvent;
 use crate::schema;
+use crate::select::{Controls, Issue, Pattern, Selector, Targets};
 use crate::source::{Part, Ref, Source};
 use crate::state::ConnId;
 use crate::surface::{self, Layer, LayerId};
@@ -102,6 +104,8 @@ pub struct Context<'a> {
     pub taken_slugs: &'a BTreeSet<String>,
     /// Every layer, by ID.
     pub layers: &'a BTreeMap<LayerId, Layer>,
+    /// Every surface's ID.
+    pub surfaces: &'a BTreeSet<String>,
     /// Compiles expressions.
     pub evaluator: &'a dyn Evaluator,
 }
@@ -117,6 +121,13 @@ fn index(i: usize) -> PathSegment {
 /// Builds a path from segments: `path![key("body"), index(1)]`.
 macro_rules! path {
     ($($seg:expr),* $(,)?) => { vec![$($seg),*] };
+}
+
+/// The connections a target selector names by ID.
+fn target_ids(target: &Selector<Targets>) -> Vec<ConnId> {
+    let mut out = Vec::new();
+    target.each_id(&mut Vec::new(), &mut |_, t| out.push(t.conn.clone()));
+    out
 }
 
 /// What a source walk found to check.
@@ -159,7 +170,7 @@ impl Flow {
     }
 }
 
-const LATER_TRIGGERS: &[&str] = &["schedule", "call", "osc", "startup"];
+const LATER_TRIGGERS: &[&str] = &["schedule", "call", "osc"];
 const LATER_STEPS: &[&str] = &[
     "call", "script", "log", "stop", "break", "continue", "group", "loop", "parallel",
 ];
@@ -195,20 +206,20 @@ fn find_unsupported(json: &Value) -> Vec<Problem> {
             Some(kind) if LATER_TRIGGERS.contains(&kind) => {
                 not_yet(at("kind"), &format!("{kind:?} triggers"))
             }
-            Some("control") => {
-                if trigger.get("echo").is_some() {
-                    not_yet(at("echo"), "echoes on control triggers");
-                }
-                let control = trigger.get("control").and_then(Value::as_object);
-                if control.is_some_and(|c| c.keys().any(|k| k != "layer" && k != "control")) {
-                    not_yet(at("control"), "control refs other than {layer, control}");
-                }
-            }
             Some("event") => {
-                let source = trigger.get("source");
-                if source.is_some_and(|s| s.get("plugin").is_some() || s.get("interface").is_some())
-                {
-                    not_yet(at("source"), "plugin and interface event sources");
+                if trigger.get("echo").is_some() {
+                    not_yet(at("echo"), "echoes on event triggers");
+                }
+                let from = trigger.get("from");
+                if from.is_some_and(|f| f.get("group").is_some()) {
+                    not_yet(at("from"), "control group event sources");
+                } else if from.is_some_and(|f| {
+                    f.get("slot").is_some()
+                        || (f.get("controls").is_some()
+                            && f.get("layer").is_none()
+                            && f.get("surface").is_none())
+                }) {
+                    not_yet(at("from"), "component event sources");
                 }
             }
             _ => {}
@@ -324,55 +335,36 @@ pub fn validate(flow: &Flow, ctx: &Context) -> Report {
         match trigger {
             Trigger::Api {} => {}
             Trigger::Event {
-                source,
-                event,
+                from,
+                event: names,
                 filter,
             } => {
-                if let Some(manifest) = v.manifest_of(&source.conn, at("source"))
-                    && !manifest.events.iter().any(|e| &e.id == event)
-                {
-                    v.error(
-                        at("event"),
-                        Code::UnknownEvent,
-                        format!("plugin {} has no event {event:?}", manifest.id),
-                    );
-                }
+                v.event_source(from, names, &at("from"), &at("event"));
                 if let Some(filter) = filter {
                     v.expr(at("filter"), filter);
                 }
             }
-            Trigger::State { when, .. } => v.expr(at("when"), when),
-            Trigger::Control { control, event } => match ctx
-                .layers
-                .get(&control.layer)
-                .map(|layer| layer.control(&control.control))
-            {
-                None => v.error(
-                    path![key("triggers"), index(i), key("control"), key("layer")],
-                    Code::UnknownLayer,
-                    format!("no layer {:?}", control.layer),
-                ),
-                Some(None) => v.error(
-                    path![key("triggers"), index(i), key("control"), key("control")],
-                    Code::UnknownControl,
-                    format!("the layer doesn't list a control {:?}", control.control),
-                ),
-                Some(Some(listed)) => {
-                    let needs = surface::input_for(*event);
-                    if !listed.inputs.contains(&needs) {
-                        v.error(
-                            at("event"),
-                            Code::Unsupported,
-                            format!(
-                                "{} gives no {:?} events: that needs a {} input, and the layer doesn't list one for it",
-                                control.control,
-                                event.as_str(),
-                                needs.as_str()
-                            ),
-                        );
-                    }
+            Trigger::State { when, pattern, .. } => {
+                if let Some(text) = pattern
+                    && let Err(e) = Pattern::parse(text)
+                {
+                    v.error(at("match"), Code::BadPath, e);
                 }
-            },
+                match when {
+                    // A string is an expression, reported at `when` itself.
+                    Some(Cond(Source::Expr {
+                        expr,
+                        fallback: None,
+                    })) => v.expr(at("when"), expr),
+                    Some(Cond(source)) => v.source(at("when"), source),
+                    None if pattern.is_none() => v.error(
+                        at("when"),
+                        Code::Invalid,
+                        "a state trigger needs `when`, or `match` with a path pattern".into(),
+                    ),
+                    None => {}
+                }
+            }
         }
     }
     for (i, condition) in flow.conditions.iter().enumerate() {
@@ -391,8 +383,11 @@ pub fn validate(flow: &Flow, ctx: &Context) -> Report {
         ));
     }
     for (i, trigger) in flow.triggers.iter().enumerate() {
-        if let Trigger::Event { source, .. } = trigger
-            && acted_on.contains(&source.conn)
+        if let Trigger::Event {
+            from: EventSource::Target { target },
+            ..
+        } = trigger
+            && target_ids(target).iter().any(|c| acted_on.contains(c))
         {
             report.warnings.push(Problem::new(
                 path![key("triggers"), index(i)],
@@ -423,6 +418,167 @@ impl<'a> Validation<'a> {
     }
 
     /// Reports an expression that doesn't compile.
+    /// Checks an event trigger's source and the event names it listens for.
+    fn event_source(&mut self, from: &EventSource, names: &Names, at: &Path, at_event: &Path) {
+        let mut problems: Vec<(Path, Issue, Code)> = Vec::new();
+        match from {
+            EventSource::Path { path } => {
+                let conns = self.ctx.conns;
+                for (rel, issue) in path.problems(&|c| conns.contains_key(c)) {
+                    let code = match issue {
+                        Issue::Unknown(_) => Code::UnknownConnection,
+                        Issue::Bad(_) => Code::BadPath,
+                    };
+                    problems.push((
+                        join(at, &[key("path")]).into_iter().chain(rel).collect(),
+                        issue,
+                        code,
+                    ));
+                }
+                for (rel, e) in path.exprs() {
+                    let at: Path = join(at, &[key("path")]).into_iter().chain(rel).collect();
+                    self.expr(at, e);
+                }
+            }
+            EventSource::Target { target } => {
+                let conns = self.ctx.conns;
+                for (rel, issue) in target.problems(&|c| conns.contains_key(c)) {
+                    let code = match issue {
+                        Issue::Unknown(_) => Code::UnknownConnection,
+                        Issue::Bad(_) => Code::Unsupported,
+                    };
+                    problems.push((
+                        join(at, &[key("target")]).into_iter().chain(rel).collect(),
+                        issue,
+                        code,
+                    ));
+                }
+                for (rel, e) in target.exprs() {
+                    let at: Path = join(at, &[key("target")]).into_iter().chain(rel).collect();
+                    self.expr(at, e);
+                }
+                // Names are checked against each connection named by ID.
+                let mut named = Vec::new();
+                target.each_id(&mut join(at, &[key("target")]), &mut |p, t| {
+                    named.push((p.clone(), t.conn.clone()));
+                });
+                for (p, conn) in named {
+                    if !self.ctx.conns.contains_key(&conn) {
+                        continue;
+                    }
+                    let Some(manifest) = self.manifest_of(&conn, p) else {
+                        continue;
+                    };
+                    for name in names.iter().filter(|n| *n != "*") {
+                        if !manifest.events.iter().any(|e| &e.id == name) {
+                            let message = format!("plugin {} has no event {name:?}", manifest.id);
+                            self.error(at_event.clone(), Code::UnknownEvent, message);
+                        }
+                    }
+                }
+            }
+            EventSource::Layer { layer, controls } => {
+                let Some(def) = self.ctx.layers.get(layer) else {
+                    self.error(
+                        join(at, &[key("layer")]),
+                        Code::UnknownLayer,
+                        format!("no layer {layer:?}"),
+                    );
+                    return;
+                };
+                let listed: Vec<&crate::surface::LayerControl> = match controls {
+                    None => def.controls.iter().collect(),
+                    Some(selector) => {
+                        self.controls(selector, &join(at, &[key("controls")]), &|id| {
+                            def.control(id).is_some()
+                        });
+                        let mut ids = Vec::new();
+                        selector.each_id(&mut Vec::new(), &mut |_, id| ids.push(id.clone()));
+                        ids.iter().filter_map(|id| def.control(id)).collect()
+                    }
+                };
+                self.control_events(names, &listed, at_event);
+            }
+            EventSource::Surface { surface, controls } => {
+                if !self.ctx.surfaces.contains(surface) {
+                    self.error(
+                        join(at, &[key("surface")]),
+                        Code::Invalid,
+                        format!("no surface {surface:?}"),
+                    );
+                }
+                if let Some(selector) = controls {
+                    // A surface's controls are known once it attaches.
+                    self.controls(selector, &join(at, &[key("controls")]), &|_| true);
+                }
+                self.control_events(names, &[], at_event);
+            }
+        }
+        for (path, issue, code) in problems {
+            let (Issue::Unknown(message) | Issue::Bad(message)) = issue;
+            self.error(path, code, message);
+        }
+    }
+
+    /// A control selector in an event source: IDs, lists, `expr` and the
+    /// combinators. Its other forms reach event sources later.
+    fn controls(&mut self, selector: &Selector<Controls>, at: &Path, known: &dyn Fn(&str) -> bool) {
+        for (rel, issue) in selector.problems(known) {
+            let path: Path = at.iter().cloned().chain(rel).collect();
+            match issue {
+                Issue::Unknown(m) => self.error(path, Code::UnknownControl, m),
+                Issue::Bad(m) => self.error(path, Code::Invalid, m),
+            }
+        }
+        let mut forms = Vec::new();
+        selector.each_form(&mut at.clone(), &mut |p, _| forms.push(p.clone()));
+        for path in forms {
+            self.error(
+                path,
+                Code::Unsupported,
+                "regions, neighbours and capabilities aren't supported in event sources yet".into(),
+            );
+        }
+        for (rel, e) in selector.exprs() {
+            self.expr(at.iter().cloned().chain(rel).collect(), e);
+        }
+    }
+
+    /// Event names for control input: each must be a control event, and
+    /// each listed control must have the input that gives it.
+    fn control_events(
+        &mut self,
+        names: &Names,
+        listed: &[&crate::surface::LayerControl],
+        at: &Path,
+    ) {
+        for name in names.iter().filter(|n| *n != "*") {
+            let Ok(event) = serde_json::from_value::<ControlEvent>(Value::String(name.clone()))
+            else {
+                self.error(
+                    at.clone(),
+                    Code::UnknownEvent,
+                    format!("{name:?} isn't a control event"),
+                );
+                continue;
+            };
+            let needs = surface::input_for(event);
+            for control in listed {
+                if !control.inputs.contains(&needs) {
+                    self.error(
+                        at.clone(),
+                        Code::Unsupported,
+                        format!(
+                            "{} gives no {name:?} events: that needs a {} input, and the layer doesn't list one for it",
+                            control.id,
+                            needs.as_str()
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
     /// Checks the expressions, paths and transforms in a source.
     fn source<T>(&mut self, path: Path, source: &Source<T>) {
         let mut found = Vec::new();

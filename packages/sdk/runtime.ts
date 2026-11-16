@@ -290,11 +290,12 @@ export class ConnectionRuntime {
       state,
       log,
       signal: this.#abort.signal,
-      emit: (event, payload) => {
+      emit: (event, payload, options) => {
         if (this.#destroyed) return;
         this.flush(); // keep patches written before the event ahead of it
         const params: Record<string, unknown> = { event };
         if (payload !== undefined) params.payload = payload;
+        if (options?.at !== undefined) params.at = options.at;
         const id = call();
         if (id !== undefined) params.call = id;
         params.ts = Date.now();

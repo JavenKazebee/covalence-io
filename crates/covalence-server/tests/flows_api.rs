@@ -73,7 +73,10 @@ async fn run_entries(server: &Server, run: &str) -> Vec<String> {
         .as_array()
         .unwrap()
         .iter()
-        .filter(|e| e["run"] == run)
+        // A flow's own events (started, finished) are covered in core.
+        .filter(|e| {
+            e["run"] == run && !(e["kind"] == "event" && e["data"]["path"]["conn"] == "flow")
+        })
         .map(|e| match e["kind"].as_str().unwrap() {
             "run.step" => format!(
                 "run.step {} {}",
@@ -182,7 +185,7 @@ async fn flows_over_http() {
         json!({
             "name": "Follow vh",
             "enabled": true,
-            "triggers": [{ "kind": "event", "source": { "conn": vh }, "event": "routeChanged" }],
+            "triggers": [{ "kind": "event", "from": { "target": vh }, "event": "routeChanged" }],
             "concurrency": "queue",
             "body": [route("follow1", &vh2, 1, 2)],
         }),
@@ -316,7 +319,7 @@ async fn flow_requests_are_checked() {
             "/flows",
             json!({
                 "name": "Bad", "enabled": true,
-                "triggers": [{ "kind": "event", "source": { "conn": vh }, "event": "routeChanged" }],
+                "triggers": [{ "kind": "event", "from": { "target": vh }, "event": "routeChanged" }],
                 "concurrency": "parallel",
                 "conditions": ["vars.armed &&"],
                 "inputs": {},
@@ -360,7 +363,7 @@ async fn flow_requests_are_checked() {
             "/flows",
             json!({
                 "name": "Echo", "enabled": true,
-                "triggers": [{ "kind": "event", "source": { "conn": vh }, "event": "routeChanged" }],
+                "triggers": [{ "kind": "event", "from": { "target": vh }, "event": "routeChanged" }],
                 "concurrency": "ignore", "body": [route("r", &vh, 1, 1)],
             }),
         )
@@ -615,7 +618,7 @@ async fn state_triggers_and_filters_over_http() {
         json!({
             "name": "Mirror 1 to 2", "enabled": true,
             "triggers": [{
-                "kind": "event", "source": { "conn": vh }, "event": "routeChanged",
+                "kind": "event", "from": { "target": vh }, "event": "routeChanged",
                 "filter": "trigger.payload.output == 1",
             }],
             "concurrency": "queue",

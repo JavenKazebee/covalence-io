@@ -646,8 +646,64 @@ pub struct PathForm {
     pub pattern: String,
 }
 
+/// A path a selector names: a [`Ref`] in ID form, or text for a reserved
+/// root (`"sys"`, `"flow.preService"`). A connection's path is always
+/// `{conn, path}`, so renaming an alias never breaks it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PathRef(pub Ref);
+
+impl PathRef {
+    pub fn state_path(&self) -> StatePath {
+        self.0.state_path()
+    }
+}
+
+fn reserved_root(name: &str) -> Option<Root> {
+    [
+        ("vars", Root::Vars),
+        ("sys", Root::Sys),
+        ("surface", Root::Surface),
+        ("layer", Root::Layer),
+        ("flow", Root::Flow),
+    ]
+    .into_iter()
+    .find(|(n, _)| *n == name)
+    .map(|(_, r)| r)
+}
+
+impl<'de> Deserialize<'de> for PathRef {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        match Json::deserialize(deserializer)? {
+            Json::String(text) => {
+                let (root, path) = text_path::parse(&text)
+                    .map_err(|e| D::Error::custom(format!("{text:?} isn't a path: {}", e.why)))?;
+                let root = reserved_root(&root).ok_or_else(|| {
+                    D::Error::custom(format!(
+                        "{root:?} isn't a reserved root: a connection's path is written {{conn, path}}"
+                    ))
+                })?;
+                Ok(PathRef(Ref::Root { root, path }))
+            }
+            other => serde_json::from_value(other)
+                .map(PathRef)
+                .map_err(|_| D::Error::custom("a path is text such as \"sys\", or {conn, path}")),
+        }
+    }
+}
+
+impl Serialize for PathRef {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match &self.0 {
+            Ref::Root { root, path } => {
+                text_path::format(root.as_str(), path).serialize(serializer)
+            }
+            conn => conn.serialize(serializer),
+        }
+    }
+}
+
 impl Domain for Paths {
-    type Id = Ref;
+    type Id = PathRef;
     type Form = PathForm;
     const FORMS: &'static [&'static str] = &["match"];
 }
@@ -758,17 +814,8 @@ fn ref_from(v: &Json, aliases: &BTreeMap<String, ConnId>) -> Option<Ref> {
     match v {
         Json::String(text) => {
             let (root, path) = text_path::parse(text).ok()?;
-            let root_kind = [
-                ("vars", Root::Vars),
-                ("sys", Root::Sys),
-                ("surface", Root::Surface),
-                ("layer", Root::Layer),
-                ("flow", Root::Flow),
-            ]
-            .into_iter()
-            .find(|(n, _)| *n == root);
-            Some(match root_kind {
-                Some((_, root)) => Ref::Root { root, path },
+            Some(match reserved_root(&root) {
+                Some(root) => Ref::Root { root, path },
                 None => Ref::Conn {
                     conn: aliases.get(&root)?.clone(),
                     path,
@@ -923,7 +970,7 @@ impl Selector<Paths> {
     pub fn problems(&self, known: &dyn Fn(&ConnId) -> bool) -> Vec<(Path, Issue)> {
         let mut out = Vec::new();
         self.each_id(&mut Vec::new(), &mut |at, r| {
-            if let Ref::Conn { conn, .. } = r
+            if let Ref::Conn { conn, .. } = &r.0
                 && !known(conn)
             {
                 let mut at = at.clone();

@@ -217,6 +217,7 @@ impl Host {
                 self.notify::<host_to_core::EventEmit>(
                     Some(conn),
                     &EventEmit {
+                        at: None,
                         event: "routeChanged".into(),
                         payload: Some(payload),
                         call: Some(invoke.call.clone()),

@@ -984,6 +984,13 @@
                     "type": "string"
                 },
                 "payload": {},
+                "at": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "PathSegment.json"
+                    },
+                    "description": "The node the event happened at, relative to the connection root (`[\"outputs\", 3]`). Absent, it's the root."
+                },
                 "call": {
                     "type": "string",
                     "description": "The `action.invoke` call that produced this event, if any."

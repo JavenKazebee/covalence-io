@@ -1,0 +1,39 @@
+{
+  "id": "01JC0000000000000000000005",
+  "name": "Events by path",
+  "slug": "eventsByPath",
+  "enabled": true,
+  "triggers": [
+    { "kind": "event", "from": { "path": "sys" }, "event": "startup" },
+    { "kind": "event", "from": { "path": "flow.followVh" }, "event": ["finished", "failed"] },
+    { "kind": "event", "from": { "path": { "match": "surface.*.controls.*" } }, "event": "press" },
+    {
+      "kind": "event",
+      "from": { "target": { "plugin": "io.covalence.videohub" } },
+      "event": "*",
+      "filter": "trigger.event == \"routeChanged\""
+    },
+    {
+      "kind": "event",
+      "from": {
+        "layer": "01JBZ7P0D3F5G7H9J1K3L5M7PA",
+        "controls": { "any": [["k1", "k2"], { "expr": "vars.extraKey" }] }
+      },
+      "event": ["press", "long"]
+    },
+    { "kind": "state", "match": "surface.*.controls.*.pressed", "edge": "rising" },
+    {
+      "kind": "state",
+      "when": {
+        "use": "compare",
+        "input": { "ref": { "root": "vars", "path": ["level"] } },
+        "op": ">",
+        "value": 0.5
+      },
+      "edge": "rising"
+    }
+  ],
+  "concurrency": "queue",
+  "failover": "abort",
+  "body": [{ "id": "pause", "kind": "wait", "for": "100ms" }]
+}

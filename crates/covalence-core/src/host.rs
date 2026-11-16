@@ -840,9 +840,12 @@ fn route(inner: &Inner, ntf: Notification) {
                 NewEntry::new(
                     origin,
                     Record::Event(EventRecord {
-                        source: Source::Conn(conn),
-                        event: event.event,
-                        payload: event.payload,
+                        conn: Some(conn.clone()),
+                        ..EventRecord::at(
+                            StatePath::new(conn.clone(), event.at.unwrap_or_default()),
+                            event.event,
+                            event.payload,
+                        )
                     }),
                 )
                 .cause(cause)

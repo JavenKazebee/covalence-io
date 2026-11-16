@@ -17,6 +17,7 @@ use covalence_core::journal::{
     ActionRequestedRecord, ActionResultRecord, BlockReason, Entry, EventRecord, Journal, JournalOp,
     NewEntry, Origin, Record, Seq, StatePatchRecord, StepDetail, StepStatus, TriggerMatchedRecord,
 };
+use covalence_core::select::TargetView;
 use covalence_core::state::{Meta, Quality, Source, StatePath};
 use covalence_protocol::Value;
 use covalence_protocol::state::PathSegment;
@@ -71,9 +72,12 @@ impl Actions for FakeCore {
                     NewEntry::new(
                         Origin::conn(req.conn.clone()),
                         Record::Event(EventRecord {
-                            source: Source::Conn(req.conn.clone()),
-                            event: "routeChanged".into(),
-                            payload: None,
+                            conn: Some(req.conn.clone()),
+                            ..EventRecord::at(
+                                StatePath::root(req.conn.clone()),
+                                "routeChanged",
+                                None,
+                            )
                         }),
                     )
                     .cause(requested)
@@ -180,10 +184,12 @@ impl World {
         self.shared.journal.range(1, usize::MAX).unwrap()
     }
 
+    /// A run's entries, without its flow's own events, which
+    /// `flows_emit_started_finished_and_failed` covers.
     fn entries_of_run(&self, run: &str) -> Vec<String> {
         self.entries()
             .iter()
-            .filter(|e| e.run.as_deref() == Some(run))
+            .filter(|e| e.run.as_deref() == Some(run) && !is_flow_event(e))
             .map(|e| describe(e))
             .collect()
     }
@@ -221,6 +227,10 @@ fn user() -> Origin {
         user: "test".into(),
         client: "test".into(),
     }
+}
+
+fn is_flow_event(entry: &Entry) -> bool {
+    matches!(&entry.record, Record::Event(ev) if ev.path.conn == "flow")
 }
 
 /// `kind`, with the step and status for `run.step` and the status for `run.finished`.
@@ -565,7 +575,7 @@ async fn event_triggers_start_runs_and_why_walks_back_through_both() {
     ));
     world.add(json!({
         "id": "follow", "name": "Follow", "slug": "follow", "enabled": true,
-        "triggers": [{ "kind": "event", "source": { "conn": VH }, "event": "routeChanged" }],
+        "triggers": [{ "kind": "event", "from": { "target": VH }, "event": "routeChanged" }],
         "concurrency": "queue",
         "body": [route("follow1", VH2, 1, 2)],
     }));
@@ -607,7 +617,7 @@ async fn the_loop_guard_blocks_a_flow_that_triggers_itself() {
         "id": "echo", "name": "Echo", "slug": "echo", "enabled": true,
         "triggers": [
             { "kind": "api" },
-            { "kind": "event", "source": { "conn": VH }, "event": "routeChanged" },
+            { "kind": "event", "from": { "target": VH }, "event": "routeChanged" },
         ],
         "concurrency": "parallel",
         "body": [route("route1", VH, 2, 2)],
@@ -684,7 +694,13 @@ async fn shutdown_cancels_active_runs() {
     world.settle().await;
     let shared = world.shared.clone();
     world.runtime.shutdown().await;
-    let last = shared.journal.range(1, usize::MAX).unwrap().pop().unwrap();
+    let last = shared
+        .journal
+        .range(1, usize::MAX)
+        .unwrap()
+        .into_iter()
+        .rfind(|e| !is_flow_event(e))
+        .unwrap();
     assert_eq!(describe(&last), "run.finished cancelled");
     assert_eq!(last.run.as_deref(), Some(run.as_str()));
 }
@@ -743,9 +759,12 @@ impl World {
             .append(NewEntry::new(
                 Origin::conn(conn),
                 Record::Event(EventRecord {
-                    source: Source::Conn(conn.into()),
-                    event: "routeChanged".into(),
-                    payload: Some(covalence_protocol::to_value(&payload).unwrap()),
+                    conn: Some(conn.into()),
+                    ..EventRecord::at(
+                        StatePath::root(conn),
+                        "routeChanged",
+                        Some(covalence_protocol::to_value(&payload).unwrap()),
+                    )
                 }),
             ))
             .unwrap();
@@ -969,7 +988,7 @@ async fn an_event_filter_picks_events_and_a_false_one_journals_nothing() {
     world.add(json!({
         "id": "f", "name": "f", "slug": "f", "enabled": true,
         "triggers": [{
-            "kind": "event", "source": { "conn": VH }, "event": "routeChanged",
+            "kind": "event", "from": { "target": VH }, "event": "routeChanged",
             "filter": "trigger.payload?.output == 1",
         }],
         "concurrency": "parallel",
@@ -1081,4 +1100,302 @@ async fn cancelling_during_wait_until_stops_the_run() {
             .map(|e| e.code),
         Some("cancelled".into())
     );
+}
+
+// ---------------------------------------------------------------------------
+// Events by path (M6 Phase 3)
+
+fn flow_with(id: &str, triggers: serde_json::Value) -> serde_json::Value {
+    json!({
+        "id": id, "name": id, "slug": id, "enabled": true,
+        "triggers": triggers, "concurrency": "parallel",
+        "body": [wait("pause", "10ms")],
+    })
+}
+
+/// Which of its flow's triggers started a run.
+fn trigger_index(world: &World, run: &RunInfo) -> u32 {
+    let entry = world.shared.journal.get(run.matched).unwrap().unwrap();
+    let Record::TriggerMatched(m) = &entry.record else {
+        panic!("{entry:?}")
+    };
+    m.trigger
+}
+
+fn record_event(world: &World, record: EventRecord) -> Seq {
+    world
+        .shared
+        .journal
+        .append(NewEntry::new(Origin::system(), Record::Event(record)))
+        .unwrap()
+        .seq
+}
+
+fn key(k: &str) -> PathSegment {
+    PathSegment::Key(k.into())
+}
+
+/// Waits for `flow` to have `n` runs.
+async fn runs_of(world: &World, flow: &str, n: usize) -> Vec<RunInfo> {
+    for _ in 0..1_000 {
+        let runs = world.runtime.runs(Some(flow));
+        if runs.len() >= n {
+            return runs;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    panic!(
+        "{flow} has {} runs, not {n}",
+        world.runtime.runs(Some(flow)).len()
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn flows_emit_started_finished_and_failed() {
+    let world = World::new();
+    world.fake.failing.lock().unwrap().insert("route".into());
+    world.add(api_flow("ok", "parallel", json!([wait("pause", "10ms")])));
+    world.add(api_flow("bad", "parallel", json!([route("r", VH, 1, 2)])));
+    for flow in ["ok", "bad"] {
+        let run = world.start(flow);
+        world.finished(&run).await;
+    }
+    let events: Vec<(String, String, serde_json::Value, String)> = world
+        .entries()
+        .iter()
+        .filter(|e| is_flow_event(e))
+        .map(|e| {
+            let Record::Event(ev) = &e.record else {
+                unreachable!()
+            };
+            let cause = world.shared.journal.get(e.cause.unwrap()).unwrap().unwrap();
+            (
+                format!(
+                    "flow.{}",
+                    match &ev.path.path[0] {
+                        PathSegment::Key(k) => k.clone(),
+                        _ => unreachable!(),
+                    }
+                ),
+                ev.event.clone(),
+                serde_json::to_value(ev.payload.as_ref().unwrap()).unwrap(),
+                describe(&cause),
+            )
+        })
+        .collect();
+    let run_of = |flow: &str| world.runtime.runs(Some(flow))[0].run.clone();
+    assert_eq!(
+        events
+            .iter()
+            .map(|(p, e, _, c)| format!("{p}:{e} <- {c}"))
+            .collect::<Vec<_>>(),
+        [
+            "flow.ok:started <- run.started",
+            "flow.ok:finished <- run.finished ok",
+            "flow.bad:started <- run.started",
+            "flow.bad:finished <- run.finished failed",
+            "flow.bad:failed <- run.finished failed",
+        ]
+    );
+    assert_eq!(events[1].2, json!({ "run": run_of("ok"), "status": "ok" }));
+    assert_eq!(events[4].2["error"]["code"], "action_failed");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_flow_follows_another_flow_and_startup() {
+    let world = World::new();
+    world.add(api_flow(
+        "first",
+        "parallel",
+        json!([wait("pause", "10ms")]),
+    ));
+    world.add(flow_with(
+        "then",
+        json!([
+            { "kind": "event", "from": { "path": "flow.first" }, "event": "finished" },
+            { "kind": "event", "from": { "path": "sys" }, "event": "startup" },
+        ]),
+    ));
+    world.runtime.startup("boot").unwrap();
+    let runs = runs_of(&world, "then", 1).await;
+    assert_eq!(trigger_index(&world, &runs[0]), 1, "started by sys:startup");
+
+    let first = world.start("first");
+    world.finished(&first).await;
+    let runs = runs_of(&world, "then", 2).await;
+    assert_eq!(
+        trigger_index(&world, &runs[0]),
+        0,
+        "started by flow.first:finished"
+    );
+    // `why` walks from the follower back through the first flow's run.
+    assert_eq!(
+        world.why(runs[0].matched)[..3],
+        ["trigger.matched", "event", "run.finished"]
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn one_flow_hears_every_key_with_captures() {
+    let world = World::new();
+    world.add(flow_with(
+        "anyKey",
+        json!([{
+            "kind": "event",
+            "from": { "path": { "match": "surface.*.controls.*" } },
+            "event": ["press", "long"],
+            "filter": "trigger.captures[1] != 'k9'",
+        }]),
+    ));
+    let press = |surface: &str, control: &str, event: &str| EventRecord {
+        surface: Some(format!("id-{surface}")),
+        layer: Some("L".into()),
+        control: Some(control.into()),
+        ..EventRecord::at(
+            StatePath::new("surface", vec![key(surface), key("controls"), key(control)]),
+            event,
+            None,
+        )
+    };
+    record_event(&world, press("deck", "k3", "press"));
+    record_event(&world, press("mixer", "dial1", "long"));
+    record_event(&world, press("deck", "k3", "release"));
+    record_event(&world, press("deck", "k9", "press"));
+    let runs = runs_of(&world, "anyKey", 2).await;
+    world.settle().await;
+    assert_eq!(
+        world.runtime.runs(Some("anyKey")).len(),
+        2,
+        "release and k9 don't match"
+    );
+    let mut runs = runs;
+    runs.reverse();
+    let trigger_of = |run: &RunInfo| {
+        let matched = world.shared.journal.get(run.matched).unwrap().unwrap();
+        let event = world
+            .shared
+            .journal
+            .get(matched.cause.unwrap())
+            .unwrap()
+            .unwrap();
+        let Record::Event(ev) = &event.record else {
+            panic!()
+        };
+        ev.control.clone()
+    };
+    assert_eq!(trigger_of(&runs[0]).as_deref(), Some("k3"));
+    assert_eq!(trigger_of(&runs[1]).as_deref(), Some("dial1"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn layer_sources_pick_controls_and_the_payload_carries_context() {
+    let world = World::new();
+    world.add(json!({
+        "id": "keys", "name": "keys", "slug": "keys", "enabled": true,
+        "triggers": [{
+            "kind": "event",
+            "from": { "layer": "L", "controls": ["k1", "k2"] },
+            "event": "turn",
+        }],
+        "concurrency": "parallel",
+        "body": [{ "id": "note", "kind": "set", "path": "vars.seen", "value": "[trigger.path, trigger.surface, trigger.layer, trigger.control, trigger.payload.delta]" }],
+    }));
+    let turn = |layer: &str, control: &str| EventRecord {
+        surface: Some("S1".into()),
+        layer: Some(layer.into()),
+        control: Some(control.into()),
+        ..EventRecord::at(
+            StatePath::new("surface", vec![key("deck"), key("controls"), key(control)]),
+            "turn",
+            Some(Value::Map(vec![("delta".into(), 2.into())])),
+        )
+    };
+    record_event(&world, turn("Other", "k1"));
+    record_event(&world, turn("L", "k3"));
+    record_event(&world, turn("L", "k2"));
+    let runs = runs_of(&world, "keys", 1).await;
+    world.finished(&runs[0].run).await;
+    world.settle().await;
+    assert_eq!(world.runtime.runs(Some("keys")).len(), 1);
+    assert_eq!(
+        world.var("seen"),
+        Some(json!(["surface.deck.controls.k2", "S1", "L", "k2", 2]))
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_interface_source_matches_every_implementer() {
+    let world = World::new();
+    world.runtime.set_targets(vec![
+        TargetView {
+            conn: VH.into(),
+            plugin: "videohub".into(),
+            interfaces: vec!["test@1".into()],
+        },
+        TargetView {
+            conn: VH2.into(),
+            plugin: "videohub".into(),
+            interfaces: vec![],
+        },
+    ]);
+    world.add(flow_with(
+        "tally",
+        json!([{ "kind": "event", "from": { "target": { "interface": "test@1" } }, "event": "routeChanged" }]),
+    ));
+    world.emit(VH2, json!({}));
+    world.emit(VH, json!({}));
+    let runs = runs_of(&world, "tally", 1).await;
+    world.settle().await;
+    assert_eq!(world.runtime.runs(Some("tally")).len(), 1);
+    let matched = world.shared.journal.get(runs[0].matched).unwrap().unwrap();
+    let event = world
+        .shared
+        .journal
+        .get(matched.cause.unwrap())
+        .unwrap()
+        .unwrap();
+    assert!(matches!(&event.record, Record::Event(ev) if ev.conn.as_deref() == Some(VH)));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_pattern_state_trigger_fires_per_path() {
+    let world = World::new();
+    world.add(json!({
+        "id": "held", "name": "held", "slug": "held", "enabled": true,
+        "triggers": [{ "kind": "state", "match": "surface.*.controls.*.pressed", "edge": "rising" }],
+        "concurrency": "parallel",
+        "body": [{ "id": "note", "kind": "set", "path": "vars.last", "value": "[trigger.path, trigger.captures, trigger.value, trigger.previous]" }],
+    }));
+    let set = |surface: &str, control: &str, v: bool| {
+        world.set_state(
+            "surface",
+            &[surface, "controls", control, "pressed"],
+            Value::from(v),
+        );
+    };
+    set("deck", "k0", false);
+    world.settle().await;
+    set("deck", "k0", true);
+    let runs = runs_of(&world, "held", 1).await;
+    world.finished(&runs[0].run).await;
+    assert_eq!(
+        world.var("last"),
+        Some(json!([
+            "surface.deck.controls.k0.pressed",
+            ["deck", "k0"],
+            true,
+            false
+        ]))
+    );
+    set("mixer", "b2", true);
+    set("deck", "k0", false);
+    let runs = runs_of(&world, "held", 2).await;
+    world.finished(&runs[0].run).await;
+    world.settle().await;
+    assert_eq!(
+        world.runtime.runs(Some("held")).len(),
+        2,
+        "a falling edge doesn't fire"
+    );
+    assert_eq!(world.var("last").unwrap()[1], json!(["mixer", "b2"]));
 }

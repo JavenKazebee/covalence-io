@@ -32,8 +32,8 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
 
 use crate::journal::{
-    ControlEvent, InputEventRecord, InputKind as SentKind, JournalError, JournalOp, NewEntry,
-    Origin, Record, Seq, StatePatchRecord,
+    ControlEvent, EventRecord, InputKind as SentKind, JournalError, JournalOp, NewEntry, Origin,
+    Record, Seq, StatePatchRecord,
 };
 use crate::state::{Meta, Quality, Source, StatePath};
 use crate::{Shared, clock};
@@ -1227,15 +1227,33 @@ impl Task {
                 (ControlEvent::Release, Some((_, pressed_on))) => pressed_on.as_deref(),
                 _ => layer,
             };
+            // Addressed at the control (dataflow §3); a surface removed
+            // since keeps its ID in place of its slug.
+            let slug = self
+                .inner
+                .book()
+                .surfaces
+                .get(&self.surface)
+                .map_or_else(|| self.surface.clone(), |s| s.slug.clone());
+            let payload = match (delta, value) {
+                (Some(d), _) => Some(Value::Map(vec![("delta".into(), d.into())])),
+                (None, Some(v)) => Some(Value::Map(vec![("value".into(), v)])),
+                (None, None) => None,
+            };
             let entry = NewEntry::new(
                 surface_origin(&self.surface),
-                Record::InputEvent(InputEventRecord {
-                    surface: self.surface.clone(),
+                Record::Event(EventRecord {
+                    surface: Some(self.surface.clone()),
                     layer: layer.map(str::to_owned),
-                    control,
-                    event,
-                    delta,
-                    value,
+                    control: Some(control.clone()),
+                    ..EventRecord::at(
+                        StatePath::new(
+                            STATE_ROOT,
+                            vec![key(&slug), key("controls"), key(&control)],
+                        ),
+                        event.as_str(),
+                        payload,
+                    )
                 }),
             )
             .cause(cause);

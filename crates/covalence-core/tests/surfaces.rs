@@ -14,8 +14,7 @@ use covalence_core::engine::{ActionOutcome, ActionRequest, Actions, CoreError};
 use covalence_core::expr::QuickJs;
 use covalence_core::flow::{Flow, Runtime};
 use covalence_core::journal::{
-    ControlEvent, Entry, InputEventRecord, InputKind, Journal, JournalOp, Origin, Record, Seq,
-    StatePatchRecord,
+    ControlEvent, Entry, InputKind, Journal, JournalOp, Origin, Record, Seq, StatePatchRecord,
 };
 use covalence_core::state::StatePath;
 use covalence_core::surface::gesture::Timing;
@@ -171,11 +170,42 @@ fn entries(shared: &Shared) -> Vec<Arc<Entry>> {
     shared.journal.range(1, 10_000).unwrap()
 }
 
-fn events(shared: &Shared) -> Vec<(Seq, InputEventRecord, Option<Seq>)> {
+/// A control input `event` entry, unpacked.
+#[derive(Clone, Debug)]
+struct Ev {
+    surface: String,
+    layer: Option<String>,
+    control: String,
+    event: ControlEvent,
+    delta: Option<i64>,
+    value: Option<Value>,
+}
+
+fn events(shared: &Shared) -> Vec<(Seq, Ev, Option<Seq>)> {
     entries(shared)
         .iter()
         .filter_map(|e| match &e.record {
-            Record::InputEvent(g) => Some((e.seq, g.clone(), e.cause)),
+            Record::Event(ev) if ev.surface.is_some() => {
+                let field = |name: &str| match &ev.payload {
+                    Some(Value::Map(m)) => m
+                        .iter()
+                        .find(|(k, _)| k.as_str() == Some(name))
+                        .map(|(_, v)| v.clone()),
+                    _ => None,
+                };
+                // Addressed at the control (dataflow §3).
+                assert_eq!(ev.path.conn, "surface");
+                assert_eq!(ev.path.path.len(), 3, "{:?}", ev.path);
+                let g = Ev {
+                    surface: ev.surface.clone().unwrap(),
+                    layer: ev.layer.clone(),
+                    control: ev.control.clone().unwrap(),
+                    event: serde_json::from_value(serde_json::json!(ev.event)).unwrap(),
+                    delta: field("delta").and_then(|d| d.as_i64()),
+                    value: field("value"),
+                };
+                Some((e.seq, g, e.cause))
+            }
             _ => None,
         })
         .collect()
@@ -710,8 +740,8 @@ async fn a_control_trigger_runs_its_flow_and_why_reaches_the_input_patch() {
         "slug": "notePress",
         "enabled": true,
         "triggers": [{
-            "kind": "control",
-            "control": { "layer": CAMS, "control": "k4" },
+            "kind": "event",
+            "from": { "layer": CAMS, "controls": "k4" },
             "event": "press",
         }],
         "concurrency": "parallel",
@@ -752,7 +782,7 @@ async fn a_control_trigger_runs_its_flow_and_why_reaches_the_input_patch() {
             "run.step",
             "run.started",
             "trigger.matched",
-            "input.event",
+            "event",
             "state.patch"
         ]
     );
@@ -779,8 +809,8 @@ async fn a_control_trigger_only_matches_its_layer() {
         "slug": "audioOnly",
         "enabled": true,
         "triggers": [{
-            "kind": "control",
-            "control": { "layer": AUDIO, "control": "k0" },
+            "kind": "event",
+            "from": { "layer": AUDIO, "controls": "k0" },
             "event": "double",
         }],
         "concurrency": "parallel",
@@ -958,12 +988,12 @@ async fn a_control_trigger_on_a_dial_gets_the_turn() {
         "slug": "turned",
         "enabled": true,
         "triggers": [{
-            "kind": "control",
-            "control": { "layer": DIALS, "control": "dial" },
+            "kind": "event",
+            "from": { "layer": DIALS, "controls": "dial" },
             "event": "turn",
         }],
         "concurrency": "queue",
-        "body": [{ "id": "note", "kind": "set", "path": "vars.turned", "value": "`${trigger.event} ${trigger.delta}`" }],
+        "body": [{ "id": "note", "kind": "set", "path": "vars.turned", "value": "`${trigger.event} ${trigger.payload.delta}`" }],
     }))
     .unwrap();
     runtime.set_flow(flow);

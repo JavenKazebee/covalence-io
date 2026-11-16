@@ -3,140 +3,35 @@
     "slug": "broken",
     "name": "Broken expressions",
     "enabled": true,
-    "triggers": [
-      {
-        "kind": "state",
-        "when": "vh.outputs[1].source ==",
-        "edge": "change"
-      },
-      {
-        "kind": "api"
-      }
-    ],
-    "conditions": [
-      "vars.armed &&"
-    ],
+    "triggers": [{ "kind": "state", "when": "vh.outputs[1].source ==", "edge": "change" }, { "kind": "api" }],
+    "conditions": ["vars.armed &&"],
     "concurrency": "parallel",
     "body": [
-      {
-        "id": "keep",
-        "kind": "set",
-        "path": "var.x",
-        "value": "1"
-      },
-      {
-        "id": "pick",
-        "kind": "branch",
-        "arms": []
-      },
-      {
-        "id": "hold",
-        "kind": "waitUntil",
-        "until": "vars.ready"
-      },
+      { "id": "keep", "kind": "set", "path": "var.x", "value": "1" },
+      { "id": "pick", "kind": "branch", "arms": [] },
+      { "id": "hold", "kind": "waitUntil", "until": "vars.ready" },
       {
         "id": "route1",
         "kind": "action",
-        "target": {
-          "conn": "01JBZ7P0D3F5G7H9J1K3L5M7NA"
-        },
+        "target": { "conn": "01JBZ7P0D3F5G7H9J1K3L5M7NA" },
         "action": "route",
-        "params": {
-          "output": -1,
-          "input": {
-            "expr": "1 +"
-          }
-        }
+        "params": { "output": -1, "input": { "expr": "1 +" } }
       },
       {
         "id": "nested",
         "kind": "branch",
-        "arms": [
-          {
-            "when": "true",
-            "steps": [
-              {
-                "id": "keep",
-                "kind": "wait",
-                "for": "1s"
-              }
-            ]
-          }
-        ]
+        "arms": [{ "when": "true", "steps": [{ "id": "keep", "kind": "wait", "for": "1s" }] }]
       }
     ]
   },
   "errors": [
-    {
-      "path": [
-        "triggers",
-        0,
-        "when"
-      ],
-      "code": "exprSyntax"
-    },
-    {
-      "path": [
-        "conditions",
-        0
-      ],
-      "code": "exprSyntax"
-    },
-    {
-      "path": [
-        "body",
-        0,
-        "path"
-      ],
-      "code": "badPath"
-    },
-    {
-      "path": [
-        "body",
-        1,
-        "arms"
-      ],
-      "code": "noArms"
-    },
-    {
-      "path": [
-        "body",
-        3,
-        "params",
-        "input",
-        "expr"
-      ],
-      "code": "exprSyntax"
-    },
-    {
-      "path": [
-        "body",
-        3,
-        "params",
-        "output"
-      ],
-      "code": "badParams"
-    },
-    {
-      "path": [
-        "body",
-        4,
-        "arms",
-        0,
-        "steps",
-        0,
-        "id"
-      ],
-      "code": "duplicateId"
-    }
+    { "path": ["triggers", 0, "when"], "code": "exprSyntax" },
+    { "path": ["conditions", 0], "code": "exprSyntax" },
+    { "path": ["body", 0, "path"], "code": "badPath" },
+    { "path": ["body", 1, "arms"], "code": "noArms" },
+    { "path": ["body", 3, "params", "input", "expr"], "code": "exprSyntax" },
+    { "path": ["body", 3, "params", "output"], "code": "badParams" },
+    { "path": ["body", 4, "arms", 0, "steps", 0, "id"], "code": "duplicateId" }
   ],
-  "warnings": [
-    {
-      "path": [
-        "body",
-        2
-      ],
-      "code": "noTimeout"
-    }
-  ]
+  "warnings": [{ "path": ["body", 2], "code": "noTimeout" }]
 }

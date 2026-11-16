@@ -23,16 +23,17 @@ use tokio::sync::{broadcast, watch};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
-use super::{Edge, Flow, FlowId, OnError, SetTarget, Step, StepKind, Trigger};
+use super::{Cond, Edge, EventSource, Flow, FlowId, OnError, SetTarget, Step, StepKind, Trigger};
 use crate::engine::{ActionRequest, Actions, CoreError};
 use crate::expr::{Evaluation, Evaluator, ExprError, Reads, Scope, truthy};
 use crate::gate::Verdict;
 use crate::journal::{
-    BlockReason, JournalError, JournalOp, NewEntry, Origin, Record, RunError, RunFinishedRecord,
-    RunStartedRecord, RunStatus, RunStepRecord, Seq, StatePatchRecord, StepDetail, StepStatus,
-    TriggerMatchedRecord,
+    BlockReason, EventRecord, JournalError, JournalOp, NewEntry, Origin, Record, RunError,
+    RunFinishedRecord, RunStartedRecord, RunStatus, RunStepRecord, Seq, StatePatchRecord,
+    StepDetail, StepStatus, TriggerMatchedRecord,
 };
-use crate::source::{self, Source};
+use crate::select::{ControlView, Pattern, Target, TargetView};
+use crate::source::{self, Eval, Source};
 use crate::state::{self as st, ConnId, Dirty, Meta, Quality, StatePath, TurnFeed};
 use crate::{Shared, clock, schema};
 
@@ -151,6 +152,24 @@ struct Inner {
     book: Mutex<Book>,
     /// `state` triggers, by flow and trigger index.
     watches: Mutex<BTreeMap<(FlowId, usize), Watch>>,
+    /// `state` triggers with `match`: each matching path's last values.
+    patterns: Mutex<BTreeMap<(FlowId, usize), PatternWatch>>,
+    /// Connections as target selectors see them, by ID.
+    targets: RwLock<Arc<BTreeMap<ConnId, TargetView>>>,
+    /// Event triggers by the root of the paths they can match; `None`
+    /// for those that can match any.
+    index: RwLock<EventIndex>,
+}
+
+/// Event triggers, by flow and index, under the root they can match.
+type EventIndex = BTreeMap<Option<String>, Vec<(FlowId, usize)>>;
+
+/// A pattern `state` trigger's view of each path it matched.
+struct PatternWatch {
+    pattern: Pattern,
+    /// Per path: its value, and what the edge is judged on (`when`'s
+    /// result, or the value).
+    seen: BTreeMap<StatePath, (Option<Value>, Option<Value>)>,
 }
 
 /// A `state` trigger's last value and what it read (spec §8.2).
@@ -215,8 +234,14 @@ impl Runtime {
             aliases: RwLock::new(Arc::new(BTreeMap::new())),
             book: Mutex::new(Book::default()),
             watches: Mutex::new(BTreeMap::new()),
+            patterns: Mutex::new(BTreeMap::new()),
+            targets: RwLock::new(Arc::new(BTreeMap::new())),
+            index: RwLock::new(BTreeMap::new()),
         });
-        let matcher = tokio::spawn(match_events(inner.clone()));
+        // Subscribed before anything can be journaled, so `sys:startup`
+        // reaches the matcher.
+        let journal = inner.shared.journal.subscribe();
+        let matcher = tokio::spawn(match_events(inner.clone(), journal));
         let feed = inner.shared.state.subscribe_turns();
         let watcher = tokio::spawn(watch_state(inner.clone(), feed));
         Runtime {
@@ -233,6 +258,33 @@ impl Runtime {
             .aliases
             .write()
             .unwrap_or_else(|e| e.into_inner()) = Arc::new(aliases);
+    }
+
+    /// Sets the connections target selectors pick from: each one's plugin and
+    /// the interfaces it implements.
+    pub fn set_targets(&self, targets: Vec<TargetView>) {
+        *self
+            .inner
+            .targets
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) =
+            Arc::new(targets.into_iter().map(|t| (t.conn.clone(), t)).collect());
+    }
+
+    /// Journals `sys:startup` (dataflow §3), once the flows are loaded, so
+    /// flows can run at boot: `reason` is `boot`, `failover` or `publish`.
+    pub fn startup(&self, reason: &str) -> Result<Seq, JournalError> {
+        let record = EventRecord::at(
+            StatePath::root("sys"),
+            "startup",
+            Some(Value::Map(vec![("reason".into(), reason.into())])),
+        );
+        Ok(self
+            .inner
+            .shared
+            .journal
+            .append(NewEntry::new(Origin::system(), Record::Event(record)))?
+            .seq)
     }
 
     /// Adds or replaces a flow. Runs already active keep the copy they started with.
@@ -254,6 +306,7 @@ impl Runtime {
             });
         let seq = inner.shared.journal.last_seq().unwrap_or(0);
         inner.publish_running(slot, seq);
+        inner.reindex(&book);
         drop(book);
         inner.baseline(&flow);
     }
@@ -266,6 +319,8 @@ impl Runtime {
             return Ok(());
         };
         inner.watches().retain(|(flow, _), _| flow != id);
+        inner.pattern_watches().retain(|(flow, _), _| flow != id);
+        inner.reindex(&book);
         inner.delete_state(&slot.flow.slug);
         for run in &slot.running {
             if let Some(live) = book.live.get(run) {
@@ -394,10 +449,11 @@ impl Drop for Runtime {
     }
 }
 
-/// Fires `event` and `control` triggers from plugin events and control
-/// events in the journal.
-async fn match_events(inner: Arc<Inner>) {
-    let mut feed = inner.shared.journal.subscribe();
+/// Fires event triggers from `event` entries in the journal (dataflow §3.1).
+async fn match_events(
+    inner: Arc<Inner>,
+    mut feed: broadcast::Receiver<Arc<crate::journal::Entry>>,
+) {
     loop {
         let entry = match feed.recv().await {
             Ok(entry) => entry,
@@ -407,52 +463,16 @@ async fn match_events(inner: Arc<Inner>) {
             }
             Err(broadcast::error::RecvError::Closed) => return,
         };
-        let (candidates, payload, origin) = match &entry.record {
-            Record::Event(event) => {
-                let st::Source::Conn(conn) = &event.source else {
-                    continue;
-                };
-                let candidates = inner.candidates(|t| {
-                    matches!(t, Trigger::Event { source, event: name, .. }
-                        if &source.conn == conn && name == &event.event)
-                });
-                let mut payload = vec![
-                    (
-                        "source".into(),
-                        Value::Map(vec![("conn".into(), conn.as_str().into())]),
-                    ),
-                    ("event".into(), event.event.as_str().into()),
-                ];
-                if let Some(p) = &event.payload {
-                    payload.push(("payload".into(), p.clone()));
-                }
-                (candidates, Value::Map(payload), Origin::system())
-            }
-            Record::InputEvent(input) => {
-                let Some(layer) = &input.layer else { continue };
-                let candidates = inner.candidates(|t| {
-                    matches!(t, Trigger::Control { control, event }
-                        if &control.layer == layer
-                            && control.control == input.control
-                            && *event == input.event)
-                });
-                let mut payload = vec![
-                    ("surface".into(), input.surface.as_str().into()),
-                    ("layer".into(), layer.as_str().into()),
-                    ("control".into(), input.control.as_str().into()),
-                    ("event".into(), input.event.as_str().into()),
-                ];
-                if let Some(delta) = input.delta {
-                    payload.push(("delta".into(), delta.into()));
-                }
-                if let Some(value) = &input.value {
-                    payload.push(("value".into(), value.clone()));
-                }
-                (candidates, Value::Map(payload), entry.origin.clone())
-            }
-            _ => continue,
+        let Record::Event(event) = &entry.record else {
+            continue;
         };
-        for (flow, trigger) in candidates {
+        // Control input keeps its user's origin; other events are the system's.
+        let origin = if event.surface.is_some() {
+            entry.origin.clone()
+        } else {
+            Origin::system()
+        };
+        for (flow, trigger, payload) in inner.event_matches(event) {
             // A false filter journals nothing (spec §8.2).
             if let Trigger::Event {
                 filter: Some(filter),
@@ -466,8 +486,8 @@ async fn match_events(inner: Arc<Inner>) {
                 trigger,
                 cause: Some(entry.seq),
                 origin: origin.clone(),
-                payload: payload.clone(),
                 failed_condition: inner.failed_condition(&flow, &payload),
+                payload,
             };
             let mut book = inner.book();
             if !book.flows.get(&flow.id).is_some_and(|s| s.flow.enabled) {
@@ -478,6 +498,58 @@ async fn match_events(inner: Arc<Inner>) {
             }
         }
     }
+}
+
+/// The roots of the paths an event source can match, for the index; `None`
+/// if it can match any.
+fn source_roots(from: &EventSource) -> Option<Vec<String>> {
+    use crate::select::{Selector, Wild};
+    fn paths(s: &Selector<crate::select::Paths>) -> Option<Vec<String>> {
+        match s {
+            Selector::One(r) => Some(vec![r.state_path().conn]),
+            Selector::List(rs) => Some(rs.iter().map(|r| r.state_path().conn).collect()),
+            Selector::Form(f) => match Pattern::parse(&f.pattern).ok()?.root {
+                // An alias names a connection only through the current aliases.
+                Wild::Is(root) if crate::expr::RESERVED_ROOTS.iter().any(|(n, _)| *n == root) => {
+                    Some(vec![root])
+                }
+                _ => None,
+            },
+            Selector::Any(items) => {
+                let mut out = Vec::new();
+                for item in items {
+                    out.extend(paths(item)?);
+                }
+                Some(out)
+            }
+            Selector::All(items) => items.iter().find_map(paths),
+            Selector::Expr(_) | Selector::Not(_) => None,
+        }
+    }
+    match from {
+        EventSource::Path { path } => paths(path),
+        EventSource::Target { .. } => None,
+        EventSource::Layer { .. } | EventSource::Surface { .. } => {
+            Some(vec![crate::surface::STATE_ROOT.to_owned()])
+        }
+    }
+}
+
+/// Whether a value crossed a `state` trigger's edge.
+fn crosses(edge: Edge, previous: Option<&Value>, now: Option<&Value>) -> bool {
+    match edge {
+        Edge::Rising => !truthy(previous) && truthy(now),
+        Edge::Falling => truthy(previous) && !truthy(now),
+        Edge::Change => previous != now,
+    }
+}
+
+/// `{conn, path}` as text, with the connection's alias where it has one.
+fn text_of(path: &StatePath, by_id: &BTreeMap<&ConnId, &String>) -> String {
+    let root = by_id
+        .get(&path.conn)
+        .map_or(path.conn.as_str(), |a| a.as_str());
+    crate::text_path::format(root, &path.path)
 }
 
 /// Re-evaluates `state` triggers when what they read changes (spec §8.2).
@@ -530,17 +602,270 @@ impl Inner {
         self.book.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Each enabled flow with a trigger that `matches`, and its index.
-    fn candidates(&self, matches: impl Fn(&Trigger) -> bool) -> Vec<(Arc<Flow>, usize)> {
-        self.book()
-            .flows
-            .values()
-            .filter(|slot| slot.flow.enabled)
-            .filter_map(|slot| {
-                let index = slot.flow.triggers.iter().position(&matches)?;
-                Some((slot.flow.clone(), index))
-            })
-            .collect()
+    fn pattern_watches(&self) -> MutexGuard<'_, BTreeMap<(FlowId, usize), PatternWatch>> {
+        self.patterns.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn aliases(&self) -> Arc<BTreeMap<String, ConnId>> {
+        self.aliases
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// Rebuilds the event trigger index from the flows.
+    fn reindex(&self, book: &Book) {
+        let mut index = EventIndex::new();
+        for slot in book.flows.values() {
+            for (i, trigger) in slot.flow.triggers.iter().enumerate() {
+                let Trigger::Event { from, .. } = trigger else {
+                    continue;
+                };
+                match source_roots(from) {
+                    Some(roots) => {
+                        for root in roots {
+                            index
+                                .entry(Some(root))
+                                .or_default()
+                                .push((slot.flow.id.clone(), i));
+                        }
+                    }
+                    None => index
+                        .entry(None)
+                        .or_default()
+                        .push((slot.flow.id.clone(), i)),
+                }
+            }
+        }
+        *self.index.write().unwrap_or_else(|e| e.into_inner()) = index;
+    }
+
+    /// The enabled flows an event fires, each by its first matching
+    /// trigger, with the trigger payload (dataflow §3.1).
+    fn event_matches(&self, event: &EventRecord) -> Vec<(Arc<Flow>, usize, Value)> {
+        let keys: Vec<(FlowId, usize)> = {
+            let index = self.index.read().unwrap_or_else(|e| e.into_inner());
+            let root = index
+                .get(&Some(event.path.conn.clone()))
+                .into_iter()
+                .flatten();
+            let any = index.get(&None).into_iter().flatten();
+            root.chain(any).cloned().collect()
+        };
+        let mut by_flow: BTreeMap<FlowId, Vec<usize>> = BTreeMap::new();
+        for (flow, i) in keys {
+            by_flow.entry(flow).or_default().push(i);
+        }
+        let aliases = self.aliases();
+        let by_id: BTreeMap<&ConnId, &String> = aliases.iter().map(|(a, id)| (id, a)).collect();
+        let mut out = Vec::new();
+        for (flow_id, mut triggers) in by_flow {
+            let Some(flow) = self
+                .book()
+                .flows
+                .get(&flow_id)
+                .filter(|s| s.flow.enabled)
+                .map(|s| s.flow.clone())
+            else {
+                continue;
+            };
+            triggers.sort_unstable();
+            for i in triggers {
+                let Some(Trigger::Event {
+                    from, event: names, ..
+                }) = flow.triggers.get(i)
+                else {
+                    continue;
+                };
+                if !names.contains(&event.event) {
+                    continue;
+                }
+                let Some((captures, source)) = self.source_matches(from, event, &aliases) else {
+                    continue;
+                };
+                let mut payload: Vec<(Value, Value)> = vec![
+                    ("path".into(), text_of(&event.path, &by_id).into()),
+                    ("event".into(), event.event.as_str().into()),
+                ];
+                if let Some(p) = &event.payload {
+                    payload.push(("payload".into(), p.clone()));
+                }
+                if let Some(c) = captures {
+                    payload.push((
+                        "captures".into(),
+                        Value::Array(c.into_iter().map(Value::from).collect()),
+                    ));
+                }
+                if let Some(t) = source {
+                    payload.push((
+                        "source".into(),
+                        Value::Map(vec![("conn".into(), t.conn.as_str().into())]),
+                    ));
+                }
+                for (name, field) in [
+                    ("surface", &event.surface),
+                    ("layer", &event.layer),
+                    ("control", &event.control),
+                ] {
+                    if let Some(v) = field {
+                        payload.push((name.into(), v.as_str().into()));
+                    }
+                }
+                out.push((flow.clone(), i, Value::Map(payload)));
+                break;
+            }
+        }
+        out
+    }
+
+    /// Whether `from` picks the event: `Some((captures, source))`.
+    fn source_matches(
+        &self,
+        from: &EventSource,
+        event: &EventRecord,
+        aliases: &Arc<BTreeMap<String, ConnId>>,
+    ) -> Option<(Option<Vec<String>>, Option<Target>)> {
+        let scope = Scope::new(&self.shared.state, aliases);
+        let mut eval = Eval::new(&scope, self.evaluator.as_ref());
+        let failed = |e: ExprError| {
+            tracing::warn!("an event source's expression failed, matching nothing: {e}");
+        };
+        // A control selector, tried on the one control the event is from.
+        // M6 implements IDs, lists and combinators here; the other forms
+        // are `unsupported` until a field needs them.
+        let control_in = |controls: &Option<crate::select::Selector<crate::select::Controls>>,
+                          eval: &mut Eval<'_>| {
+            let Some(control) = &event.control else {
+                return false;
+            };
+            let Some(selector) = controls else {
+                return true;
+            };
+            let view = ControlView {
+                id: control.clone(),
+                at: None,
+                inputs: Vec::new(),
+                outputs: Vec::new(),
+            };
+            match selector.resolve(&[view], Some(eval)) {
+                Ok(picked) => !picked.is_empty(),
+                Err(e) => {
+                    failed(e);
+                    false
+                }
+            }
+        };
+        match from {
+            EventSource::Path { path } => {
+                match path.matches(&event.path, aliases, Some(&mut eval)) {
+                    Ok(Some(c)) => Some(((!c.is_empty()).then_some(c), None)),
+                    Ok(None) => None,
+                    Err(e) => {
+                        failed(e);
+                        None
+                    }
+                }
+            }
+            EventSource::Target { target } => {
+                let conn = event.conn.as_ref()?;
+                // Selector forms test one connection at a time, so the
+                // event's own connection is the whole universe needed.
+                let view = self
+                    .targets
+                    .read()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get(conn)
+                    .cloned()
+                    .unwrap_or_else(|| TargetView {
+                        conn: conn.clone(),
+                        plugin: String::new(),
+                        interfaces: Vec::new(),
+                    });
+                match target.resolve(&[view], Some(&mut eval)) {
+                    Ok(picked) if !picked.is_empty() => {
+                        Some((None, Some(Target::conn(conn.clone()))))
+                    }
+                    Ok(_) => None,
+                    Err(e) => {
+                        failed(e);
+                        None
+                    }
+                }
+            }
+            EventSource::Layer { layer, controls } => (event.layer.as_ref() == Some(layer)
+                && control_in(controls, &mut eval))
+            .then_some((None, None)),
+            EventSource::Surface { surface, controls } => (event.surface.as_ref() == Some(surface)
+                && control_in(controls, &mut eval))
+            .then_some((None, None)),
+        }
+    }
+
+    /// Journals a flow's own event at `flow.<slug>` (flows spec §1.1).
+    fn flow_event(
+        &self,
+        origin: Origin,
+        slug: &str,
+        run: &str,
+        name: &str,
+        payload: Vec<(Value, Value)>,
+        cause: Seq,
+    ) -> Result<Seq, JournalError> {
+        let mut fields: Vec<(Value, Value)> = vec![("run".into(), run.into())];
+        fields.extend(payload);
+        let record = EventRecord::at(
+            StatePath::new("flow", vec![PathSegment::Key(slug.to_owned())]),
+            name,
+            Some(Value::Map(fields)),
+        );
+        Ok(self
+            .shared
+            .journal
+            .append(
+                NewEntry::new(origin, Record::Event(record))
+                    .cause(cause)
+                    .run(run.to_owned()),
+            )?
+            .seq)
+    }
+
+    /// `finished`, and `failed` when it failed, after a `run.finished`.
+    fn flow_finished(
+        &self,
+        origin: Origin,
+        slug: &str,
+        run: &str,
+        status: RunStatus,
+        error: Option<&RunError>,
+        finished: Seq,
+    ) -> Result<(), JournalError> {
+        let status_text = serde_json::to_value(status)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .unwrap_or_default();
+        self.flow_event(
+            origin.clone(),
+            slug,
+            run,
+            "finished",
+            vec![("status".into(), status_text.into())],
+            finished,
+        )?;
+        if let Some(e) = error.filter(|_| status == RunStatus::Failed) {
+            let error = Value::Map(vec![
+                ("code".into(), e.code.as_str().into()),
+                ("message".into(), e.message.as_str().into()),
+            ]);
+            self.flow_event(
+                origin,
+                slug,
+                run,
+                "failed",
+                vec![("error".into(), error)],
+                finished,
+            )?;
+        }
+        Ok(())
     }
 
     fn watches(&self) -> MutexGuard<'_, BTreeMap<(FlowId, usize), Watch>> {
@@ -615,43 +940,240 @@ impl Inner {
     /// (spec §8.2). Saving a flow resets it.
     fn baseline(&self, flow: &Flow) {
         let mut fresh = BTreeMap::new();
+        let mut fresh_patterns = BTreeMap::new();
         if flow.enabled {
             for (i, trigger) in flow.triggers.iter().enumerate() {
-                if let Trigger::State { when, .. } = trigger {
-                    let (value, error) = self.watch_value(flow, when, None);
-                    let eval_reads = value.1;
-                    fresh.insert(
-                        (flow.id.clone(), i),
-                        Watch {
-                            value: value.0,
-                            reads: eval_reads,
-                            error,
-                        },
-                    );
+                match trigger {
+                    Trigger::State {
+                        pattern: Some(text),
+                        when,
+                        ..
+                    } => {
+                        let Ok(pattern) = Pattern::parse(text) else {
+                            continue;
+                        };
+                        let seen = self.pattern_snapshot(flow, &pattern, when.as_ref());
+                        fresh_patterns.insert((flow.id.clone(), i), PatternWatch { pattern, seen });
+                    }
+                    Trigger::State {
+                        when: Some(when), ..
+                    } => {
+                        let ((value, reads), error) = self.watch_value(flow, when, None, None);
+                        fresh.insert(
+                            (flow.id.clone(), i),
+                            Watch {
+                                value,
+                                reads,
+                                error,
+                            },
+                        );
+                    }
+                    _ => {}
                 }
             }
         }
         let mut watches = self.watches();
         watches.retain(|(id, _), _| id != &flow.id);
         watches.extend(fresh);
+        drop(watches);
+        let mut patterns = self.pattern_watches();
+        patterns.retain(|(id, _), _| id != &flow.id);
+        patterns.extend(fresh_patterns);
     }
 
-    /// Evaluates a `state` trigger's `when`: its value (`None` on failure)
+    /// Evaluates a `state` trigger's `when`, with `trigger` in scope for a
+    /// pattern trigger: its value (`None` on failure, after any fallback)
     /// and reads, and the failure, logged unless it repeats `last`.
     fn watch_value(
         &self,
         flow: &Flow,
-        when: &str,
+        when: &Cond,
+        trigger: Option<&Value>,
         last: Option<&str>,
     ) -> ((Option<Value>, Reads), Option<String>) {
-        let Evaluation { value, reads } = self.evaluate(when, None, None);
-        match value {
-            Ok(value) => ((value, reads), None),
+        let outcome = self.evaluate_source(&when.0, trigger, None);
+        let reads = Reads {
+            paths: outcome.reads,
+            text: Default::default(),
+        };
+        let as_value = |j: &serde_json::Value| covalence_protocol::to_value(j).ok();
+        let fallback = when.0.fallback().and_then(as_value);
+        match outcome.value {
+            Ok(Some(v)) => ((as_value(&v), reads), None),
+            Ok(None) => ((fallback, reads), None),
             Err(e) => {
                 if last != Some(e.message.as_str()) {
                     tracing::warn!(flow = %flow.id, "state trigger failed, counting it as undefined: {e}");
                 }
-                ((None, reads), Some(e.message))
+                ((fallback, reads), Some(e.message))
+            }
+        }
+    }
+
+    /// The paths a pattern matches at `paths`' nodes and their ancestors.
+    fn pattern_hits<'p>(
+        &self,
+        pattern: &Pattern,
+        paths: impl Iterator<Item = &'p StatePath>,
+    ) -> BTreeMap<StatePath, Vec<String>> {
+        let aliases = self.aliases();
+        let mut out = BTreeMap::new();
+        for leaf in paths {
+            for k in 0..=leaf.path.len() {
+                let node = StatePath::new(leaf.conn.clone(), leaf.path[..k].to_vec());
+                if let Some(c) = pattern.captures(&node, &aliases) {
+                    out.insert(node, c);
+                }
+            }
+        }
+        out
+    }
+
+    /// What a pattern trigger judges a path's edge on, and its payload.
+    fn pattern_edge(
+        &self,
+        flow: &Flow,
+        when: Option<&Cond>,
+        path: &StatePath,
+        captures: &[String],
+        value: &Option<Value>,
+    ) -> Option<Value> {
+        let Some(when) = when else {
+            return value.clone();
+        };
+        let aliases = self.aliases();
+        let by_id: BTreeMap<&ConnId, &String> = aliases.iter().map(|(a, id)| (id, a)).collect();
+        let mut trigger: Vec<(Value, Value)> = vec![
+            ("path".into(), text_of(path, &by_id).into()),
+            (
+                "captures".into(),
+                Value::Array(captures.iter().map(|c| c.as_str().into()).collect()),
+            ),
+        ];
+        if let Some(v) = value {
+            trigger.push(("value".into(), v.clone()));
+        }
+        self.watch_value(flow, when, Some(&Value::Map(trigger)), None)
+            .0
+            .0
+    }
+
+    /// Every path a pattern matches now, with its values: the baseline.
+    fn pattern_snapshot(
+        &self,
+        flow: &Flow,
+        pattern: &Pattern,
+        when: Option<&Cond>,
+    ) -> BTreeMap<StatePath, (Option<Value>, Option<Value>)> {
+        use crate::select::Wild;
+        let aliases = self.aliases();
+        // A `*` root isn't snapshotted: its first changes compare with undefined.
+        let root = match &pattern.root {
+            Wild::Any => return BTreeMap::new(),
+            Wild::Is(name) if crate::expr::RESERVED_ROOTS.iter().any(|(n, _)| n == name) => {
+                name.clone()
+            }
+            Wild::Is(alias) => match aliases.get(alias) {
+                Some(conn) => conn.clone(),
+                None => return BTreeMap::new(),
+            },
+        };
+        let leaves: Vec<StatePath> = self.shared.state.read(|tree| {
+            tree.leaves_under(&StatePath::root(root.clone()))
+                .map(|(p, _)| p.clone())
+                .collect()
+        });
+        self.pattern_hits(pattern, leaves.iter())
+            .into_iter()
+            .map(|(path, captures)| {
+                let value = self.shared.state.value(&path);
+                let edge = self.pattern_edge(flow, when, &path, &captures, &value);
+                (path, (value, edge))
+            })
+            .collect()
+    }
+
+    /// Fires pattern `state` triggers for the matching paths in `dirty`.
+    /// After a lag (`None`) they take a new baseline instead.
+    fn check_patterns(self: &Arc<Self>, dirty: Option<&Dirty>) {
+        let keys: Vec<(FlowId, usize)> = self.pattern_watches().keys().cloned().collect();
+        for (flow_id, index) in keys {
+            let Some(flow) = self.book().flows.get(&flow_id).map(|s| s.flow.clone()) else {
+                continue;
+            };
+            let Some(Trigger::State { when, edge, .. }) = flow.triggers.get(index) else {
+                continue;
+            };
+            let Some(pattern) = self
+                .pattern_watches()
+                .get(&(flow_id.clone(), index))
+                .map(|w| w.pattern.clone())
+            else {
+                continue;
+            };
+            let Some(dirty) = dirty else {
+                let seen = self.pattern_snapshot(&flow, &pattern, when.as_ref());
+                if let Some(w) = self.pattern_watches().get_mut(&(flow_id.clone(), index)) {
+                    w.seen = seen;
+                }
+                continue;
+            };
+            let aliases = self.aliases();
+            let by_id: BTreeMap<&ConnId, &String> = aliases.iter().map(|(a, id)| (id, a)).collect();
+            for (path, captures) in self.pattern_hits(&pattern, dirty.iter()) {
+                let value = self.shared.state.value(&path);
+                let now = self.pattern_edge(&flow, when.as_ref(), &path, &captures, &value);
+                let previous = {
+                    let mut watches = self.pattern_watches();
+                    let Some(w) = watches.get_mut(&(flow_id.clone(), index)) else {
+                        break;
+                    };
+                    let previous = if value.is_none() && now.is_none() {
+                        w.seen.remove(&path)
+                    } else {
+                        w.seen.insert(path.clone(), (value.clone(), now.clone()))
+                    };
+                    previous.unwrap_or((None, None))
+                };
+                if !crosses(*edge, previous.1.as_ref(), now.as_ref()) {
+                    continue;
+                }
+                let cause = self.shared.state.read(|tree| {
+                    dirty
+                        .iter()
+                        .filter(|d| d.is_within(&path))
+                        .filter_map(|d| tree.leaf(d).map(|leaf| leaf.meta.seq))
+                        .max()
+                });
+                let mut payload: Vec<(Value, Value)> = vec![
+                    ("path".into(), text_of(&path, &by_id).into()),
+                    (
+                        "captures".into(),
+                        Value::Array(captures.iter().map(|c| c.as_str().into()).collect()),
+                    ),
+                ];
+                if let Some(v) = value {
+                    payload.push(("value".into(), v));
+                }
+                if let Some(p) = previous.0 {
+                    payload.push(("previous".into(), p));
+                }
+                payload.push(("ts".into(), clock::epoch_ms().into()));
+                let payload = Value::Map(payload);
+                let fire = Fire {
+                    trigger: index,
+                    cause,
+                    origin: Origin::system(),
+                    failed_condition: self.failed_condition(&flow, &payload),
+                    payload,
+                };
+                let mut book = self.book();
+                if !book.flows.get(&flow_id).is_some_and(|s| s.flow.enabled) {
+                    continue;
+                }
+                if let Err(e) = self.fire(&mut book, &flow_id, fire) {
+                    tracing::error!(flow = %flow_id, "cannot fire flow: {e}");
+                }
             }
         }
     }
@@ -659,6 +1181,7 @@ impl Inner {
     /// Re-evaluates the `state` triggers that read any of `dirty` (all of
     /// them for `None`) and fires those whose edge is crossed.
     fn check_watches(self: &Arc<Self>, dirty: Option<&Dirty>) {
+        self.check_patterns(dirty);
         let due: Vec<((FlowId, usize), Option<String>)> = self
             .watches()
             .iter()
@@ -669,10 +1192,16 @@ impl Inner {
             let Some(flow) = self.book().flows.get(&flow_id).map(|s| s.flow.clone()) else {
                 continue;
             };
-            let Some(Trigger::State { when, edge }) = flow.triggers.get(index) else {
+            let Some(Trigger::State {
+                when: Some(when),
+                edge,
+                pattern: None,
+            }) = flow.triggers.get(index)
+            else {
                 continue;
             };
-            let ((value, reads), error) = self.watch_value(&flow, when, last_error.as_deref());
+            let ((value, reads), error) =
+                self.watch_value(&flow, when, None, last_error.as_deref());
             let cause = dirty.and_then(|d| self.cause_of(&reads, d));
             let previous = {
                 let mut watches = self.watches();
@@ -683,12 +1212,7 @@ impl Inner {
                 watch.error = error;
                 std::mem::replace(&mut watch.value, value.clone())
             };
-            let fires = match edge {
-                Edge::Rising => !truthy(previous.as_ref()) && truthy(value.as_ref()),
-                Edge::Falling => truthy(previous.as_ref()) && !truthy(value.as_ref()),
-                Edge::Change => previous != value,
-            };
-            if !fires {
+            if !crosses(*edge, previous.as_ref(), value.as_ref()) {
                 continue;
             }
             let mut payload = Vec::new();
@@ -913,6 +1437,16 @@ impl Inner {
             .cause(live.info.matched)
             .run(run.to_owned()),
         )?;
+        if let Some(slot) = book.flows.get(&live.info.flow) {
+            self.flow_finished(
+                entry.origin.clone(),
+                &slot.flow.slug,
+                run,
+                RunStatus::Cancelled,
+                None,
+                entry.seq,
+            )?;
+        }
         live.info.status = RunPhase::Cancelled;
         live.info.finished = Some(entry.seq);
         if let Some((_, done)) = live.pending.take() {
@@ -1170,6 +1704,14 @@ impl RunTask {
                 }),
                 self.matched,
             )?;
+            self.inner.flow_finished(
+                self.origin(None),
+                &self.flow.slug,
+                &self.run,
+                RunStatus::Cancelled,
+                None,
+                finished,
+            )?;
             return Ok((RunStatus::Cancelled, None, finished, None));
         }
 
@@ -1184,6 +1726,14 @@ impl RunTask {
             self.matched,
         )?;
         self.started = started;
+        self.inner.flow_event(
+            self.origin(None),
+            &self.flow.slug,
+            &self.run,
+            "started",
+            Vec::new(),
+            started,
+        )?;
         let started_at = clock::epoch_ms();
         let clock = Instant::now();
         {
@@ -1216,6 +1766,14 @@ impl RunTask {
                 error: run_error.clone(),
             }),
             started,
+        )?;
+        self.inner.flow_finished(
+            self.origin(None),
+            &self.flow.slug,
+            &self.run,
+            status,
+            run_error.as_ref(),
+            finished,
         )?;
         let duration_ms = clock.elapsed().as_millis() as u64;
         Ok((status, run_error, finished, Some(duration_ms)))

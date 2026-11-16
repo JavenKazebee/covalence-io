@@ -18,7 +18,7 @@ import {
   PROTOCOL_VERSION,
   type SecretDef,
 } from "@covalence-io/protocol";
-import type { PathLike } from "./paths.ts";
+import type { Path, PathLike } from "./paths.ts";
 import type { Schema } from "./schema.ts";
 
 /** Version of this SDK, recorded in the manifest. */
@@ -61,8 +61,11 @@ export interface BaseContext<C = unknown, E = Record<string, unknown>> {
   readonly config: C;
   readonly secrets: Readonly<Record<string, string | undefined>>;
   readonly state: StateApi;
-  /** Emits an event. Events are never coalesced. */
-  emit<K extends keyof E & string>(event: K, payload: E[K]): void;
+  /**
+   * Emits an event. Events are never coalesced. `at` is the node it happened
+   * at, relative to the connection root (`["outputs", 3]`); absent, the root.
+   */
+  emit<K extends keyof E & string>(event: K, payload: E[K], options?: { at?: Path }): void;
   readonly log: Logger;
   /** Reports the connection status (spec §3.4). */
   status(status: ConnStatusKind, message?: string, detail?: unknown): void;

@@ -6,10 +6,10 @@
     "triggers": [
       {
         "kind": "event",
-        "source": { "conn": "01JBZ7P0D3F5G7H9J1K3L5M7N9" },
+        "from": { "target": "01JBZ7P0D3F5G7H9J1K3L5M7N9" },
         "event": "routeChange"
       },
-      { "kind": "event", "source": { "conn": "nope" }, "event": "routeChanged" }
+      { "kind": "event", "from": { "target": "nope" }, "event": "routeChanged" }
     ],
     "concurrency": "restart",
     "body": [
@@ -34,7 +34,7 @@
     { "path": ["name"], "code": "invalid" },
     { "path": ["slug"], "code": "badSlug" },
     { "path": ["triggers", 0, "event"], "code": "unknownEvent" },
-    { "path": ["triggers", 1, "source", "conn"], "code": "unknownConnection" },
+    { "path": ["triggers", 1, "from", "target"], "code": "unknownConnection" },
     { "path": ["body", 0, "action"], "code": "unknownAction" },
     { "path": ["body", 1, "id"], "code": "duplicateId" },
     { "path": ["body", 1, "params", "input"], "code": "badParams" },

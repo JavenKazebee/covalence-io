@@ -4,22 +4,13 @@
   "slug": "followVh",
   "enabled": true,
   "triggers": [
-    {
-      "kind": "event",
-      "source": { "conn": "01JBZ7P0D3F5G7H9J1K3L5M7N9" },
-      "event": "routeChanged"
-    },
+    { "kind": "event", "from": { "target": "01JBZ7P0D3F5G7H9J1K3L5M7N9" }, "event": "routeChanged" },
     { "kind": "api" }
   ],
   "concurrency": "queue",
   "failover": "abort",
   "body": [
-    {
-      "id": "settle",
-      "kind": "wait",
-      "name": "Let the cut land",
-      "for": "250ms"
-    },
+    { "id": "settle", "kind": "wait", "name": "Let the cut land", "for": "250ms" },
     {
       "id": "follow",
       "kind": "action",

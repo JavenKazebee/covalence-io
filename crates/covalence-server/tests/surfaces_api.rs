@@ -232,7 +232,7 @@ async fn surfaces_layers_and_bindings_are_validated_and_stored() {
         json!({
             "name": "On press",
             "enabled": true, "concurrency": "ignore",
-            "triggers": [{ "kind": "control", "control": { "layer": layer, "control": "k3" }, "event": "press" }],
+            "triggers": [{ "kind": "event", "from": { "layer": layer, "controls": "k3" }, "event": "press" }],
             "body": [{ "id": "s", "kind": "set", "path": "vars.pressed", "value": "true" }],
         })
     };
@@ -598,7 +598,7 @@ async fn a_web_surface_presses_routes_and_redraws() {
             json!({
                 "name": "Route on press",
                 "enabled": true, "concurrency": "ignore",
-                "triggers": [{ "kind": "control", "control": { "layer": id(&layer), "control": "k1" }, "event": "press" }],
+                "triggers": [{ "kind": "event", "from": { "layer": id(&layer), "controls": "k1" }, "event": "press" }],
                 "body": [{
                     "id": "route1", "kind": "action", "target": { "conn": vh },
                     "action": "route", "params": { "output": 1, "input": 3 },
@@ -663,7 +663,7 @@ async fn a_web_surface_presses_routes_and_redraws() {
     let tail = &kinds[kinds.len() - 3..];
     assert_eq!(
         tail,
-        ["trigger.matched", "input.event", "state.patch"],
+        ["trigger.matched", "event", "state.patch"],
         "{kinds:?}"
     );
     let input = chain.as_array().unwrap().last().unwrap();

@@ -58,6 +58,7 @@ use covalence_core::flow::runtime::{STATE_ROOT, VARS_ROOT};
 use covalence_core::flow::{self, Flow, FlowId, Runtime};
 use covalence_core::host::{HostConfig, HostPhase};
 use covalence_core::journal::{DEFAULT_RING_CAPACITY, Journal, JournalError};
+use covalence_core::select::TargetView;
 use covalence_core::state::ConnId;
 use covalence_core::surface::gesture::Timing;
 use covalence_core::surface::render::Renderer;
@@ -279,8 +280,12 @@ impl App {
                 evaluator.clone(),
             );
             runtime.set_aliases(alias_map(&conns));
+            runtime.set_targets(target_views(&conns));
             for flow in flows.values() {
                 runtime.set_flow(flow.clone());
+            }
+            if let Err(e) = runtime.startup("boot") {
+                tracing::error!("cannot journal sys:startup: {e}");
             }
             App {
                 core,
@@ -353,9 +358,11 @@ impl App {
 
     /// Tells the runtime the current aliases, after a connection changes.
     pub(crate) fn sync_aliases(&self) {
-        let aliases = alias_map(&self.conns());
+        let conns = self.conns();
+        let aliases = alias_map(&conns);
         self.surfaces.set_aliases(aliases.clone());
         self.runtime.set_aliases(aliases);
+        self.runtime.set_targets(target_views(&conns));
     }
 
     fn conn_by_alias(&self, alias: &str) -> Option<Connection> {
@@ -409,12 +416,20 @@ impl App {
             flow.slug = flow::derive_slug(&flow.name, &taken);
         }
         let layers = self.surfaces.layers();
+        let surfaces: BTreeSet<String> = self
+            .surface_entities
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .keys()
+            .cloned()
+            .collect();
         let report = flow::validate(
             &flow,
             &flow::Context {
                 conns: &by_conn,
                 taken_slugs: &taken,
                 layers: &layers,
+                surfaces: &surfaces,
                 evaluator: self.evaluator.as_ref(),
             },
         );
@@ -600,6 +615,19 @@ fn alias_map(conns: &BTreeMap<ConnId, Connection>) -> BTreeMap<String, ConnId> {
     conns
         .values()
         .map(|c| (c.alias.clone(), c.id.clone()))
+        .collect()
+}
+
+/// Connections as target selectors see them. No plugin declares interfaces
+/// yet (ADR 0019), so `{interface}` picks none of them.
+fn target_views(conns: &BTreeMap<ConnId, Connection>) -> Vec<TargetView> {
+    conns
+        .values()
+        .map(|c| TargetView {
+            conn: c.id.clone(),
+            plugin: c.plugin.clone(),
+            interfaces: Vec::new(),
+        })
         .collect()
 }
 

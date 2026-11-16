@@ -6,7 +6,7 @@
     "triggers": [
       {
         "kind": "event",
-        "source": { "conn": "01JBZ7P0D3F5G7H9J1K3L5M7N9" },
+        "from": { "target": "01JBZ7P0D3F5G7H9J1K3L5M7N9" },
         "event": "routeChanged"
       }
     ],
