@@ -9,7 +9,7 @@
 - [M3: First flows](milestones/m3-first-flows.md) (done)
 - [M4: Expressions](milestones/m4-expressions.md) (done)
 - [M5: Surfaces and bindings](milestones/m5-surfaces-and-bindings.md) (done)
-- [M6: Primitives](milestones/m6-primitives.md) (planned): sources, selectors, events by path, the core connection
+- [M6: Primitives](milestones/m6-primitives.md) (in progress): sources, selectors, events by path, the core connection
 - [M7: Surfaces from plugins](milestones/m7-surfaces-from-plugins.md) (planned)
 - [M8: Dataflow](milestones/m8-dataflow.md) (planned): reducers, cells, variables, sinks, helpers, layer resolution
 - [M9: Composition](milestones/m9-composition.md) (planned): one template primitive, composites, components, nesting, `forEach`, plugin transforms
@@ -51,16 +51,16 @@
 | [0021](adr/0021-expressions-as-sandboxed-snippets.md) | Expressions are sandboxed snippets; what code can do depends on where it runs | Accepted (amended by 0029, 0033) |
 | [0022](adr/0022-surfaces-pages-and-the-web-surface.md) | Surfaces and pages are core entities; the web surface speaks the surface protocol | Accepted (amended by 0024) |
 | [0023](adr/0023-key-rendering-and-binding-evaluation.md) | Keys are rendered in the core; structured bindings are evaluated without QuickJS | Accepted (amended by 0026, 0033) |
-| [0024](adr/0024-surfaces-as-two-way-devices.md) | Surfaces are two-way devices; control input is device state; layers decide who controls each control | Proposed (amended by 0027, 0029) |
+| [0024](adr/0024-surfaces-as-two-way-devices.md) | Surfaces are two-way devices; control input is device state; layers decide who controls each control | Accepted (amended by 0027, 0029) |
 | [0025](adr/0025-device-drivers-are-plugins.md) | Device drivers are plugins; the core performs hardware I/O, and network I/O is the plugin's choice | Proposed (amended by 0029) |
-| [0026](adr/0026-sources-and-selectors.md) | One way to give a value, one way to pick things: sources and selectors | Proposed |
-| [0027](adr/0027-events-addressed-by-path.md) | Events are addressed by state path; control triggers become event triggers | Proposed |
-| [0028](adr/0028-the-core-is-a-connection.md) | The core is a connection; surfaces and flows are its targets | Proposed |
+| [0026](adr/0026-sources-and-selectors.md) | One way to give a value, one way to pick things: sources and selectors | Accepted |
+| [0027](adr/0027-events-addressed-by-path.md) | Events are addressed by state path; control triggers become event triggers | Accepted |
+| [0028](adr/0028-the-core-is-a-connection.md) | The core is a connection; surfaces and flows are its targets | Accepted |
 | [0029](adr/0029-dataflow-sources-transforms-sinks.md) | Dataflow is sources, transforms and sinks; helpers are transforms; transforms are sandboxed definitions | Proposed |
 | [0030](adr/0030-composite-connections.md) | Composite connections: users build devices out of other devices | Proposed (amended by 0032; revised: `delegate`) |
 | [0031](adr/0031-templates-instances-and-components.md) | Reuse is by parameters: templates, instances, components, and explicit scope | Proposed (amended by 0032) |
 | [0032](adr/0032-one-template-primitive.md) | One reuse primitive: templates and instances, for layers, composites, components and flows | Proposed |
-| [0033](adr/0033-execution-model.md) | Execution model: one turn thread writes state; flows, scripts and drawing run beside it | Proposed |
+| [0033](adr/0033-execution-model.md) | Execution model: one turn thread writes state; flows, scripts and drawing run beside it | Accepted |
 | [0034](adr/0034-live-edits.md) | Editing a running show: changesets, pinned runs and kept state | Proposed |
 
 Each record covers its context, the decision, its consequences and the alternatives considered. Don't edit an accepted record to change its decision; write a new one that supersedes it.

@@ -1,6 +1,6 @@
 # 0028 – The core is a connection; surfaces and flows are its targets
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-22
 - **Answers:** [surfaces spec open question 1](../specs/surfaces.md) (core-provided actions)
 - **Specs:** [core actions](../specs/core-actions.md), [surfaces §4.5, §9](../specs/surfaces.md), [plugin protocol §4](../specs/plugin-protocol.md)

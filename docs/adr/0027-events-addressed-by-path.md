@@ -1,6 +1,6 @@
 # 0027 – Events are addressed by state path; control triggers become event triggers
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-22
 - **Amends:** [0024](0024-surfaces-as-two-way-devices.md) (`control` triggers and `input.event`), [0019](0019-dynamic-action-targets-and-interfaces.md) (interface events are matched through the same mechanism)
 - **Specs:** [dataflow §3](../specs/dataflow.md), [flows §1.1](../specs/flows.md), [surfaces §7](../specs/surfaces.md), [state and event log §2.2](../specs/state-and-event-log.md), [plugin protocol §6](../specs/plugin-protocol.md)

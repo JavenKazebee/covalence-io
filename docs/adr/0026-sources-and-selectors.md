@@ -1,6 +1,7 @@
 # 0026 – One way to give a value, one way to pick things: sources and selectors
 
-- **Status:** Proposed
+- **Status:** Accepted
+- **Revised before acceptance:** a reserved key commits an object to being a source (dataflow §1.1)
 - **Date:** 2026-10-22
 - **Amends:** [0023](0023-key-rendering-and-binding-evaluation.md) (the five binding kinds become sources and stateless transforms; native evaluation stands), [0019](0019-dynamic-action-targets-and-interfaces.md) (`TargetSpec` becomes a `Source<Target>` with a constraint)
 - **Specs:** [dataflow §1, §2, §4.1](../specs/dataflow.md), [bindings](../specs/bindings.md), [surfaces](../specs/surfaces.md), [flows](../specs/flows.md)
@@ -24,7 +25,7 @@
 
 ## Decision
 - **`Source<T>` is the one shape for a value that may follow state:** a literal, `{value}` (an escaped literal), `{ref}`, `{expr}`, or `{use}` (a transform). It has one serde type, one evaluator with run-time read tracking, one typing rule and one editor widget. Every field that can follow state is a `Source`.
-- **Sources are recognised by shape, only where the schema says so.** Nested values are literals, as action parameters already work.
+- **Sources are recognised by shape, only where the schema says so.** Nested values are literals, as action parameters already work. A `ref`, `expr`, `use` or `value` key commits an object to being a source: keys its form doesn't allow are an error, not a literal ([dataflow §1.1](../specs/dataflow.md)).
 - **The binding kinds become stateless transforms:** `format`, `template`, `rules` and `map`, joined by `compare`, `all`, `any` and `not`. Their options are sources, so they chain, and conditions combine. ADR 0023's rule stands: they're evaluated natively and tested against their compiled expressions.
 - **`Selector<Id>` is the one shape for picking things:** an ID, a list, `{expr}`, the combinators `any`, `all` and `not`, and forms per domain:
   - controls: `region`, `near`, `has` (by capability)

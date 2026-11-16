@@ -46,10 +46,12 @@ type Path = PathSegment[];                    // ADR 0017
 ```
 
 ### 1.1 Recognising a source
-- **A source is recognised by its shape,** only where the schema says a field is a `Source`: an object whose keys are exactly `ref`, `expr` or `value`, or `use` with that transform's options, plus an optional `fallback`. Any other value is a literal.
+- **A source is recognised by its shape,** only where the schema says a field is a `Source`: an object with a `ref`, `expr`, `use` or `value` key. Any other value is a literal.
+- **A reserved key commits the object to being a source.** Its other keys must be the ones that form allows: `fallback` beside `ref` or `expr`, `fallback` and the transform's options beside `use`, nothing beside `value`. Anything else is an `invalidSource` error, not a literal, so a typo such as `fallbak` can't quietly turn a binding into a constant object. A literal object that has one of these keys is written inside `{value}`.
 - **Nested values are literals.** Inside a literal object or array, `{expr: …}` is just data, as action parameters already work ([flows §8.3](flows.md)).
 - **`{value}` escapes a literal** that would look like a source, in a field whose `T` is an object or any value. The editor adds and removes it.
 - **Fields that are always expressions** (`when`, `until`, `filter`) keep plain strings as expressions ([flows §7](flows.md)). An object there is a source, so a `rules` or `compare` transform can drive a state trigger.
+- **In Rust,** `Source<T>` is an enum of `Literal(T)`, `Ref`, `Expr` and `Use(Transform)`, each source form carrying `fallback: Option<T>`. `{value}` folds into `Literal` and is added back on serialisation when the literal would read as a source, so stored JSON round-trips. `Deserialize` is written by hand: it buffers the value, dispatches on the reserved key, and deserializes `T` only for literals. `Transform` is a `#[serde(tag = "use", deny_unknown_fields)]` enum, given the object without `fallback`. Not `#[serde(untagged)]`: it tries each variant in turn, reports only "did not match any variant", and accepts a misspelled source as a literal whenever `T` is an object or any value.
 
 ### 1.2 Evaluation
 - **One evaluator for every source.** Reactive positions (display bindings, layer fields, state triggers, cells) re-evaluate when their reads change (§5.3). One-shot positions (an action step's parameters, `wait.for`) evaluate once, when the step starts. The result is the same either way.

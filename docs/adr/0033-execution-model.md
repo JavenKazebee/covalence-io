@@ -1,6 +1,6 @@
 # 0033 – Execution model: one turn thread writes state; flows, scripts and drawing run beside it
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-16
 - **Amends:** [0023](0023-key-rendering-and-binding-evaluation.md) (drawing moves off the binding turn), [0021](0021-expressions-as-sandboxed-snippets.md) (more than one QuickJS runtime)
 - **Answers:** [M8 Phase 0](../milestones/m8-dataflow.md) "the graph's home", and [ADR 0029](0029-dataflow-sources-transforms-sinks.md)'s question of how sandboxed reducers fit the 16 ms budget

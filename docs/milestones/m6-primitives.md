@@ -1,6 +1,6 @@
 # Milestone 6: Primitives
 
-- **Status:** Planned
+- **Status:** In progress (Phase 0 done)
 
 The shapes M5 stored get their general form before hardware surfaces start creating entities in real projects ([M7](m7-surfaces-from-plugins.md) creates them on plug-in). Three changes:
 - **One way to give a value and one way to pick things:** `Source<T>` and `Selector` ([ADR 0026](../adr/0026-sources-and-selectors.md)). The binding kinds become stateless transforms.
@@ -26,9 +26,9 @@ Nothing here adds a new kind of thing for users to learn. It makes the existing 
 ### Phase 0: Decisions and docs
 - [x] [ADR 0026](../adr/0026-sources-and-selectors.md), [ADR 0027](../adr/0027-events-addressed-by-path.md) and [ADR 0028](../adr/0028-the-core-is-a-connection.md). New specs: [dataflow](../specs/dataflow.md) (§1–§4.1 for M6) and [core actions](../specs/core-actions.md). Surfaces, bindings, flows, state and plugin protocol specs marked **(M6)**.
 - [x] **Migration policy.** There are no real projects yet, so nothing is migrated: the stored shapes change, dev databases are reset, and fixtures are rewritten. Migrations ([ADR 0006](../adr/0006-project-storage-and-versioning.md)) start with the first real deployment.
-- [ ] **[ADR 0033](../adr/0033-execution-model.md), the execution model.** Accept it before the evaluator is reshaped: the turn thread, its QuickJS runtime, the script pool and the drawing thread.
-- [ ] **Source recognition** (dataflow §1.1): decide the Rust representation. Likely an untagged enum tried in order `{value}`, `{ref}`, `{expr}`, `{use}`, literal, with the field's `T` checked after.
-- [ ] Accept ADR 0024, which M5 built, so the ADRs this milestone amends are settled first.
+- [x] **[ADR 0033](../adr/0033-execution-model.md), the execution model.** Accepted before the evaluator is reshaped: the turn thread, its QuickJS runtime, the script pool and the drawing thread.
+- [x] **Source recognition** ([dataflow §1.1](../specs/dataflow.md)): a hand-written `Deserialize` that dispatches on the reserved key (`ref`, `expr`, `use`, `value`) and deserializes `T` only for literals, rather than `#[serde(untagged)]`. A reserved key commits the object: keys its form doesn't allow are `invalidSource`, never a literal.
+- [x] ADR 0024, which M5 built, accepted, so the ADRs this milestone amends are settled first. ADRs 0026, 0027 and 0028 accepted as Phase 0 closes.
 
 ### Phase 1: Sources and stateless transforms (Rust)
 - [ ] `covalence_core::source`: `Source<T>` (serde, recognition, `fallback`), `Ref` with `conn`, `target` (stub until ADR 0019 targets are built: `unsupported`) and `root`, one-shot and reactive evaluation with read tracking, and `to_expr`.
