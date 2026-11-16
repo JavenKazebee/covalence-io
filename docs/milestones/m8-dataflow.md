@@ -29,8 +29,10 @@ Helpers on controls are reducers whose input defaults to their control. Layers b
 
 ### Phase 0: Decisions and docs
 - [x] [ADR 0029](../adr/0029-dataflow-sources-transforms-sinks.md); [dataflow spec](../specs/dataflow.md) §4.2–§7; surfaces §4.3 and §5, bindings §5 marked **(M8)**.
-- [ ] **The graph's home.** Decide whether the binding worker becomes the dataflow evaluator (one thread, one QuickJS) or a separate thread feeds it. The constraint is the 16 ms budget with sandboxed reducers in the path.
-- [ ] **Reducer state on failover:** confirm that replicated cell patches are enough to resume, with no separate checkpoint.
+- [x] **The graph's home.** The turn thread ([ADR 0033](../adr/0033-execution-model.md)): the binding worker becomes part of it, with its own QuickJS runtime.
+- [ ] **Reducer state on failover:** confirm that replicated cell patches are enough to resume, with no separate checkpoint. ADR 0033 makes it a rule: reducers keep no state outside their cell.
+- [ ] **Kept state through edits** ([ADR 0034](../adr/0034-live-edits.md)): a cell keeps its value when its reducer is unchanged and its value still fits, and otherwise resets with `cause` → the edit.
+- [ ] **Journal tiers** (state spec §2.4): derived entries in memory only, inputs batched to disk.
 - [ ] **Entity plumbing.** A generic `EntityKind` in `covalence-server` (validate, dependencies, cascade on delete, routes) before `variable` joins and M9 adds three more types, so each type isn't another `save_x`/`put_x` pair.
 
 ### Phase 1: Transform definitions and reducers (Rust + JS)

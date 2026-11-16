@@ -1,6 +1,7 @@
 # 0009 – Multi-user editing, with the server as the single source of truth
 
 - **Status:** Accepted
+- **Amended by:** [0034](0034-live-edits.md) (draft and publish becomes a changeset across entities; runs pin their version; state is kept through edits when it fits)
 - **Date:** 2026-10-18
 
 ## Context

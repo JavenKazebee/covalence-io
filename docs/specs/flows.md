@@ -376,7 +376,7 @@ Errors block the save; warnings don't. There are no drafts yet.
 
 ### 8.5 Runs
 
-- **A run** has a ULID, a status (`queued`, `running`, `ok`, `failed`, `cancelled`), and a copy of the flow taken when it started. Editing or disabling a flow doesn't touch runs already active. Deleting it cancels them.
+- **A run** has a ULID, a status (`queued`, `running`, `ok`, `failed`, `cancelled`), and a copy of the flow taken when it started. Editing or disabling a flow doesn't touch runs already active. Deleting it cancels them. **(M9, proposed)** `run.started` records the flow's revision, and a published changeset never changes a run already active ([ADR 0034](../adr/0034-live-edits.md)).
 - **Concurrency.**
   - `queue`: a queued trigger gets its run ID straight away but journals nothing more until it starts. The queue holds at most 16 runs. Past that, the trigger is blocked with reason `queueFull` (§10 question 2).
   - `restart`: cancels the active run and starts the new one once the old run has journaled `run.finished`.

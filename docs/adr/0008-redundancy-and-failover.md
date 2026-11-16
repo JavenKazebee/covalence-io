@@ -1,6 +1,7 @@
 # 0008 – Redundancy and failover in three levels
 
 - **Status:** Accepted. Design it into v1; build it after the MVP.
+- **See also:** [0033](0033-execution-model.md): everything that matters for takeover is a patch in the journal, and reducers keep no state outside it.
 - **Date:** 2026-10-18
 
 ## Context

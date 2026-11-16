@@ -32,6 +32,7 @@ Users build bigger things out of smaller ones, and reuse them by parameters, nev
 - [x] [ADR 0032](../adr/0032-one-template-primitive.md): one template primitive, owned flows, nesting, `forEach`, the `instance` chain. Composition spec v0.2.
 - [x] Interfaces are capability-sized, with units, ranges and device-published options, and composites get `delegate` ([ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md), [ADR 0030](../adr/0030-composite-connections.md), revised in place).
 - [ ] Interfaces: ship the first ones from real plugins (`ptz.speed@1`, `ptz.position@1`, `ptz.presets@1`, `tally@1`, `switcher@1`, `recorder@1`), since composites and components are only as useful as the interfaces they implement. Each is checked for member names that collide with the rest of the set. ADR 0019's dynamic targets must be built by now; if not, they come first in this milestone.
+- [ ] **Changesets** ([ADR 0034](../adr/0034-live-edits.md)): drafts across entities, published as one operation and validated as a whole; runs record the revision they started on.
 - [ ] The `instance` chain's API shape: how the timeline, `why` and the runs list show and filter it.
 
 ### Phase 1: Flow inputs and outputs (Rust)
