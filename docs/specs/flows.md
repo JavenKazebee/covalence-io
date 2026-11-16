@@ -60,7 +60,7 @@ type Expr = string;                   // JS expression source (ADR 0004)
 | `action` **(M9)** | none: set by a composite whose action names this flow ([composition §6.2](composition.md)) | `{conn, call}`; the action's params are `input`, and `params` are the composite instance's |
 
 - **(M6) One trigger kind for every event** ([ADR 0027](../adr/0027-events-addressed-by-path.md)). Events happen at a node in the state tree and have a name (`pp:timerEnded`, `surface.deck.controls.k3:press`, `flow.preService:finished`, `sys:startup`). `from` picks the nodes with a path selector, a target selector, a layer or surface with a control selector, a group, or a component slot. The M5 `control` and the planned `startup` kinds are event triggers now: `{from: {layer, controls}, event: "press"}` and `{from: {path: "sys"}, event: "startup"}`.
-- An `event` trigger can listen to an interface instead of one connection. `from: {target: {interface: "camera.ptz@1"}}` fires for any camera, composites included, and `trigger.source` says which ([ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md)).
+- An `event` trigger can listen to an interface instead of one connection. `from: {target: {interface: "tally@1"}}` fires for any camera with tally, composites included, and `trigger.source` says which ([ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md)).
 - `state` triggers are edge-triggered. Their dependencies are tracked at run time, like bindings. **(M6)** `when` can be a structured source (`{use: "compare", …}`), as well as an expression string.
 - **A control's input is state, and its events are derived from that state** ([ADR 0024](../adr/0024-surfaces-as-two-way-devices.md), [surfaces spec §4](surfaces.md)). An event trigger is the quick way in for them: a press, a double, a turn. A layer source matches per surface, on whichever surfaces that layer controls the control.
 - **(M6) Flows emit events** at `flow.<slug>`: `started`, `finished` and `failed`, with `{run, status, error?}`. "When that flow finishes" is an event trigger.
@@ -110,7 +110,7 @@ type Target = { conn: string; key?: PathSegment };          // ADR 0019
 
 // (M6) An action step's target is a Source (dataflow §1): a literal Target is fixed;
 // a ref or an expression is dynamic, and then `constraint` is required.
-type TargetConstraint = { plugin: string } | { interface: string };   // "camera.ptz@1"
+type TargetConstraint = { plugin: string } | { interface: string | string[] };   // "ptz.presets@1"; a list requires all of them
 ```
 
 - **(M6) Parameters are `Source`s,** one per top-level parameter: a literal, `{ref}`, `{expr}` or a stateless transform. This generalises M4's `{expr}` parameters (§8.3), which are already in this shape.
@@ -237,14 +237,14 @@ body:
   - id: recall
     kind: action
     target: { ref: { root: vars, path: [selectedCam] } }
-    constraint: { interface: camera.ptz@1 }
+    constraint: { interface: ptz.presets@1 }
     action: recallPreset
     params: { preset: { expr: params.shot } }
     timeout: 2s
     retry: { attempts: 2, backoff: 200ms }
   - id: settle
     kind: waitUntil
-    until: "!target(vars.selectedCam).moving"
+    until: "!target(vars.selectedCam).presets.recalling"
     timeout: 5s
     onError: continue
   - id: cut

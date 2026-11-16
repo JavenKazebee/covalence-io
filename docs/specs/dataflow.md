@@ -118,7 +118,7 @@ Every event happens **at a node in the state tree** and has a **name**. The text
 
 - **Events are journaled as one kind,** `event` ([state spec §2.2](state-and-event-log.md)), with the node's path in ID form, the name, the payload and its context: `surface`, `layer`, `control` and `item` for control input; `conn` and `key` for a target's. `input.event` is folded into it.
 - **The payload is the event's own data:** `{delta}` for `turn` and `hold`, `{value}` for `change`, the `EventDef` payload for a plugin's.
-- **Interface events** are reached through the interface's name. A plugin's `tallyChanged` mapped to `camera.ptz@1`'s `tally` is addressable as either.
+- **Interface events** are reached through the interface's name. A plugin's `tallyChanged` mapped to `tally@1`'s `changed` is addressable as either.
 
 ### 3.1 Event sources
 
@@ -142,7 +142,7 @@ type EventSource =
   | { controls: Selector<ControlId> };                        // (M9) in a flow a layer owns: that layer's controls
 ```
 
-- **Every form reduces to a path pattern and a context filter.** `{layer: L, controls: [k0]}` is `{path: {match: "surface.*.controls.k0"}}` where the event's `layer` is `L`. `{target: {interface: "camera.ptz@1"}}` is the roots of every implementer, with names mapped through the interface. The matcher indexes them, so a trigger costs nothing until its events happen.
+- **Every form reduces to a path pattern and a context filter.** `{layer: L, controls: [k0]}` is `{path: {match: "surface.*.controls.k0"}}` where the event's `layer` is `L`. `{target: {interface: "tally@1"}}` is the roots of every implementer, with names mapped through the interface. The matcher indexes them, so a trigger costs nothing until its events happen.
 - **The `trigger` payload is the same for every event:** `{path, event, payload, captures?, source?, surface?, layer?, control?, item?, index?, instance?}`. `source` is the target, for target events. `captures` are the pattern's matches. **(M9)** `instance` is the chain of instances the event came from ([composition §5](composition.md)).
 - **A `layer` source matches per surface,** on whichever surfaces that layer controlled the control when the input arrived, as `control` triggers did (surfaces §7).
 

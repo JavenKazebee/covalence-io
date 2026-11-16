@@ -11,10 +11,11 @@ Users build bigger things out of smaller ones, and reuse them by parameters, nev
 
 ## Done when
 
-- [ ] A composite "Camera A" over a simulated PTZ camera, a simulated switcher and a simulated recorder: its `tally.program` follows the switcher, `recallPreset` forwards to the PTZ, and `takeLive` runs a flow it owns. `why` on the PTZ's `action.result` walks back through the flow's run to the composite's `action.requested`.
-- [ ] The composite implements `camera.ptz@1`, and an event trigger on `{target: {interface: "camera.ptz@1"}}` fires for it as for a real camera.
+- [ ] A composite "Camera A" over a simulated PTZ camera, a simulated switcher and a simulated recorder: its `tally.program` follows the switcher, `recallPreset` reaches the PTZ through `delegate`, and `takeLive` runs a flow it owns. `why` on the PTZ's `action.result` walks back through the flow's run to the composite's `action.requested`.
+- [ ] The composite delegates `ptz.speed@1` and `ptz.presets@1` to the PTZ and defines `tally@1` itself, and conforms to all three. A step constrained to `{interface: ["ptz.presets@1", "tally@1"]}` accepts it and refuses the bare PTZ. An event trigger on `{target: {interface: "tally@1"}}` fires for it as for a real camera. Defining a member it also delegates is refused with `duplicateMember`.
+- [ ] A simulated PTZ that reports pan as 0–255 conforms to `ptz.position@1` through `range` in its manifest: `target(t).pan` reads in degrees, and `goTo` with `pan: 90` sends the device's value. A speed-only camera doesn't get `ptz.position@1`, and an encoder drives it through `ptz.speed@1`.
 - [ ] A composite template "Camera" with three instances, one per camera. Editing the template changes all three, and a change that breaks an instance's params is refused, naming it.
-- [ ] One "Cameras" composite instance with `forEach` over a list in `vars`. Each item is a `camera.ptz@1` target at `cams.items[<key>]`. Adding an item to the list adds a camera, journaled `instance.added`; removing one ends it, and its owned flow's active run is cancelled with `removed`.
+- [ ] One "Cameras" composite instance with `forEach` over a list in `vars`. Each item is a `ptz.speed@1` and `tally@1` target at `cams.items[<key>]`. Adding an item to the list adds a camera, journaled `instance.added`; removing one ends it, and its owned flow's active run is cancelled with `removed`.
 - [ ] A layer template "Camera control" with a `camera` param, instanced per camera. One flow owned by the template handles a key on every instance with that instance's `params.camera`. A free-standing flow on the same key gets `trigger.instance` but no `params`.
 - [ ] A "Tally key" component, placed four times on a layer with a different camera each, draws each key's tally, and its owned flow selects that key's camera. The key editor shows "Tally key, camera = Cam B".
 - [ ] A "Camera strip" component with a "Tally key" part, placed on a layer template's instance. The part's tally follows the strip's camera, which follows the layer instance's. `why` on its owned flow's action shows the chain: layer instance, placement, part. A component that contains itself can't be saved (`recursiveTemplate`).
@@ -29,7 +30,8 @@ Users build bigger things out of smaller ones, and reuse them by parameters, nev
 ### Phase 0: Decisions and docs
 - [x] [ADR 0030](../adr/0030-composite-connections.md), [ADR 0031](../adr/0031-templates-instances-and-components.md); [composition spec](../specs/composition.md); [dataflow §8](../specs/dataflow.md) scope.
 - [x] [ADR 0032](../adr/0032-one-template-primitive.md): one template primitive, owned flows, nesting, `forEach`, the `instance` chain. Composition spec v0.2.
-- [ ] Interfaces: ship the first ones from real plugins (`camera.ptz@1`, `switcher@1`, `recorder@1`), since composites and components are only as useful as the interfaces they implement. ADR 0019's dynamic targets must be built by now; if not, they come first in this milestone.
+- [x] Interfaces are capability-sized, with units, ranges and device-published options, and composites get `delegate` ([ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md), [ADR 0030](../adr/0030-composite-connections.md), revised in place).
+- [ ] Interfaces: ship the first ones from real plugins (`ptz.speed@1`, `ptz.position@1`, `ptz.presets@1`, `tally@1`, `switcher@1`, `recorder@1`), since composites and components are only as useful as the interfaces they implement. Each is checked for member names that collide with the rest of the set. ADR 0019's dynamic targets must be built by now; if not, they come first in this milestone.
 - [ ] The `instance` chain's API shape: how the timeline, `why` and the runs list show and filter it.
 
 ### Phase 1: Flow inputs and outputs (Rust)
@@ -45,7 +47,7 @@ Users build bigger things out of smaller ones, and reuse them by parameters, nev
 - [ ] "Detach", for every kind.
 
 ### Phase 3: Template kinds (Rust)
-- [ ] **Composites:** plugin `core.composite`: `params`, state cells, `connected`, `forward` and owned-flow actions, re-emitted events, `implements` with conformance on save. Causation through composite actions and events; `cycle`, the loop guard and `tooDeep`. Collections through `forEach`, with interfaces per item through `at`.
+- [ ] **Composites:** plugin `core.composite`: `params`, state cells, `connected`, `forward` and owned-flow actions, re-emitted events, `implements` with conformance on save, `delegate` with `duplicateMember`. Causation through composite actions and events; `cycle`, the loop guard and `tooDeep`. Collections through `forEach`, with interfaces per item through `at`.
 - [ ] **Layers:** per-instance evaluation of bindings, helpers, groups and placements; `forEach` layers and `navigate` with `item`.
 - [ ] **Flows:** flow templates and instances, with `forEach`.
 
@@ -54,13 +56,14 @@ Users build bigger things out of smaller ones, and reuse them by parameters, nev
 - [ ] Control groups that place a component per item (`use`), with `item` bound into params.
 
 ### Phase 5: Transforms from plugins and projects (Rust + SDK)
+- [ ] `range` in manifest interface mappings: linear conversion both ways in the core, checked by the SDK and at load. Constraints that list several interfaces.
 - [ ] Manifest `transforms` and `components` (plugin protocol §4) in TypeSpec and the SDK; loading transforms into the core's sandbox with type checks; namespacing.
 - [ ] The `transform` project entity.
 - [ ] Manifest `presets` retired.
 
 ### Phase 6: UI
 - [ ] One instance panel for every kind: the template it uses, its params form, `forEach`, its live items, "Detach", and where the template is used.
-- [ ] A composite editor: params, a state tree of sources, actions (forward or owned flow), events, interfaces with a conformance report.
+- [ ] A composite editor: params, a state tree of sources, delegated interfaces, actions (forward or owned flow), events, interfaces with a conformance report.
 - [ ] Owned flows in the layer, composite and component editors.
 - [ ] A component editor with parts, placement from a palette onto a layer's keys, and the key editor's component view with the chain of containers.
 - [ ] A transform editor with a test bench: feed input sequences, see states, values and events.

@@ -56,7 +56,7 @@
 - **`forEach` makes one instance per item** of a live list (a `Source<Value[]>`) or of a target selector (`{targets: Selector<Target>}`). `item`, `index` and `key` are in scope while that instance's params are bound, and only there: inside the body, the item is whatever param it was bound to.
 - **Per-item instances live at `<home>.items[<key>]`,** keyed by `key` (an expression; the default is the item itself, or a target's ID form). A reorder doesn't reset them.
 - **They come and go with the list.** An added item creates an instance, with its cells starting from `init`. A removed item ends one, and its flows' runs are cancelled with `removed`. Both are journaled as `instance.added` and `instance.removed`, with `cause` → the patch that changed the list.
-- **A composite with `forEach` is a connection with a collection.** Each item is a target, `{conn, key: ["items", key]}`, and implements the composite's interfaces through `at: ["items"]` ([ADR 0019](0019-dynamic-action-targets-and-interfaces.md)). "A camera per camera in this list" is one entity, selectable by `camera.ptz@1`.
+- **A composite with `forEach` is a connection with a collection.** Each item is a target, `{conn, key: ["items", key]}`, and implements the composite's interfaces through `at: ["items"]` ([ADR 0019](0019-dynamic-action-targets-and-interfaces.md)). "A camera per camera in this list" is one entity, selectable by its interfaces (`ptz.speed@1`, `tally@1` …).
 - **A control group is the `forEach` of placements,** because it also decides which control each item takes, and scrolls. Its `component` and `params` become `use: {template, params}`.
 - **A `forEach` has at most 256 items.** Extra items aren't instanced, and are reported as `tooMany`.
 

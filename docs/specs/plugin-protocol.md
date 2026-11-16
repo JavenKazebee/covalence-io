@@ -155,7 +155,7 @@ interface Manifest {
   presets?: PresetDef[];         // suggested button and layer templates; (M9) replaced by `components`
   components?: ComponentDef[];   // (M9) reusable controls: look, helpers, flows, params, parts (composition §8)
   transforms?: string[];         // (M9) transform definition modules, run in the core's sandbox (dataflow §4.4)
-  implements?: InterfaceImpls;   // proposed: interfaces such as "camera.ptz@1" (ADR 0019)
+  implements?: InterfaceImpls;   // proposed: interfaces such as "ptz.position@1", with `range` on numeric state (ADR 0019)
   surfaces?: SurfaceProviderDef; // if the plugin provides surfaces (for example a web panel)
   simulator?: { stateLevel: boolean; protocolLevel: boolean };
 }

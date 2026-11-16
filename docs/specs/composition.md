@@ -107,6 +107,11 @@ Flows have both, with the same `ParamDef` shape, binding shape and editor:
 - **No recursion.** A template that contains itself, directly or through others, can't be saved (`recursiveTemplate`). Instances nest at most 16 deep (`tooDeep`).
 - **Editing a nested template** changes it everywhere it's used, at any depth, and the `badInstance` check covers every level.
 
+### 3.1 Passing one thing, not many
+- **Explicit scope means every level declares what it passes on.** A camera page that contains a camera strip that contains a tally key, where the key needs a switcher, an input and a recorder channel, has the page and the strip each declare and bind all three, though only the key uses them.
+- **Bind a composite, not its parts.** Make "Cam B" a composite (§6) that holds the switcher, the input and the recorder, and pass one `camera` param down. Each level binds one value, and the key reads `target(params.camera).tally.program`. Adding an iris later changes the composite, not every level.
+- **(Later)** If real projects still pass many loose values through several levels, a spread (`params: {...outer}`) would bind every param of the same name in one visible line. It isn't planned until a project needs it.
+
 ---
 
 ## 4. One instance per item
@@ -172,6 +177,7 @@ interface CompositeDef extends TemplateFields {
   actions?: { [id: string]: CompositeAction };
   events?: { [id: string]: CompositeEvent };
   implements?: InterfaceImpls;        // as a plugin manifest's (ADR 0019)
+  delegate?: { interface: string; to: Source<Target> }[];   // §6.5: whole interfaces passed through
 }
 
 type StateSources = { [segment: string]: Source<Value> | StateSources };
@@ -210,12 +216,14 @@ interface CompositeEvent {
 
 ### 6.4 Collections
 - **A composite with `forEach` is one connection with a collection.** Each item is a target, `{conn, key: ["items", <key>]}`, with its state at `<alias>.items[<key>]`.
-- **Its interfaces are implemented per item,** through `at: ["items"]` ([ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md)), so `{interface: "camera.ptz@1"}` selects each item like a real camera.
+- **Its interfaces are implemented per item,** through `at: ["items"]` ([ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md)), so `{interface: "ptz.speed@1"}` selects each item like a real camera.
 - **Actions and events are per item:** an action on an item's target runs with that item's `params`, and an item's events carry its key in `instance`.
 
 ### 6.5 Interfaces
 - `implements` maps the composite's members to an interface's, as a plugin manifest does. Conformance is checked when the composite is saved, with the same rules as a plugin's at load.
-- A composite with `implements: {"camera.ptz@1": {}}` is selected by `{interface: "camera.ptz@1"}` like a real camera.
+- A composite with `implements: {"tally@1": {}}` is selected by `{interface: "tally@1"}` like a real camera.
+- **`delegate`** passes whole interfaces through to another target ([ADR 0030](../adr/0030-composite-connections.md)): `[{interface, to: Source<Target>}]`. Every member of the interface on `to` becomes the composite's, and the composite implements it. `to`'s constraint must include the interface (checked on save), and a delegated member can't also be defined (`duplicateMember`). Delegated actions are `internal` and cause the target's `action.requested`, with `via`.
+- **Delegate what you pass through, define what you add.** A camera built from a PTZ head and a switcher delegates the `ptz.*` interfaces to the head and defines `tally@1` itself.
 
 ### 6.6 Limits
 - **Composites combine others by reference,** through target params. A state cycle is `cycle` (dataflow §5.3). An action that ends up invoking itself is stopped by the loop guard (flows §8.6), and calls nest at most 16 deep (`tooDeep`).
@@ -231,25 +239,24 @@ alias: camera
 plugin: core.composite
 config:
   params:
-    ptz:      { kind: target, interface: camera.ptz@1, required: true }
+    ptz:      { kind: target, interface: [ptz.speed@1, ptz.presets@1], required: true }
     switcher: { kind: target, interface: switcher@1, required: true }
     input:    { type: integer, required: true }
     recorder: { kind: target, interface: recorder@1 }
-  state:
+  delegate:                      # passed through whole: every action, event and state member
+    - { interface: ptz.speed@1,   to: { ref: { scope: params, path: [ptz] } } }
+    - { interface: ptz.presets@1, to: { ref: { scope: params, path: [ptz] } } }
+    - { interface: recorder@1,    to: { ref: { scope: params, path: [recorder] } } }
+  state:                         # what this composite adds
     tally:
       program: { expr: "target(params.switcher).program == params.input" }
       preview: { expr: "target(params.switcher).preview == params.input" }
-    recording: { expr: "target(params.recorder)?.recording ?? false" }
   actions:
-    recallPreset:
-      params: { type: object, properties: { preset: { type: integer } } }
-      forward: { target: { ref: { scope: params, path: [ptz] } }, action: recallPreset,
-                 params: { preset: { expr: "input.preset" } } }
     takeLive:
       params: { type: object }
       flow: 01JC0TAKE0LIVE0FLOW00000000   # a flow with owner: this composite
   implements:
-    camera.ptz@1: {}
+    tally@1: {}
 ---
 name: Cameras
 alias: cams
@@ -262,7 +269,7 @@ params:
   input:    { expr: "item.input" }
 ```
 
-`cams.items["Cam A"].tally.program` follows the switcher, and `{conn: cams, key: ["items", "Cam A"]}` is a `camera.ptz@1` target.
+`cams.items["Cam A"].tally.program` follows the switcher, and `{conn: cams, key: ["items", "Cam A"]}` is a `ptz.speed@1`, `ptz.presets@1`, `recorder@1` and `tally@1` target. A recorder that isn't set reads as disconnected, and its delegated actions fail with `no_target`.
 
 ---
 
@@ -340,7 +347,7 @@ interface Part {
 name: Tally key
 slug: tallyKey
 params:
-  camera: { kind: target, interface: camera.ptz@1, required: true }
+  camera: { kind: target, interface: tally@1, required: true }
   label:  { type: string }
 slots:
   - { id: key, inputs: [momentary], outputs: [image] }
@@ -366,7 +373,7 @@ flows:
 name: Camera strip
 slug: cameraStrip
 params:
-  camera: { kind: target, interface: camera.ptz@1, required: true }
+  camera: { kind: target, interface: [tally@1, recorder@1], required: true }
 slots:
   - { id: tally, inputs: [momentary], outputs: [image] }
   - { id: rec,   inputs: [momentary], outputs: [image] }
@@ -381,7 +388,7 @@ bindings:
   rec:
     props:
       label: REC
-      background: { use: rules, rules: [{ when: { expr: "target(params.camera).recording" }, value: "#d00" }], else: "#222" }
+      background: { use: rules, rules: [{ when: { expr: "target(params.camera).recorder.recording" }, value: "#d00" }], else: "#222" }
 ```
 
 ---
@@ -401,5 +408,6 @@ bindings:
 1. ~~Should components nest?~~ Decided by [ADR 0032](../adr/0032-one-template-primitive.md): yes, as `parts`, with params bound in the outer component's scope.
 2. ~~Should an instance be allowed to add bindings to controls its template leaves unbound?~~ Decided by [ADR 0032](../adr/0032-one-template-primitive.md): no. A layer stacked over it does that.
 3. Do composites need their own run history and traffic view in the UI, or is the journal, filtered by `instance`, enough?
-4. Should surfaces, control groups and variables become template kinds, or are layers, composites, components and flows enough until real projects ask?
+4. Should surfaces, control groups, variables and sources become template kinds? A **source template** (a `Source` with `params`) would let a configured chain, such as "audio taper with a dead zone" or "seconds remaining → `MM:SS`, amber under 60 s", be named and reused without writing a project transform in JS. Or are layers, composites, components and flows enough until real projects ask?
 5. Is 256 the right `forEach` limit, or should it follow the turn budget, as dataflow open question 4 asks for cell depth?
+6. **Params that hold a template.** Should a `ParamDef` be able to hold a component, a flow or a source, so a template declares where it can vary? A camera strip with a `recordKey: component` param, defaulting to the standard one, lets one camera differ without Detach, which today is the only way out and cuts the instance off from every later fix to its template.
