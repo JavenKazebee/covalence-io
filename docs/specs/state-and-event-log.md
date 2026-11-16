@@ -129,7 +129,7 @@ Leaves have the same shape as in `GET /state`: `{path, value, quality, ts, seq}`
 |---|---|---|
 | Records | Configuration changes | What happened while running |
 | Volume | Low | High (thousands/s possible) |
-| Retention | Durable, compacted into snapshots | A configurable ring buffer (default 24 h or 1 GB), plus optional archiving |
+| Retention | Durable, compacted into snapshots | In memory: everything, for a window (default 1 h). On disk: what can't be recomputed, as a ring buffer (default 24 h or 1 GB), plus optional archiving (§2.4) |
 | Used for | Multi-user editing, undo, history, restore points, replication | Timeline, "why did this fire?", replay, replication (hot standby) |
 | Stored in | SQLite `project_ops` | SQLite `journal` (WAL), plus an in-memory ring |
 
@@ -219,6 +219,17 @@ interface ProjectOp extends Entry {
 
 **Compaction:** periodically fold the ops into an entity snapshot. Keep ops after the newest restore point, plus a configurable history window.
 
+### 2.4 What's kept, and for how long (proposed)
+
+The journal holds two kinds of entry, and only one of them has to reach the disk.
+
+- **Inputs** can't be recomputed: patches from connections, control input, action requests and results, run lifecycle and steps, `nondet`, `event`s from plugins, connection status, node roles. They're written to the `journal` table and kept for the ring buffer's retention.
+- **Derived entries** can be recomputed from the inputs and the project: patches from cells, helpers and layer resolution (origin `{core: "dataflow"}` or a surface's resolution), `trigger.matched`, `instance.added` and `instance.removed`, events derived from input state. They're kept in the in-memory ring only, for its window (default 1 h, or 256 MB).
+- **`why` is complete inside the memory window.** Past it, a chain steps over derived entries from one input to the next: "the action came from this run, which this key press started". **(Later)** A replay of the journal from the nearest snapshot rebuilds the derived entries for an older window on request.
+- **High-rate inputs are sampled** by their schema's `journal: {sampled}` flag ([dataflow §5.1](dataflow.md)), so a meter or timecode writes a few entries per second, not hundreds.
+- **Replication is unaffected.** The standby is sent the live stream, both kinds of entry, not the disk ([0033](../adr/0033-execution-model.md)).
+- **On a Raspberry Pi** the defaults suit an SD card: derived entries never touch it, and inputs are batched into one write per turn, or every 100 ms at most.
+
 ---
 
 ## 3. The output gate
@@ -267,7 +278,7 @@ Secrets aren't stored here ([ADR 0006](../adr/0006-project-storage-and-versionin
 ## 6. Open questions
 
 1. Should integers be a distinct type in expressions, or should we always use f64 in JS and keep `int` only as a schema hint? (Leaning towards the hint.)
-2. Journal retention defaults on a Raspberry Pi with an SD card. How much should we write, and how do we limit wear?
+2. ~~Journal retention defaults on a Raspberry Pi with an SD card. How much should we write, and how do we limit wear?~~ Proposed in §2.4: only inputs reach the disk, batched, with high-rate values sampled; derived entries stay in memory.
 3. Should `run.checkpoint` be automatic at every step, or opt-in per flow? Automatic is simpler; opt-in costs less.
 4. Should state patches from a connection be journaled in full, or sampled for very high-rate values (meters, timecode)? Proposal: the schema flag `journal: sampled(100ms)`. **(M8)** Decided for cells and helpers by [ADR 0029](../adr/0029-dataflow-sources-transforms-sinks.md): `journal: {sampled: "100ms"}` applies every value to state, journals the latest per interval, and a final entry when it settles ([dataflow §5.1](dataflow.md)). Connections' schemas get the same flag when a plugin needs it.
 5. How should drafts interact with multi-user editing? Is one draft shared per layer, or does each user have their own?

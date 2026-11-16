@@ -25,7 +25,8 @@ Nothing here adds a new kind of thing for users to learn. It makes the existing 
 
 ### Phase 0: Decisions and docs
 - [x] [ADR 0026](../adr/0026-sources-and-selectors.md), [ADR 0027](../adr/0027-events-addressed-by-path.md) and [ADR 0028](../adr/0028-the-core-is-a-connection.md). New specs: [dataflow](../specs/dataflow.md) (§1–§4.1 for M6) and [core actions](../specs/core-actions.md). Surfaces, bindings, flows, state and plugin protocol specs marked **(M6)**.
-- [ ] **Migration policy.** Stored M5 projects are migrated in place when loaded (a `migrate` op in the project log, [ADR 0006](../adr/0006-project-storage-and-versioning.md)), and the old shapes are rejected by the API from then on. Fixtures are rewritten, not kept beside.
+- [x] **Migration policy.** There are no real projects yet, so nothing is migrated: the stored shapes change, dev databases are reset, and fixtures are rewritten. Migrations ([ADR 0006](../adr/0006-project-storage-and-versioning.md)) start with the first real deployment.
+- [ ] **[ADR 0033](../adr/0033-execution-model.md), the execution model.** Accept it before the evaluator is reshaped: the turn thread, its QuickJS runtime, the script pool and the drawing thread.
 - [ ] **Source recognition** (dataflow §1.1): decide the Rust representation. Likely an untagged enum tried in order `{value}`, `{ref}`, `{expr}`, `{use}`, literal, with the field's `T` checked after.
 - [ ] Accept ADR 0024, which M5 built, so the ADRs this milestone amends are settled first.
 

@@ -1,7 +1,7 @@
 # 0023 – Keys are rendered in the core; structured bindings are evaluated without QuickJS
 
 - **Status:** Accepted
-- **Amended by:** [0026](0026-sources-and-selectors.md) (binding kinds become stateless transforms; native evaluation stands)
+- **Amended by:** [0026](0026-sources-and-selectors.md) (binding kinds become stateless transforms; native evaluation stands); [0033](0033-execution-model.md) (drawing runs on its own thread, off the turn)
 - **Date:** 2026-10-22
 - **Specs:** [bindings](../specs/bindings.md), [surfaces](../specs/surfaces.md)
 - **Related:** [ADR 0021](0021-expressions-as-sandboxed-snippets.md), [ADR 0022](0022-surfaces-pages-and-the-web-surface.md)
