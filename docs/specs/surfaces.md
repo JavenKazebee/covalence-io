@@ -138,7 +138,7 @@ type OutputKind = OutputCap["kind"];
 | `surface.<slug>.controls.<id>.detents` | integer | **(Now)** The device: the running total of `relative` input since the attach |
 | `surface.<slug>.controls.<id>.value` | `number`, or `[x, y]` | **(Now)** The device: `absolute` input |
 | `surface.<slug>.controls.<id>.touched` | `boolean` | **(Now)** The device: `touch` input |
-| `surface.<slug>.controls.<id>.requested.<output>` | the output's value | **(Later)** The core: what it last sent to a `led`, `level` or `text` output (§4.4) |
+| `surface.<slug>.controls.<id>.requested.<output>` | the output's value | **(M8)** The core: what it last sent to a `led`, `level` or `text` output (§4.4) |
 | `surface.<slug>.controls.<id>.helpers.<name>` | a helper's value | **(M8)** A helper with `scope: "surface"` (§4.3) |
 | `layer.<slug>.controls.<id>.<name>` | a helper's value | **(M8)** A helper on a layer (§4.3) |
 | `layer.<slug>.params.<name>` | a layer parameter | **(M9)** An instance's or a template's parameter (composition §1) |
@@ -191,7 +191,7 @@ type OutputKind = OutputCap["kind"];
 | `long` | Once, when a control has been pressed for `longAfter` | |
 | `hold` | At `longAfter`, then every `holdEvery` while the control stays pressed | `delta` is the repeat count, from 1 |
 | `turn` | `detents` changes | `delta` is the change |
-| `change` | `value` changes | `value` is the new value. **(Later)** Not for echoes (§4.4) |
+| `change` | `value` changes | `value` is the new value. **(M8)** Not for echoes (§4.4) |
 | `touch`, `untouch` | `touched` goes true or false | |
 
 | Setting | Default |
@@ -230,7 +230,7 @@ A **helper** builds on a control's input to give derived state, events, or both.
 - **`follow`, `holdoff` and `pickup`** are as in dataflow §4.3.
 - **Helpers run in the core,** as sandboxed transform definitions (dataflow §4.4). A plugin can suggest defaults for a control (`ControlDef.suggest`, plugin protocol §8), and **(M9)** ship transforms of its own, which also run in the core.
 
-### 4.4 Reported and requested values (Later)
+### 4.4 Reported and requested values (M8)
 
 - **A two-way control has two values:**
   - what the device reports (`value`, `pressed` …)
@@ -243,6 +243,8 @@ A **helper** builds on a control's input to give derived state, events, or both.
 
   An echo updates input state with `cause` → the output's patch. It gives no `change`, `press` or `release` unless the trigger opts in (`echo: true` on an event trigger).
 - The loop guard (flows §8.6) is the backstop for loops the echo rule misses.
+- **Two kinds of loop, two rules.** The echo rule is for a control reporting back what the core just sent it: a motor fader moving to a `value` binding, an encoder ring. A device's own state coming back after a sink's action (a mixer's volume, a PTZ's position while it moves) is handled by the sink and `follow` (dataflow §4.3, §7): a sink doesn't fire on a change that descends from its own action, and `follow` pauses while the control is touched and for `holdoff` after the last input.
+- **Why it's in M8.** M8 brings faders, encoders and `follow`, and M9's `range` brings position feedback from PTZ heads. Without echo handling a motor fader fights its own feedback the first time both directions are bound.
 
 ### 4.5 Injecting input (M6)
 
