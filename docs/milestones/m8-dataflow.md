@@ -1,6 +1,6 @@
 # Milestone 8: Dataflow
 
-- **Status:** In progress (Phase 0 done)
+- **Status:** In progress (Phases 0 and 1 done)
 
 Covalence gets its continuous half. Values can be computed, accumulated and sent somewhere without a flow ([ADR 0029](../adr/0029-dataflow-sources-transforms-sinks.md)):
 - **Reducers** (`toggle`, `position`, `select` …) are sandboxed transform definitions.
@@ -37,10 +37,10 @@ Helpers on controls are reducers whose input defaults to their control. Layers b
 - [x] [ADR 0029](../adr/0029-dataflow-sources-transforms-sinks.md) accepted. ADR 0034 stays Proposed until M9's Phase 0, which settles changesets and pinned runs.
 
 ### Phase 1: Transform definitions and reducers (Rust + JS)
-- [ ] `defineTransform` and its sandbox context: pure, time passed in, `wakeAt`, the bindings' limits ([dataflow §4.4](../specs/dataflow.md)).
-- [ ] Definitions for `toggle`, `counter`, `position`, `velocity`, `select`, `absolute`, `rate`, `latch` and `script`, in `crates/covalence-core/transforms/`. The stateless transforms from M6 get definitions too, as their specification.
-- [ ] A conformance runner: the same input sequences through the definition and any native implementation, comparing states, values and events.
-- [ ] Native implementations where the benchmark asks for them.
+- [x] `defineTransform` and its sandbox context: pure, time passed in, `wakeAt`, the bindings' limits ([dataflow §4.4](../specs/dataflow.md)). `transform::definition`: a fresh context per call, under the expression prelude (no clock, no randomness), with a 10 ms limit. Steps see `{event, input, previous, value, followed, options, now}`; definitions may add `initValue` and `follow`.
+- [x] Definitions for `toggle`, `counter`, `position`, `velocity`, `select`, `absolute`, `rate`, `latch` and `script`, in `crates/covalence-core/transforms/`. The stateless transforms from M6 get definitions too, as their specification. A reducer parses as a source (`{use: "toggle@1", on, input, follow, holdoff, …options}`), its options checked against its definition; outside a cell it's `unsupported`.
+- [x] A conformance runner (`transform::conformance`): the same input sequences through the definition and any native implementation, comparing states, values and events, with options changed between steps. One suite per built-in, in `transforms/conformance/`. It found that `serde_json` needs `float_roundtrip` to read the sandbox's numbers back exactly.
+- [x] Native implementations where the benchmark asks for them: every reducer but `script` (a sandboxed step costs about 2 ms in a debug build, a native one a few µs; `tests/transforms.rs` prints both).
 
 ### Phase 2: Cells and the graph (Rust)
 - [ ] `covalence_core::dataflow`: cells, dependency-ordered evaluation within a turn, cycle detection, `cause` on cell patches, `{core: "dataflow"}` origin, quality propagation, sampled journaling.

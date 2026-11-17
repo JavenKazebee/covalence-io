@@ -115,6 +115,72 @@ impl Default for QuickJs {
     }
 }
 
+/// Calls a transform definition's function (dataflow §4.4).
+const CALL: &str = r#"(function (def, method, args) {
+  if (def === null || typeof def !== "object") {
+    throw new TypeError("a definition's default export is defineTransform({...})");
+  }
+  if (method === "") return JSON.stringify(def);
+  const f = def[method];
+  if (typeof f !== "function") return undefined;
+  return JSON.stringify({ r: f.apply(def, JSON.parse(args)) });
+})"#;
+
+impl QuickJs {
+    /// Runs a transform definition (dataflow §4.4) in a fresh sandboxed
+    /// context and calls its `method` with `args`, a JSON array. An empty
+    /// `method` gives the definition itself without its functions. `None`
+    /// if it has no such function; `Some(None)` if it returned `undefined`.
+    pub fn call_definition(
+        &self,
+        source: &str,
+        method: &str,
+        args: &serde_json::Value,
+    ) -> Result<Option<Option<serde_json::Value>>, ExprError> {
+        let Some(start) = source.find("export default") else {
+            return Err(ExprError::new(
+                ExprCode::Syntax,
+                "a definition is `export default defineTransform({...})`",
+            ));
+        };
+        let body = format!(
+            "{}return{}",
+            &source[..start],
+            &source[start + "export default".len()..]
+        );
+        let state = Arc::new(LiveState::new());
+        let aliases = BTreeMap::new();
+        let scope = Scope::new(&state, &aliases);
+        let tracker = Rc::new(RefCell::new(Tracker::new(state.clone())));
+        let out = self.run(None, |ctx| {
+            let fail = |e: rquickjs::Error| thrown(ctx, &e);
+            setup(ctx, &scope, &tracker)?;
+            let load: Function = ctx
+                .eval_with_options(
+                    format!("(function (defineTransform) {{\n{body}\n}})"),
+                    options("transform"),
+                )
+                .map_err(fail)?;
+            let identity: Function = ctx
+                .eval_with_options("(d) => d", options("prelude"))
+                .map_err(fail)?;
+            let def: rquickjs::Value = load.call((identity,)).map_err(fail)?;
+            let call: Function = ctx
+                .eval_with_options(CALL, options("prelude"))
+                .map_err(fail)?;
+            let out: Option<String> = call.call((def, method, args.to_string())).map_err(fail)?;
+            Ok(out)
+        })?;
+        let Some(out) = out else { return Ok(None) };
+        let json: serde_json::Value = serde_json::from_str(&out)
+            .map_err(|e| ExprError::new(ExprCode::Error, e.to_string()))?;
+        if method.is_empty() {
+            return Ok(Some(Some(json)));
+        }
+        Ok(Some(json.get("r").cloned()))
+    }
+}
+
 impl Evaluator for QuickJs {
     fn check(&self, source: &str) -> Result<(), ExprError> {
         self.run(None, |ctx| compile(ctx, source).map(drop))

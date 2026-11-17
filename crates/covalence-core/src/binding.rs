@@ -312,6 +312,17 @@ impl Validation<'_> {
                 }
             }
             Part::Transform(t) => {
+                if t.is_reducer() {
+                    found.push(Problem::new(
+                        at(path, &[key("use")]),
+                        Code::Unsupported,
+                        format!(
+                            "a {} keeps a value of its own, so it needs a home: \
+                             use it as a helper or a variable's value, and bind that",
+                            t.id()
+                        ),
+                    ));
+                }
                 for (rel, message) in t.problems() {
                     found.push(Problem::new(at(path, &rel), Code::BadValue, message));
                 }

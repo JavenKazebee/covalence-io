@@ -1,0 +1,20 @@
+{ "transform": "absolute",
+  "cases": [
+    { "name": "through a curve",
+      "options": { "curve": "log" },
+      "steps": [
+        { "input": 0, "expect": 0 },
+        { "input": 0.5 },
+        { "input": 2, "expect": 1 },
+        { "options": { "curve": "exp" }, "input": 0.3 } ] },
+    { "name": "picks up when the input crosses the followed value",
+      "options": { "pickup": true },
+      "steps": [
+        { "follow": 0.6, "expect": 0.6 },
+        { "input": 0.1, "expect": 0.6, "expectEvents": [] },
+        { "input": 0.3, "expect": 0.6 },
+        { "input": 0.7, "expect": 0.7, "expectEvents": ["change"] },
+        { "input": 0.2, "expect": 0.2 },
+        { "follow": 0.9 },
+        { "input": 0.895, "expect": 0.895 } ] }
+  ] }

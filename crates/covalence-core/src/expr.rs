@@ -185,7 +185,7 @@ pub struct ExprError {
 }
 
 impl ExprError {
-    fn new(code: ExprCode, message: impl Into<String>) -> Self {
+    pub(crate) fn new(code: ExprCode, message: impl Into<String>) -> Self {
         ExprError {
             code,
             message: message.into(),

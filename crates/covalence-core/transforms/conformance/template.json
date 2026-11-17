@@ -1,0 +1,5 @@
+{ "transform": "template",
+  "cases": [
+    { "name": "parts", "options": { "parts": ["Cam ", 3, " ", true] }, "expect": "Cam 3 true" },
+    { "name": "none", "options": { "parts": [] }, "expect": "" }
+  ] }

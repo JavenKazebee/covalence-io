@@ -1,0 +1,9 @@
+{ "transform": "map",
+  "cases": [
+    { "name": "a range", "options": { "input": 5, "from": [0, 10], "to": [0, 100] }, "expect": 50 },
+    { "name": "clamped", "options": { "input": 15, "from": [0, 10], "to": [0, 1] }, "expect": 1 },
+    { "name": "unclamped", "options": { "input": 15, "from": [0, 10], "to": [0, 1], "clamp": false }, "expect": 1.5 },
+    { "name": "a log curve", "options": { "input": 0.5, "from": [0, 1], "to": [0, 1], "curve": "log" }, "expect": 0.7403626894942439 },
+    { "name": "a list", "options": { "input": 0.6, "from": [0, 1], "to": ["off", "low", "high"] }, "expect": "low" },
+    { "name": "not a number", "options": { "input": "x", "from": [0, 1], "to": [0, 1] } }
+  ] }

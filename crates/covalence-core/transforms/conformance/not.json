@@ -1,0 +1,2 @@
+{ "transform": "not",
+  "cases": [ { "name": "not", "options": { "input": "" }, "expect": true }, { "name": "not 1", "options": { "input": 1 }, "expect": false } ] }

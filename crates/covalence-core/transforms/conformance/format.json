@@ -1,0 +1,10 @@
+{ "transform": "format",
+  "cases": [
+    { "name": "auto", "options": { "input": 3.5, "format": "auto" }, "expect": "3.5" },
+    { "name": "mmss", "options": { "input": 125, "format": "mmss" }, "expect": "02:05" },
+    { "name": "hhmmss", "options": { "input": -3725, "format": "hhmmss" }, "expect": "-01:02:05" },
+    { "name": "percent", "options": { "input": 0.456, "format": "percent" }, "expect": "46%" },
+    { "name": "fixed2", "options": { "input": 1.005, "format": "fixed2" } , "expect": "1.00" },
+    { "name": "upper", "options": { "input": "live", "format": "upper" }, "expect": "LIVE" },
+    { "name": "null", "options": { "input": null, "format": "auto" }, "expect": "null" }
+  ] }

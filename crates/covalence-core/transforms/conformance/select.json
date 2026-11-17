@@ -1,0 +1,22 @@
+{ "transform": "select",
+  "cases": [
+    { "name": "an index over a count",
+      "options": { "count": 3 },
+      "steps": [
+        { "input": 0 },
+        { "input": 1, "expect": 1, "expectEvents": ["select"] },
+        { "input": 5, "expect": 2 },
+        { "input": 4, "expect": 1 } ] },
+    { "name": "an item over a list, wrapping",
+      "options": { "items": ["a", "b", "c"], "wrap": true },
+      "steps": [
+        { "input": 10 },
+        { "input": 9, "expect": "c" },
+        { "input": 11, "expect": "b" } ] },
+    { "name": "a shorter list clamps at the next detent",
+      "options": { "items": ["a", "b", "c", "d"], "initial": 3 },
+      "steps": [
+        { "input": 0 },
+        { "options": { "items": ["x", "y"] }, "input": 1, "expect": "y" },
+        { "options": { "items": [] }, "input": 2 } ] }
+  ] }

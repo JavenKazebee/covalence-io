@@ -1,0 +1,19 @@
+{ "transform": "counter",
+  "cases": [
+    { "name": "steps and clamps",
+      "options": { "max": 2 },
+      "steps": [
+        { "event": "press", "expect": 1, "expectEvents": ["change"] },
+        { "event": "press", "expect": 2 },
+        { "event": "press", "expect": 2, "expectEvents": [] } ] },
+    { "name": "wraps",
+      "options": { "min": 0, "max": 2, "wrap": true, "step": 1 },
+      "steps": [ { "event": "press" }, { "event": "press" }, { "event": "press", "expect": 0 } ] },
+    { "name": "steps down past min, with options changed between steps",
+      "options": { "initial": 1, "step": -1, "min": 0 },
+      "steps": [
+        { "event": "press", "expect": 0 },
+        { "event": "press", "expect": 0 },
+        { "options": { "step": 0.5 }, "event": "press", "expect": 0.5 },
+        { "options": { "max": 0.25 }, "event": "press", "expect": 0.25 } ] }
+  ] }

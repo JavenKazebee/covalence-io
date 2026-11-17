@@ -1,0 +1,6 @@
+{ "transform": "all",
+  "cases": [
+    { "name": "every", "options": { "of": [1, "x", true] }, "expect": true },
+    { "name": "one falsy", "options": { "of": [1, 0] }, "expect": false },
+    { "name": "none", "options": { "of": [] }, "expect": true }
+  ] }

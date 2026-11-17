@@ -1,0 +1,9 @@
+{ "transform": "compare",
+  "cases": [
+    { "name": "strict equality", "options": { "input": 1, "op": "==", "value": "1" }, "expect": false },
+    { "name": "numbers", "options": { "input": 3, "op": ">=", "value": 3 }, "expect": true },
+    { "name": "strings", "options": { "input": "b", "op": "<", "value": "a" }, "expect": false },
+    { "name": "mixed", "options": { "input": "10", "op": ">", "value": 9 }, "expect": true },
+    { "name": "truthy", "options": { "input": "", "op": "truthy" }, "expect": false },
+    { "name": "falsy", "options": { "input": 0, "op": "falsy" }, "expect": true }
+  ] }

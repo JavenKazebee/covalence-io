@@ -1,0 +1,13 @@
+{ "transform": "rate",
+  "cases": [
+    { "name": "a lever with a deadband",
+      "steps": [
+        { "input": 0.5, "expect": 0 },
+        { "input": 0.52, "expect": 0 },
+        { "input": 1, "expect": 1 },
+        { "input": 0.3 },
+        { "input": 0 , "expect": -1 } ] },
+    { "name": "an off-centre lever",
+      "options": { "centre": 0.25, "deadband": 0 },
+      "steps": [ { "input": 0.125, "expect": -0.5 }, { "input": 0.625, "expect": 0.5 } ] }
+  ] }

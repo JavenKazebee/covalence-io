@@ -1,0 +1,5 @@
+{ "transform": "rules",
+  "cases": [
+    { "name": "the first truthy rule", "options": { "rules": [ { "when": 0, "value": "a" }, { "when": "yes", "value": "b" } ], "else": "c" }, "expect": "b" },
+    { "name": "else", "options": { "rules": [ { "when": false, "value": "a" } ], "else": "c" }, "expect": "c" }
+  ] }

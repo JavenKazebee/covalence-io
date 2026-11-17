@@ -153,8 +153,21 @@ impl<T: DeserializeOwned> Source<T> {
             None => None,
         };
         if form == "use" {
-            // The transform's own options are checked by its type.
-            let transform = typed::<Transform>(Json::Object(map))?;
+            let name = map.get("use").and_then(Json::as_str).unwrap_or_default();
+            let (id, version) = crate::transform::reducer::split_use(name)?;
+            let transform = if Transform::is_reducer_id(id) {
+                Transform::Reducer(Box::new(crate::transform::Reducer::from_map(map)?))
+            } else {
+                if let Some(v) = version {
+                    // Every stateless built-in is at version 1.
+                    if v != 1 {
+                        return Err(format!("there's no {id}@{v}; this core has {id}@1"));
+                    }
+                    map.insert("use".into(), Json::String(id.to_owned()));
+                }
+                // The transform's own options are checked by its type.
+                typed::<Transform>(Json::Object(map))?
+            };
             return Ok(Source::Use {
                 transform: Box::new(transform),
                 fallback,
@@ -239,7 +252,12 @@ impl<T: Serialize> Source<T> {
                 transform,
                 fallback,
             } => {
-                let Json::Object(options) = serde_json::to_value(transform)? else {
+                let options = if let Transform::Reducer(r) = &**transform {
+                    Json::Object(r.to_map()?)
+                } else {
+                    serde_json::to_value(transform)?
+                };
+                let Json::Object(options) = options else {
                     return Err(<serde_json::Error as serde::ser::Error>::custom(
                         "a transform is an object",
                     ));

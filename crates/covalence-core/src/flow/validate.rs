@@ -139,6 +139,7 @@ enum Found {
     Expr(String),
     Conn(ConnId),
     Bad(String),
+    Unsupported(String),
 }
 
 /// `base` followed by `more`.
@@ -630,6 +631,16 @@ impl<'a> Validation<'a> {
             }
             Part::Ref(Ref::Root { .. }) => {}
             Part::Transform(t) => {
+                if t.is_reducer() {
+                    found.push((
+                        join(at, &[key("use")]),
+                        Found::Unsupported(format!(
+                            "a {} keeps a value of its own, so it needs a home: \
+                             a variable's value or a helper",
+                            t.id()
+                        )),
+                    ));
+                }
                 for (rel, message) in t.problems() {
                     found.push((join(at, &rel), Found::Bad(message)));
                 }
@@ -645,6 +656,7 @@ impl<'a> Validation<'a> {
                 ),
                 Found::Conn(_) => {}
                 Found::Bad(message) => self.error(at, Code::BadValue, message),
+                Found::Unsupported(message) => self.error(at, Code::Unsupported, message),
             }
         }
     }

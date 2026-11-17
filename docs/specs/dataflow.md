@@ -233,7 +233,8 @@ export default defineTransform({
 });
 ```
 
-- **`stateless`** definitions have `compute({inputs, options}) → value` instead of `init` and `step`.
+- **`stateless`** definitions have `compute({options}) → value` instead of `init` and `step`, with every option already evaluated.
+- **A step sees** `step(state, {event, input, previous, value, followed, options, now})`: `event` is `{name, payload}` or `undefined`, `previous` is the input at the last step, `value` the cell's current value and `followed` what `follow` gives. Options arrive with their `default`s filled in. It returns `{state, value, events?, wakeAt?}`, or `undefined` for no change. A definition may add `initValue({state, options})`, the value at `init` when it isn't the state (`select` over `items`), and `follow(state, ctx)`, what following a value does (`absolute` drops its pickup); without it, the followed value becomes both state and value.
 - **Pure functions only.** No host API, no clock (`now` is passed in), no randomness, no state between calls except what `step` returns. The core keeps the state. A step can return `wakeAt` (ms, scheduler time) to be stepped again with `event: undefined`.
 - **Limits:** the bindings' 10 ms per call and the expression memory limit. A failing step keeps the previous state and value and is reported like a binding error.
 - **Native implementations are allowed** for speed, if a conformance suite runs the definition and the native code over the same inputs and requires equal states, values and events. The definition is the specification.

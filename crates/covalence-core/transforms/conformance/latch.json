@@ -1,0 +1,12 @@
+{ "transform": "latch",
+  "cases": [
+    { "name": "set and reset by events",
+      "steps": [
+        { "event": "press", "expect": true, "expectEvents": ["on"] },
+        { "event": "press", "expect": true, "expectEvents": [] },
+        { "event": "turn", "expect": true },
+        { "event": "release", "expect": false, "expectEvents": ["off"] } ] },
+    { "name": "names from options",
+      "options": { "set": ["open", "on"], "reset": "closed" },
+      "steps": [ { "event": "on", "expect": true }, { "event": "closed", "expect": false } ] }
+  ] }

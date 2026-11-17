@@ -1,0 +1,9 @@
+{ "transform": "script",
+  "cases": [
+    { "name": "a plain value is the state and the value",
+      "options": { "source": "event ? (state || 0) + 1 : undefined", "initial": 0 },
+      "steps": [ { "event": "press", "expect": 1 }, { "input": 4, "expect": 1 }, { "event": "x", "expect": 2 } ] },
+    { "name": "a shaped result with events and a wake",
+      "options": { "source": "const n = (state || 0) + 1;\nreturn { state: n, value: n * 10, events: [{ name: 'tick', payload: { n } }], wakeAt: now + 100 };" },
+      "steps": [ { "event": "go", "expect": 10, "expectEvents": ["tick"] }, { "expect": 20 } ] }
+  ] }

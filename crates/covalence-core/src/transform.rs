@@ -17,7 +17,12 @@ use crate::expr::ExprError;
 use crate::source::{Eval, Part, Source, literal_expr, operand};
 use crate::state::ConnId;
 
+pub mod conformance;
+pub mod definition;
 pub mod js;
+pub mod reducer;
+
+pub use reducer::Reducer;
 
 /// A stateless transform, keyed by `use`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -67,6 +72,10 @@ pub enum Transform {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         clamp: Option<bool>,
     },
+    /// A reducer (dataflow §4.2). Read and written by [`Source`]'s own
+    /// serde, since its `use` is one of several names.
+    #[serde(skip)]
+    Reducer(Box<Reducer>),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -136,6 +145,8 @@ pub enum Gives {
     Mapped,
     /// One of its rules' values.
     Chosen,
+    /// A reducer's value.
+    Reduced,
 }
 
 fn key(k: &str) -> PathSegment {
@@ -147,8 +158,9 @@ fn index(i: usize) -> PathSegment {
 }
 
 impl Transform {
-    pub fn id(&self) -> &'static str {
+    pub fn id(&self) -> &str {
         match self {
+            Transform::Reducer(r) => &r.id,
             Transform::Format { .. } => "format",
             Transform::Template { .. } => "template",
             Transform::Rules { .. } => "rules",
@@ -169,7 +181,18 @@ impl Transform {
             | Transform::Not { .. } => Gives::Boolean,
             Transform::Map { .. } => Gives::Mapped,
             Transform::Rules { .. } => Gives::Chosen,
+            Transform::Reducer(_) => Gives::Reduced,
         }
+    }
+
+    /// Whether it keeps a value of its own, and so needs a home (dataflow §4.2).
+    pub fn is_reducer(&self) -> bool {
+        matches!(self, Transform::Reducer(_))
+    }
+
+    /// Whether a `use` (without a version) names a reducer.
+    pub fn is_reducer_id(id: &str) -> bool {
+        Reducer::is_reducer(id)
     }
 
     /// Its option sources, each with its key path below the transform.
@@ -202,6 +225,20 @@ impl Transform {
                     out.push((vec![key("rules"), index(i), key("value")], &rule.value));
                 }
                 out.push((vec![key("else")], otherwise));
+            }
+            Transform::Reducer(r) => {
+                for (name, s) in [
+                    ("input", &r.input),
+                    ("follow", &r.follow),
+                    ("holdoff", &r.holdoff),
+                ] {
+                    if let Some(s) = s {
+                        out.push((vec![key(name)], s));
+                    }
+                }
+                for (name, s) in &r.options {
+                    out.push((vec![key(name)], s));
+                }
             }
         }
         out
@@ -239,6 +276,16 @@ impl Transform {
     /// Evaluates natively.
     pub fn evaluate(&self, eval: &mut Eval<'_>) -> Result<Option<Json>, ExprError> {
         Ok(match self {
+            Transform::Reducer(r) => {
+                return Err(ExprError::new(
+                    crate::expr::ExprCode::Error,
+                    format!(
+                        "a {} keeps a value of its own, so it can only be a cell's source: \
+                         a variable's value or a helper",
+                        r.id
+                    ),
+                ));
+            }
             Transform::Format { input, format } => eval
                 .nested(input)?
                 .map(|v| Json::String(format_value(Some(&v), *format))),
@@ -311,6 +358,8 @@ impl Transform {
     pub fn to_expr(&self, aliases: &BTreeMap<ConnId, String>) -> Option<String> {
         let op = |s: &Source<Json>| operand(s, aliases);
         Some(match self {
+            // A reducer keeps state, which an expression can't.
+            Transform::Reducer(_) => return None,
             Transform::Format { input, format } => format!(
                 "((v) => v === undefined ? undefined : {})({})",
                 format_expr("v", *format),

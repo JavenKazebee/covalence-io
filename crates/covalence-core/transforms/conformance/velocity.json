@@ -1,0 +1,20 @@
+{ "transform": "velocity",
+  "cases": [
+    { "name": "a rate that decays to 0",
+      "options": { "window": 100, "decay": 50, "scale": 2 },
+      "steps": [
+        { "input": 0, "now": 1000 },
+        { "input": 2, "now": 1010 },
+        { "input": 5, "now": 1030 },
+        { "now": 1080 },
+        { "now": 1140 },
+        { "now": 1200 },
+        { "now": 1400 },
+        { "now": 2000, "expect": 0 } ] },
+    { "name": "no decay drops to 0 when the window empties",
+      "options": { "decay": 0 },
+      "steps": [
+        { "input": 0, "now": 0 },
+        { "input": -3, "now": 10 },
+        { "now": 200, "expect": 0 } ] }
+  ] }
