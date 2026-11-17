@@ -476,11 +476,27 @@ impl Actions for Timed {
 
 /// Key down → first action requested by its flow, while a full layer of
 /// `expr` bindings redraws for a state change made just before (the M5
-/// budget is 5 ms for a local surface). Run with
+/// budget is 5 ms for a local surface). M6: the trigger is an event trigger,
+/// once on the layer's key and once a `*` path pattern, matched among 200
+/// other event triggers. Run with
 /// `cargo test --release -p covalence-core --test binding_worker bench -- --ignored --nocapture`.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "a benchmark: run it in release"]
 async fn bench_key_down_to_first_action() {
+    for (what, from) in [
+        ("a layer's key", json!({ "layer": CAMS, "controls": "k0" })),
+        (
+            "a path pattern",
+            json!({ "path": { "match": "surface.*.controls.k0" } }),
+        ),
+    ] {
+        for others in [0, 200] {
+            key_down_to_first_action(what, from.clone(), others).await;
+        }
+    }
+}
+
+async fn key_down_to_first_action(what: &str, from: serde_json::Value, others: usize) {
     let w = world();
     let (requested, mut requests) = tokio::sync::mpsc::unbounded_channel();
     let runtime = Runtime::start(
@@ -499,12 +515,32 @@ async fn bench_key_down_to_first_action() {
             }),
         ));
     }
+    // Others the matcher has to pass over: other keys, connections, flows.
+    for i in 0..others {
+        let from = match i % 4 {
+            0 => json!({ "layer": CAMS, "controls": format!("k{}", 1 + i % 14) }),
+            1 => json!({ "target": VH }),
+            2 => json!({ "path": format!("flow.other{i}") }),
+            _ => json!({ "path": { "match": format!("surface.*.controls.dial{i}") } }),
+        };
+        let flow: Flow = serde_json::from_value(json!({
+            "id": format!("01JC5FLOWBENCH0000000{i:05}"),
+            "name": format!("Other {i}"),
+            "slug": format!("other{i}"),
+            "enabled": true,
+            "triggers": [{ "kind": "event", "from": from, "event": "press" }],
+            "concurrency": "parallel",
+            "body": [],
+        }))
+        .unwrap();
+        runtime.set_flow(flow);
+    }
     let flow: Flow = serde_json::from_value(json!({
         "id": "01JC5FLOWBENCH000000000001",
         "name": "Route on press",
         "slug": "routeOnPress",
         "enabled": true,
-        "triggers": [{ "kind": "control", "control": { "layer": CAMS, "control": "k0" }, "event": "press" }],
+        "triggers": [{ "kind": "event", "from": from, "event": "press" }],
         "concurrency": "parallel",
         "body": [{
             "id": "route", "kind": "action", "target": { "conn": VH },
@@ -541,7 +577,7 @@ async fn bench_key_down_to_first_action() {
     }
     times.sort();
     println!(
-        "key down to first action, 15 keys of expr bindings redrawing: median {:?}, worst {:?}",
+        "key down to first action, on {what} among {others} other triggers, 15 keys of expr bindings redrawing: median {:?}, worst {:?}",
         times[times.len() / 2],
         times[times.len() - 1]
     );

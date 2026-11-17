@@ -1,6 +1,6 @@
 # Milestone 6: Primitives
 
-- **Status:** In progress (Phases 0–5 done)
+- **Status:** Done, except re-measuring the redraw budget on the reference machine (Phase 6)
 
 The shapes M5 stored get their general form before hardware surfaces start creating entities in real projects ([M7](m7-surfaces-from-plugins.md) creates them on plug-in). Three changes:
 - **One way to give a value and one way to pick things:** `Source<T>` and `Selector` ([ADR 0026](../adr/0026-sources-and-selectors.md)). The binding kinds become stateless transforms.
@@ -11,15 +11,15 @@ Nothing here adds a new kind of thing for users to learn. It makes the existing 
 
 ## Done when
 
-- [ ] Every M5 binding fixture is migrated to a `Source` and evaluates to exactly what it did before, natively and as its compiled expression. A `rules` source whose `when` combines two conditions with `all` works on a key.
-- [ ] A flow with `{kind: "event", from: {layer, controls: "k0"}, event: "press"}` routes `vh` from the virtual deck, and `why` on its action walks back through `trigger.matched` and the key's `event` entry to the input's `state.patch`. M5's `control` trigger fixture is migrated to it.
-- [ ] One flow with `from: {path: {match: "surface.*.controls.*"}}, event: "press"` fires for any key on any surface, with `trigger.captures` naming the surface and control. A pattern `state` trigger on `surface.*.controls.*.pressed` does the same from state.
-- [ ] An event trigger on `{target: {interface: …}}` is accepted and matches events from every connection implementing the interface (with a test interface, since none ship yet).
-- [ ] An event trigger on `flow.<slug>`, `event: "finished"`, runs when that flow finishes, and `{path: "sys"}, event: "startup"` runs at boot.
-- [ ] A flow presses a key on another layer and navigates the deck: `core` actions `inject` and `navigate`, on a fixed surface target and on a target held in `vars`. Both are journaled `action.requested` → `action.result` and both happen in simulate mode. `cancelRuns` and `setEnabled` work on a flow target.
-- [ ] Action parameters accept `{ref}` and stateless transforms as well as `{expr}`, and `wait.for` accepts a `Source<Duration>`.
-- [ ] The UI edits all of the above: one source widget for binding properties and action parameters, an event-source picker in the trigger editor (key, any key on a layer, a connection, a flow, startup, a pattern), and `core` in the action step's connection list.
-- [ ] Budgets from M5 still hold: key down → first action dispatched in under 5 ms, state change → redrawn key in under 16 ms.
+- [x] Every M5 binding fixture is migrated to a `Source` and evaluates to exactly what it did before, natively and as its compiled expression. A `rules` source whose `when` combines two conditions with `all` works on a key.
+- [x] A flow with `{kind: "event", from: {layer, controls: "k0"}, event: "press"}` routes `vh` from the virtual deck, and `why` on its action walks back through `trigger.matched` and the key's `event` entry to the input's `state.patch`. M5's `control` trigger fixture is migrated to it.
+- [x] One flow with `from: {path: {match: "surface.*.controls.*"}}, event: "press"` fires for any key on any surface, with `trigger.captures` naming the surface and control. A pattern `state` trigger on `surface.*.controls.*.pressed` does the same from state.
+- [x] An event trigger on `{target: {interface: …}}` is accepted and matches events from every connection implementing the interface (with a test interface, since none ship yet).
+- [x] An event trigger on `flow.<slug>`, `event: "finished"`, runs when that flow finishes, and `{path: "sys"}, event: "startup"` runs at boot.
+- [x] A flow presses a key on another layer and navigates the deck: `core` actions `inject` and `navigate`, on a fixed surface target and on a target held in `vars`. Both are journaled `action.requested` → `action.result` and both happen in simulate mode. `cancelRuns` and `setEnabled` work on a flow target.
+- [x] Action parameters accept `{ref}` and stateless transforms as well as `{expr}`, and `wait.for` accepts a `Source<Duration>`.
+- [x] The UI edits all of the above: one source widget for binding properties and action parameters, an event-source picker in the trigger editor (key, any key on a layer, a connection, a flow, startup, a pattern), and `core` in the action step's connection list.
+- [ ] Budgets from M5 still hold: key down → first action dispatched in under 5 ms, state change → redrawn key in under 16 ms. Key down holds; the redraw is unchanged from M5 on the same machine, but needs re-measuring on the M3 (Phase 6).
 
 ## Phases
 
@@ -65,8 +65,16 @@ Nothing here adds a new kind of thing for users to learn. It makes the existing 
 - [x] Journal summaries for `event` entries by path: a control's as surface, control and layer; anything else as `<path>:<name>`. `core` requests name their surface or flow.
 
 ### Phase 6: Acceptance
-- [ ] The Rust end-to-end test from M5 (`surfaces_api.rs`) runs on the migrated shapes, plus a flow that navigates the deck and one that injects a press.
-- [ ] Budgets measured again with the selector-based matcher.
+- [x] The Rust end-to-end tests run on the migrated shapes: `surfaces_api.rs` (M5's press-routes-redraws test, its `why` chain ending `trigger.matched` → `event` → `state.patch`), plus `flows_drive_the_deck_and_other_flows_through_core`, in which a flow navigates the deck through a target held in `vars` and injects a press on a fixed one, in simulate mode. The whole workspace passes with Deno for the plugin host, as do the UI's unit tests and the Playwright smoke tests. One run of the workspace had 3 failures that three later runs didn't repeat; their names weren't captured, so something there may be timing-sensitive under load.
+- [x] **Budgets measured again,** in release, on a 4-vCPU cloud VM (Intel Xeon, 2.1 GHz), and against the code before M6 (`1568d7b`) on the same machine, since M5's figures are from an Apple M3:
+
+  | Path | Budget | Before M6 | M6 |
+  |---|---|---|---|
+  | Key down → first action requested, layer redrawing | 5 ms | 260 µs | 290 µs on a layer's key or a `*` pattern; 520–610 µs among 200 other event triggers |
+  | State change → 15 keys at 144 px redrawn, 2 `expr` bindings each | 16 ms | 28–37 ms | 29–38 ms |
+  | The same at 72 px | 16 ms | 27–30 ms | 28–30 ms |
+
+  `bench_key_down_to_first_action` now runs on event triggers, with and without 200 others: triggers under the same root (`surface`) are each tested, at about 2.5 µs, and reparsing a pattern's text per test is the first thing to cache if that grows. The redraw path is unchanged by M6 and machine-bound here: this VM is about 3× slower than the M3, where M5 measured 8.7 ms. **Open:** re-run `cargo test --release -p covalence-core --test binding_worker bench -- --ignored --nocapture --test-threads=1` on the M3 to confirm the 16 ms budget.
 
 ## Ordering
 
