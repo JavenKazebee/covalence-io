@@ -33,6 +33,7 @@ impl Server {
             root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."),
             plugins: Config::default_plugins(),
             deno: "deno".into(),
+            devices: Default::default(),
         })
         .unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

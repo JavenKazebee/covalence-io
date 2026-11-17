@@ -1,0 +1,35 @@
+[package]
+name = "covalence-devices"
+description = "Covalence IO device layer: HID and serial enumeration, hotplug, matching and handles"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["system"]
+# The OS's devices: hidapi, serialport and nusb's hotplug. Without it only the
+# fake backend is built.
+system = ["dep:hidapi", "dep:serialport", "dep:nusb", "dep:futures-lite"]
+
+[dependencies]
+covalence-protocol.workspace = true
+serde = { version = "1.0.229", features = ["derive"] }
+thiserror = "2.0.21"
+tokio = { version = "1.53.3", features = ["sync"] }
+tracing = "0.1.44"
+
+futures-lite = { version = "2.6", optional = true }
+# hidraw on Linux, with udev's files parsed in Rust (no libudev headers), and
+# Windows' own HID in Rust; macOS uses IOKit.
+hidapi = { version = "2.6.7", default-features = false, features = ["linux-native-basic-udev", "windows-native"], optional = true }
+nusb = { version = "0.2.9", optional = true }
+# Without default features: no libudev on Linux.
+serialport = { version = "4.10.1", default-features = false, optional = true }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tokio = { version = "1.53.3", features = ["macros", "rt", "rt-multi-thread", "time"] }

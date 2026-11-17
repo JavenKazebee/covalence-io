@@ -238,6 +238,7 @@ async fn connections_survive_a_server_restart() {
         root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."),
         plugins: Config::default_plugins(),
         deno: "deno".into(),
+        devices: Default::default(),
     };
 
     let app = App::start(config.clone()).unwrap();

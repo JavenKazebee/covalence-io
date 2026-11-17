@@ -19,10 +19,7 @@ use covalence_protocol::state::PathSegment;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
 
-use crate::{
-    App, CONNECTION, Connection, SaveError, SaveResult, apply_defaults, is_valid_alias,
-    json_to_value, resolve_permissions,
-};
+use crate::{AddError, App, Connection, SaveError, SaveResult, json_to_value};
 
 /// How long `POST /connections` waits for the plugin host to come up.
 const HOST_WAIT: Duration = Duration::from_secs(15);
@@ -41,6 +38,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/ws", get(crate::ws::upgrade))
         .merge(crate::flows::routes())
         .merge(crate::surfaces::routes())
+        .merge(crate::devices::routes())
         .with_state(app)
 }
 
@@ -165,83 +163,23 @@ async fn create_connection(
     State(app): State<Arc<App>>,
     Json(req): Json<CreateConnection>,
 ) -> ApiResult<(StatusCode, Json<Connection>)> {
-    if !is_valid_alias(&req.alias) {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            format!(
-                "{:?} is not a valid alias: use letters, digits and _, not starting with a digit, and not a reserved root or a name expressions already use",
-                req.alias
-            ),
-        ));
-    }
-    if app.conn_by_alias(&req.alias).is_some() {
-        return Err(ApiError::new(
-            StatusCode::CONFLICT,
-            format!("alias {:?} is taken", req.alias),
-        ));
-    }
-    let Some(spec) = app.plugins.iter().find(|p| p.id == req.plugin) else {
-        return Err(ApiError::new(
-            StatusCode::NOT_FOUND,
-            format!("unknown plugin {:?}", req.plugin),
-        ));
-    };
-    if !app.host_ready(HOST_WAIT).await {
-        return Err(ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "the plugin host is not ready",
-        ));
-    }
-    let Some(manifest) = app.manifest(&spec.id).await else {
-        return Err(ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            format!("plugin {} is not loaded", spec.id),
-        ));
-    };
-
-    let mut config = req.config;
-    apply_defaults(&manifest.config.schema, &mut config);
-    let permissions = resolve_permissions(&manifest.permissions, &config)
-        .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, e))?;
-    let conn = Connection {
-        id: ulid::Ulid::generate().to_string(),
-        plugin: spec.id.clone(),
-        version: spec.version.clone(),
-        alias: req.alias,
-        config,
-        mode: req.mode,
-        permissions,
-    };
-
-    let body = serde_json::to_string(&conn).map_err(ApiError::internal)?;
-    app.store
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .put_entity(CONNECTION, &conn.id, &body)
-        .map_err(ApiError::internal)?;
-    app.conns
-        .write()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(conn.id.clone(), conn.clone());
-    app.sync_aliases();
-
-    // The connection stays registered even if the host rejects it, so it is
-    // retried after a host restart; report the failure all the same.
-    if let Err(e) = app
-        .core
-        .host()
-        .create_connection(&conn.id, conn.create_params())
+    match app
+        .add_connection(&req.plugin, req.alias, req.config, req.mode, HOST_WAIT)
         .await
     {
-        return Err(ApiError::new(
-            StatusCode::BAD_GATEWAY,
-            format!(
-                "connection {} saved, but the host rejected it: {e}",
-                conn.alias
-            ),
-        ));
+        Ok(conn) => Ok((StatusCode::CREATED, Json(conn))),
+        Err(e) => {
+            let status = match &e {
+                AddError::InvalidAlias(_) | AddError::Permissions(_) => StatusCode::BAD_REQUEST,
+                AddError::AliasTaken(_) => StatusCode::CONFLICT,
+                AddError::UnknownPlugin(_) => StatusCode::NOT_FOUND,
+                AddError::HostNotReady | AddError::NotLoaded(_) => StatusCode::SERVICE_UNAVAILABLE,
+                AddError::HostRejected { .. } => StatusCode::BAD_GATEWAY,
+                AddError::Store(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            Err(ApiError::new(status, e.to_string()))
+        }
     }
-    Ok((StatusCode::CREATED, Json(conn)))
 }
 
 #[derive(Deserialize)]

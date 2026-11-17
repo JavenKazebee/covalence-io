@@ -20,6 +20,7 @@ fn start(data: &Path) -> Arc<App> {
         root: root(),
         plugins: Config::default_plugins(),
         deno: "deno".into(),
+        devices: Default::default(),
     })
     .unwrap()
 }

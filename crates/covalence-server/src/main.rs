@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use clap::Parser;
-use covalence_server::{App, Config, DEFAULT_UI_DIR, PluginSpec, router, with_ui};
+use covalence_server::{App, Config, DEFAULT_UI_DIR, DeviceSource, PluginSpec, router, with_ui};
 
 #[derive(Parser)]
 #[command(version, about = "Covalence IO headless server")]
@@ -32,6 +32,9 @@ struct Args {
     /// Serve the API only.
     #[arg(long, conflicts_with = "ui")]
     no_ui: bool,
+    /// Don't look for HID and serial devices.
+    #[arg(long)]
+    no_devices: bool,
 }
 
 #[tokio::main]
@@ -79,6 +82,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         root: args.root,
         plugins,
         deno: args.deno,
+        devices: if args.no_devices {
+            DeviceSource::None
+        } else {
+            DeviceSource::System
+        },
     })?;
 
     let mut routes = router(app.clone());

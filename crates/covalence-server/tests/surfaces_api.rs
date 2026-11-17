@@ -311,6 +311,7 @@ async fn surfaces_layers_and_bindings_survive_a_restart() {
             root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."),
             plugins: Config::default_plugins(),
             deno: "deno".into(),
+            devices: Default::default(),
         })
         .unwrap()
     };

@@ -1,6 +1,6 @@
 # Milestone 7: Surfaces from plugins
 
-- **Status:** In progress (Phase 0 done)
+- **Status:** In progress (Phases 0 and 1 done)
 
 A real Stream Deck drives Covalence, through a plugin. The core gets a device layer: it enumerates HID and serial devices, watches hotplug, matches them to plugins' manifests and performs their I/O, so a plugin of plain TypeScript can drive hardware with no native add-ons ([ADR 0025](../adr/0025-device-drivers-are-plugins.md)). The plugin host carries the surface protocol ([plugin protocol §8](../specs/plugin-protocol.md)), and `io.covalence.streamdeck` translates between the deck's reports and M5's surface model. Network transports arrive too, and the Videohub plugin moves onto them. MIDI, Orbitals and controls beyond keys stay out.
 
@@ -31,11 +31,11 @@ A real Stream Deck drives Covalence, through a plugin. The core gets a device la
 - [x] ADR 0025 accepted: the spike passed. (ADR 0024 was accepted in [M6](m6-primitives.md).)
 
 ### Phase 1: The core's device layer
-- [ ] **`covalence-devices`:** enumerate HID and serial devices, watch hotplug, and give each a stable `DeviceInfo.id` (§7.1).
-- [ ] **Matching:** installed plugins' `devices` against present devices; offers for unclaimed matches, and connections for `autoCreate`.
-- [ ] **Handles:** one connection per device (`busy`), unplug and replug as `io.state`, and handles kept open across a plugin host restart.
-- [ ] **A fake backend** for tests: plug, unplug, input reports in, output and feature reports recorded.
-- [ ] OS errors that the UI can explain (§7.1).
+- [x] **`covalence-devices`:** enumerate HID and serial devices, watch hotplug, and give each a stable `DeviceInfo.id` (§7.1). IDs are `hid:0fd9:0080:<serial>`, or `<kind>@<path>` without a serial number; interfaces of one device that share a serial gain `/<usage page>.<usage>`. Enumeration runs at once, on every USB arrival or departure (`nusb`), again 300 ms after it (HID and serial nodes lag the USB event), and every second. `cargo run -p covalence-devices --example devices` lists what the core sees, for checking hardware by hand.
+- [x] **Matching:** installed plugins' `devices` against present devices; offers for unclaimed matches, and connections for `autoCreate`. A connection holds a device when its config names it (the first top-level string field with `format: "device"`) or it has a handle to it. A device is created without asking only when exactly one matching plugin says `autoCreate`; otherwise it's offered once, with every matching plugin to choose from. Automatic connections are `live`, aliased after the plugin ID's last part (`deck`, `deck2`). `GET /devices` lists each device with `heldBy`, its handle and its `offer`. The SDK passes `devices` and `directNetwork` through to the manifest.
+- [x] **Handles:** one connection per device (`busy`), unplug and replug as `io.state`, and handles kept open across a plugin host restart. A device that isn't plugged in, or that the OS refuses, still gets a handle whose first state says why; it opens when the device is plugged in (again). Each open device has an I/O thread that owns its port: writes go out in order, between reads of at most 2 ms. `detach` drops a holder's input while keeping the device open, and the holder's next `open` gets the same handle back.
+- [x] **A fake backend** for tests: plug, unplug, input reports in, output and feature reports recorded (`covalence_devices::fake`, with an MK.2 and an ESP32 to plug in). The server takes it through `Config.devices`.
+- [x] OS errors that the UI can explain (§7.1): `permission_denied`, `exclusive_access`, `no_driver` and `unplugged`, each with a hint for the platform (udev rules, Input Monitoring, another app holding the device, WinUSB).
 
 ### Phase 2: Transports in the protocol and the SDK
 - [ ] `io.open`, `io.write`, `io.data`, `io.feature`, `io.state` and `io.close` for `hid`, `serial` and `tcp`, and `device.list`.

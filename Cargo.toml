@@ -12,6 +12,7 @@ repository = "https://github.com/JavenKazebee/covalence-io"
 [workspace.dependencies]
 covalence-protocol = { path = "crates/covalence-protocol" }
 covalence-core = { path = "crates/covalence-core" }
+covalence-devices = { path = "crates/covalence-devices" }
 covalence-store = { path = "crates/covalence-store" }
 
 [workspace.lints.rust]

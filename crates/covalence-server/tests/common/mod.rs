@@ -31,6 +31,7 @@ impl Server {
             root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."),
             plugins: Config::default_plugins(),
             deno: "deno".into(),
+            devices: Default::default(),
         })
         .unwrap();
         Server {

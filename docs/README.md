@@ -10,7 +10,7 @@
 - [M4: Expressions](milestones/m4-expressions.md) (done)
 - [M5: Surfaces and bindings](milestones/m5-surfaces-and-bindings.md) (done)
 - [M6: Primitives](milestones/m6-primitives.md) (done; redraw budget to re-measure): sources, selectors, events by path, the core connection
-- [M7: Surfaces from plugins](milestones/m7-surfaces-from-plugins.md) (in progress)
+- [M7: Surfaces from plugins](milestones/m7-surfaces-from-plugins.md) (in progress: Phases 0 and 1 done)
 - [M8: Dataflow](milestones/m8-dataflow.md) (planned): reducers, cells, variables, sinks, helpers, layer resolution
 - [M9: Composition](milestones/m9-composition.md) (planned): one template primitive, composites, components, nesting, `forEach`, plugin transforms
 

@@ -10,6 +10,7 @@ import {
   type ConnectionPolicy,
   type ConnMode,
   type ConnStatusKind,
+  type DeviceMatch,
   type ErrorCode,
   type EventDef,
   type JsonSchemaDoc,
@@ -65,7 +66,11 @@ export interface BaseContext<C = unknown, E = Record<string, unknown>> {
    * Emits an event. Events are never coalesced. `at` is the node it happened
    * at, relative to the connection root (`["outputs", 3]`); absent, the root.
    */
-  emit<K extends keyof E & string>(event: K, payload: E[K], options?: { at?: Path }): void;
+  emit<K extends keyof E & string>(
+    event: K,
+    payload: E[K],
+    options?: { at?: Path },
+  ): void;
   readonly log: Logger;
   /** Reports the connection status (spec §3.4). */
   status(status: ConnStatusKind, message?: string, detail?: unknown): void;
@@ -153,6 +158,15 @@ export interface PluginDefinition<C, E, S, A> {
   simulator?: SimulatorSpec<C, E, A>;
   /** The plugin ships a protocol-level simulator (a fake device server). */
   protocolSimulator?: boolean;
+
+  /**
+   * Hardware this plugin drives through the core, matched on hotplug
+   * (plugin protocol §7.1). Name the device in `config` with a string field
+   * of `format: "device"`.
+   */
+  devices?: DeviceMatch[];
+  /** Opens network sockets itself, not through host transports (§7). */
+  directNetwork?: boolean;
 }
 
 /** A defined plugin: its manifest plus the hooks the runtime calls. */
@@ -215,6 +229,8 @@ function buildManifest<C, E, S, A>(
     },
     secrets: def.secrets,
     permissions: def.permissions ?? {},
+    directNetwork: def.directNetwork,
+    devices: def.devices,
     connections: def.connections ?? "multiple",
     actions,
     events,

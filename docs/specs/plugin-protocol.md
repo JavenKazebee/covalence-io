@@ -304,8 +304,10 @@ interface DeviceInfo {
 |---|---|---|
 | `device.list` | host → core, req | `{kind?}` → `DeviceInfo[]`: devices this plugin's `devices` match, for a picker |
 
-- **A connection names its device in its config,** as a string field with `format: "device"`. The connection form offers matching devices that no connection holds.
-- **When a matching device appears that no connection holds,** the core offers to create a connection for it in the UI, with the device in its config, or creates one when the match says `autoCreate`. A device several plugins match is offered once, with a choice.
+- **IDs** are `<kind>:<vendor>:<product>:<serial>` in lowercase hex, `hid:0fd9:0080:AL12K1A01234`, so a device keeps its ID in any port. A device without a serial number is `<kind>@<path>`, which holds only while it stays in that port. HID interfaces of one device that share a serial number add `/<usage page>.<usage>`, `…:AL12K1A01234/ff00.0001`, and their path if that still isn't unique.
+- **A connection names its device in its config,** as a string field with `format: "device"` (the first top-level one). The connection form offers matching devices that no connection holds. A connection holds a device when its config names it or it has it open.
+- **When a matching device appears that no connection holds,** the core offers to create a connection for it in the UI, with the device in its config, or creates one when the match says `autoCreate`. A device several plugins match is offered once, with a choice. It's created without asking only when exactly one of the plugins that match it says `autoCreate`; the connection is `live`.
+- **A handle exists while its device is away.** `io.open` of a device that isn't plugged in, or that the OS refuses, gives a handle all the same, whose first `io.state` says why (`closed` with `unplugged`, or `error`); it opens when the device is plugged in (again). Only `busy` refuses the request.
 - **OS limits are reported as `io.state` errors** the UI can explain: exclusive access refused (macOS keyboards and mice, another app holding the device), missing permission (Linux udev rules), no driver (Windows WinUSB).
 
 ---

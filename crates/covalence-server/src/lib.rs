@@ -23,6 +23,7 @@
 //! | `GET /runs/{run}`            | One run                                                  |
 //! | `POST /runs/{run}/cancel`    | Cancels a run: `202 {run, status}`                       |
 //! | `POST /expressions/evaluate` | Previews an expression: `{source, trigger?}` → `{value?, error?, reads}` |
+//! | `GET /devices`              | HID and serial devices, who holds each, and offers (see `devices`) |
 //!
 //! Surfaces, layers and control bindings are in surfaces spec §9 and
 //! bindings spec §2. Each entity type has the flows' five routes, with
@@ -73,6 +74,7 @@ use serde::{Deserialize, Serialize};
 
 mod api;
 mod core_actions;
+mod devices;
 mod flows;
 mod surfaces;
 mod ui;
@@ -126,6 +128,43 @@ pub struct Config {
     pub plugins: Vec<PluginSpec>,
     /// The `deno` executable.
     pub deno: PathBuf,
+    /// Where devices come from.
+    pub devices: DeviceSource,
+}
+
+/// Where the server finds HID and serial devices.
+#[derive(Clone, Default)]
+pub enum DeviceSource {
+    /// None: the device layer is off.
+    #[default]
+    None,
+    /// The OS's.
+    System,
+    /// A stand-in, such as `covalence_devices::fake::Fake`.
+    Backend(Arc<dyn covalence_devices::Backend>),
+}
+
+impl std::fmt::Debug for DeviceSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            DeviceSource::None => "None",
+            DeviceSource::System => "System",
+            DeviceSource::Backend(_) => "Backend(..)",
+        })
+    }
+}
+
+impl DeviceSource {
+    fn start(&self) -> Option<covalence_devices::Devices> {
+        match self {
+            DeviceSource::None => None,
+            DeviceSource::System => Some(covalence_devices::Devices::system()),
+            DeviceSource::Backend(backend) => Some(covalence_devices::Devices::new(
+                backend.clone(),
+                covalence_devices::Settings::default(),
+            )),
+        }
+    }
 }
 
 impl Config {
@@ -227,6 +266,8 @@ pub struct App {
     saving: Mutex<()>,
     /// Set at shutdown, so long-lived WebSocket sessions let go of the app.
     closing: tokio::sync::watch::Sender<bool>,
+    /// HID and serial devices, unless they're off.
+    devices: Option<covalence_devices::Devices>,
 }
 
 impl App {
@@ -275,6 +316,7 @@ impl App {
         }
 
         let evaluator = Arc::new(QuickJs::default());
+        let devices = config.devices.start();
         let app = Arc::new_cyclic(|app: &Weak<App>| {
             core.set_core_actions(Arc::new(core_actions::AppCore(app.clone())));
             let runtime = Runtime::start(
@@ -309,8 +351,10 @@ impl App {
                 renderer: Mutex::new(Renderer::default()),
                 saving: Mutex::new(()),
                 closing: tokio::sync::watch::Sender::new(false),
+                devices,
             }
         });
+        devices::spawn(&app);
         let registering = app.clone();
         tokio::spawn(async move { registering.register().await });
         Ok(app)
@@ -503,6 +547,66 @@ impl App {
             .is_ok_and(|r| r.is_ok())
     }
 
+    /// Checks, stores and creates a connection. `host_wait` is how long to
+    /// wait for the plugin host, whose manifest the config is checked against.
+    pub(crate) async fn add_connection(
+        &self,
+        plugin: &str,
+        alias: String,
+        mut config: serde_json::Map<String, serde_json::Value>,
+        mode: ConnMode,
+        host_wait: Duration,
+    ) -> Result<Connection, AddError> {
+        if !is_valid_alias(&alias) {
+            return Err(AddError::InvalidAlias(alias));
+        }
+        if self.conn_by_alias(&alias).is_some() {
+            return Err(AddError::AliasTaken(alias));
+        }
+        let Some(spec) = self.plugins.iter().find(|p| p.id == plugin) else {
+            return Err(AddError::UnknownPlugin(plugin.to_owned()));
+        };
+        if !self.host_ready(host_wait).await {
+            return Err(AddError::HostNotReady);
+        }
+        let Some(manifest) = self.manifest(&spec.id).await else {
+            return Err(AddError::NotLoaded(spec.id.clone()));
+        };
+
+        apply_defaults(&manifest.config.schema, &mut config);
+        let permissions =
+            resolve_permissions(&manifest.permissions, &config).map_err(AddError::Permissions)?;
+        let conn = Connection {
+            id: ulid::Ulid::generate().to_string(),
+            plugin: spec.id.clone(),
+            version: spec.version.clone(),
+            alias,
+            config,
+            mode,
+            permissions,
+        };
+
+        self.put_entity(CONNECTION, &conn.id, &conn)
+            .map_err(AddError::Store)?;
+        write(&self.conns).insert(conn.id.clone(), conn.clone());
+        self.sync_aliases();
+
+        // The connection stays registered even if the host rejects it, so it is
+        // retried after a host restart; report the failure all the same.
+        if let Err(e) = self
+            .core
+            .host()
+            .create_connection(&conn.id, conn.create_params())
+            .await
+        {
+            return Err(AddError::HostRejected {
+                alias: conn.alias,
+                error: e.to_string(),
+            });
+        }
+        Ok(conn)
+    }
+
     async fn manifest(&self, plugin: &str) -> Option<Manifest> {
         self.core.host().manifest(plugin).await
     }
@@ -522,6 +626,29 @@ impl App {
         }
         tracing::warn!("app still in use at shutdown; dropping the host");
     }
+}
+
+/// Why a connection wasn't created.
+#[derive(Debug, thiserror::Error)]
+pub enum AddError {
+    #[error(
+        "{0:?} is not a valid alias: use letters, digits and _, not starting with a digit, and not a reserved root or a name expressions already use"
+    )]
+    InvalidAlias(String),
+    #[error("alias {0:?} is taken")]
+    AliasTaken(String),
+    #[error("unknown plugin {0:?}")]
+    UnknownPlugin(String),
+    #[error("the plugin host is not ready")]
+    HostNotReady,
+    #[error("plugin {0} is not loaded")]
+    NotLoaded(String),
+    #[error("{0}")]
+    Permissions(String),
+    #[error(transparent)]
+    Store(covalence_store::StoreError),
+    #[error("connection {alias} saved, but the host rejected it: {error}")]
+    HostRejected { alias: String, error: String },
 }
 
 /// A saved entity and its warnings.
