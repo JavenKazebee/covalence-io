@@ -978,6 +978,10 @@
                 },
                 "data": {
                     "$ref": "Bytes.json"
+                },
+                "ts": {
+                    "type": "number",
+                    "description": "(M7) When the core read it: milliseconds since the Unix epoch, on the core's clock."
                 }
             },
             "required": [
@@ -1969,8 +1973,13 @@
                 {
                     "type": "string",
                     "const": "rgb565"
+                },
+                {
+                    "type": "string",
+                    "const": "rgb"
                 }
-            ]
+            ],
+            "description": "(M7) `rgb`: raw 8-bit RGB, rows top to bottom, for devices whose driver packs images itself."
         },
         "Message": {
             "$schema": "https://json-schema.org/draft/2020-12/schema",

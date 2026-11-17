@@ -132,7 +132,10 @@ export type InputCap = MomentaryInput | RelativeInput | AbsoluteInput | TouchInp
  */
 export type OutputCap = ImageOutput | LedOutput | LevelOutput | TextOutput;
 export type InputKind = "down" | "up" | "turn" | "touch" | "value";
-export type ImageFormat = "jpeg" | "bmp" | "png" | "rgb565";
+/**
+ * (M7) `rgb`: raw 8-bit RGB, rows top to bottom, for devices whose driver packs images itself.
+ */
+export type ImageFormat = "jpeg" | "bmp" | "png" | "rgb565" | "rgb";
 export type Message = Request | ResponseOk | ResponseErr | Notification;
 
 /**
@@ -442,6 +445,10 @@ export interface IoWrite {
 export interface IoData {
   handle: string;
   data: Bytes;
+  /**
+   * (M7) When the core read it: milliseconds since the Unix epoch, on the core's clock.
+   */
+  ts?: number;
 }
 /**
  * `io.feature` params (host → core, req), `hid` only. Result: `IoFeatureResult`.

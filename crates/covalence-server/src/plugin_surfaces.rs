@@ -231,6 +231,7 @@ fn image_format(format: &str) -> Option<ImageFormat> {
         "png" => Some(ImageFormat::Png),
         "bmp" => Some(ImageFormat::Bmp),
         "rgb565" => Some(ImageFormat::Rgb565),
+        "rgb" => Some(ImageFormat::Rgb),
         _ => None,
     }
 }

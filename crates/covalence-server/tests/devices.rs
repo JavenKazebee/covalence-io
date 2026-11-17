@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use covalence_devices::fake::{Fake, esp32, stream_deck_mk2};
+use covalence_devices::fake::{Fake, esp32, test_deck};
 use covalence_server::{App, Config, DeviceSource, PluginSpec};
 use serde_json::{Value, json};
 
@@ -13,7 +13,7 @@ mod common;
 use common::Server;
 
 const WAIT: Duration = Duration::from_secs(15);
-const DECK: &str = "hid:0fd9:0080:AL12";
+const DECK: &str = "hid:1209:0001:AL12";
 const PLUGIN: &str = "io.covalence.test.deck";
 
 fn start(data: &Path, fake: &Fake) -> Server {
@@ -77,7 +77,7 @@ async fn a_matching_device_gets_a_connection_and_others_are_offered() {
     let server = start(data.path(), &fake);
 
     // A Stream Deck: its plugin says autoCreate.
-    fake.plug(stream_deck_mk2("/dev/hidraw0", Some("AL12")));
+    fake.plug(test_deck("/dev/hidraw0", Some("AL12")));
     let conn = eventually("a connection for the deck", || async {
         connections(&server).await.into_iter().next()
     })
@@ -88,7 +88,7 @@ async fn a_matching_device_gets_a_connection_and_others_are_offered() {
     let deck = device(&server, DECK).await.unwrap();
     assert_eq!(deck["heldBy"], conn["id"]);
     assert!(deck.get("offer").is_none(), "{deck}");
-    assert_eq!(deck["product"], json!("Stream Deck MK.2"));
+    assert_eq!(deck["product"], json!("Test deck"));
 
     // An ESP32: matched, but only offered.
     fake.plug(esp32("/dev/ttyACM0", Some("ESP1")));
@@ -118,7 +118,7 @@ async fn a_matching_device_gets_a_connection_and_others_are_offered() {
         device(&server, DECK).await.is_none().then_some(())
     })
     .await;
-    fake.plug(stream_deck_mk2("/dev/hidraw3", Some("AL12")));
+    fake.plug(test_deck("/dev/hidraw3", Some("AL12")));
     eventually("the deck to return", || async {
         device(&server, DECK).await
     })
@@ -127,7 +127,7 @@ async fn a_matching_device_gets_a_connection_and_others_are_offered() {
     assert_eq!(connections(&server).await.len(), 1);
 
     // A second deck gets a connection of its own.
-    fake.plug(stream_deck_mk2("/dev/hidraw4", Some("BX99")));
+    fake.plug(test_deck("/dev/hidraw4", Some("BX99")));
     let both = eventually("a second connection", || async {
         let conns = connections(&server).await;
         (conns.len() == 2).then_some(conns)
@@ -215,7 +215,7 @@ async fn echo_server() -> u16 {
 async fn a_plugin_drives_its_device_and_sockets_through_the_core() {
     let data = tempfile::tempdir().unwrap();
     let fake = Fake::new();
-    fake.plug(stream_deck_mk2("/dev/hidraw0", Some("AL12")));
+    fake.plug(test_deck("/dev/hidraw0", Some("AL12")));
     fake.set_feature("/dev/hidraw0", 0x06, &[0x06, 0x0c, 0xaa, 0xbb]);
     let server = start(data.path(), &fake);
 
@@ -261,7 +261,7 @@ async fn a_plugin_drives_its_device_and_sockets_through_the_core() {
             (value(&server, "deck.io").await == Some(json!("closed:unplugged"))).then_some(())
         })
         .await;
-    fake.plug(stream_deck_mk2("/dev/hidraw1", Some("AL12")));
+    fake.plug(test_deck("/dev/hidraw1", Some("AL12")));
     server
         .eventually(WAIT, "the handle to reopen", || async {
             (value(&server, "deck.io").await == Some(json!("open"))).then_some(())
@@ -356,7 +356,7 @@ async fn a_plugin_drives_its_device_and_sockets_through_the_core() {
 async fn devices_stay_open_while_the_plugin_host_restarts() {
     let data = tempfile::tempdir().unwrap();
     let fake = Fake::new();
-    fake.plug(stream_deck_mk2("/dev/hidraw0", Some("AL12")));
+    fake.plug(test_deck("/dev/hidraw0", Some("AL12")));
     let server = start(data.path(), &fake);
     server
         .eventually(WAIT, "the deck's handle to open", || async {
@@ -433,7 +433,7 @@ fn drawn(fake: &Fake, path: &str, key: u8) -> usize {
 async fn a_plugin_provides_a_surface() {
     let data = tempfile::tempdir().unwrap();
     let fake = Fake::new();
-    fake.plug(stream_deck_mk2("/dev/hidraw0", Some("AL12")));
+    fake.plug(test_deck("/dev/hidraw0", Some("AL12")));
     let server = start(data.path(), &fake);
 
     // The plugin attaches its deck: the core makes it a surface entity.

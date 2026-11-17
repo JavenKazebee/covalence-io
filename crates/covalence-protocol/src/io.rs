@@ -72,10 +72,14 @@ pub struct IoWrite {
 }
 
 /// `io.data` params (core → host, ntf). For `hid`, an input report.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct IoData {
     pub handle: String,
     pub data: Bytes,
+    /// When the core read it: milliseconds since the Unix epoch, on the
+    /// core's clock. A surface's input `ts` (spec §8).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ts: Option<f64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

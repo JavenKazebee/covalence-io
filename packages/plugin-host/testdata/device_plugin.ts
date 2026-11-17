@@ -47,8 +47,8 @@ const plugin: Plugin = definePlugin<
     device: s.string({ label: "Device", format: "device" }),
   }),
   devices: [
-    // A Stream Deck MK.2: created without asking.
-    { kind: "hid", vendorId: 0x0fd9, productId: [0x0080], autoCreate: true },
+    // A test deck (pid.codes' test vendor ID): created without asking.
+    { kind: "hid", vendorId: 0x1209, productId: [0x0001], autoCreate: true },
     // An ESP32 over USB CDC: offered.
     { kind: "serial", vendorId: 0x303a },
   ],

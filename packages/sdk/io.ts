@@ -50,7 +50,7 @@ export class IoHandle {
   #state: IoStateKind = "open";
   #error: string | undefined;
   #closed = false;
-  readonly #data = new Set<Listener<[Uint8Array]>>();
+  readonly #data = new Set<Listener<[Uint8Array, number | undefined]>>();
   readonly #states = new Set<Listener<[IoStateKind, string | undefined]>>();
   readonly #io: Transports;
 
@@ -83,8 +83,11 @@ export class IoHandle {
     return this.#closed;
   }
 
-  /** Calls `fn` with each input report or chunk. Returns an unsubscribe. */
-  onData(fn: Listener<[Uint8Array]>): () => void {
+  /**
+   * Calls `fn` with each input report or chunk, and when the core read it
+   * (ms since the epoch, the core's clock). Returns an unsubscribe.
+   */
+  onData(fn: Listener<[Uint8Array, number | undefined]>): () => void {
     this.#data.add(fn);
     return () => this.#data.delete(fn);
   }
@@ -111,8 +114,8 @@ export class IoHandle {
   }
 
   /** @internal */
-  _data(data: Uint8Array) {
-    for (const fn of this.#data) fn(data);
+  _data(data: Uint8Array, ts?: number) {
+    for (const fn of this.#data) fn(data, ts);
   }
 
   /** @internal */
@@ -133,8 +136,8 @@ export class IoHandle {
 
 /** A HID device the core opened (`ctx.hid.open`). */
 export class HidDevice extends IoHandle {
-  /** Calls `fn` with each input report. */
-  onInput(fn: Listener<[Uint8Array]>): () => void {
+  /** Calls `fn` with each input report and when the core read it. */
+  onInput(fn: Listener<[Uint8Array, number | undefined]>): () => void {
     return this.onData(fn);
   }
 
@@ -507,6 +510,7 @@ export class Transports {
     const p = params as {
       handle: string;
       data?: Bytes;
+      ts?: number;
       state?: IoStateKind;
       error?: string;
     };
@@ -517,7 +521,7 @@ export class Transports {
       this.#early.set(p.handle, early);
       return true;
     }
-    if (method === "io.data") handle._data(toBytes(p.data ?? []));
+    if (method === "io.data") handle._data(toBytes(p.data ?? []), p.ts);
     else handle._state(p.state!, p.error);
     return true;
   }

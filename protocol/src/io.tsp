@@ -70,6 +70,8 @@ model IoWrite {
 model IoData {
   handle: string;
   data: Bytes;
+  /** (M7) When the core read it: milliseconds since the Unix epoch, on the core's clock. */
+  ts?: float64;
 }
 
 /** `io.feature` params (host → core, req), `hid` only. Result: `IoFeatureResult`. */

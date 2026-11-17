@@ -110,6 +110,14 @@ impl Ring {
     }
 }
 
+/// When `at` was, in milliseconds since the Unix epoch.
+fn epoch_ms_at(at: std::time::Instant) -> f64 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    (now.saturating_sub(at.elapsed())).as_secs_f64() * 1000.0
+}
+
 fn hex(data: &[u8]) -> String {
     const DIGITS: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(data.len() * 2);
@@ -425,13 +433,14 @@ impl IoHub {
 
     fn device_event(&self, conn: &str, handle: &str, event: HandleEvent) {
         match event {
-            HandleEvent::Data { data, .. } => {
+            HandleEvent::Data { data, at } => {
                 self.record(handle, Dir::In, Some(&data), None);
                 self.notify::<core_to_host::IoData>(
                     conn,
                     &IoData {
                         handle: handle.to_owned(),
                         data: Bytes(data),
+                        ts: Some(epoch_ms_at(at)),
                     },
                 );
             }
@@ -697,6 +706,7 @@ impl Tcp {
             &IoData {
                 handle: self.handle.clone(),
                 data: Bytes(data),
+                ts: Some(epoch_ms_at(std::time::Instant::now())),
             },
         );
     }

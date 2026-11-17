@@ -170,13 +170,15 @@ impl DeviceSource {
 }
 
 impl Config {
-    /// The first-party plugins Milestone 1 ships.
+    /// The first-party plugins.
     pub fn default_plugins() -> Vec<PluginSpec> {
-        vec![
-            "io.covalence.videohub@0.1.0=plugins/videohub/mod.ts"
-                .parse()
-                .expect("valid spec"),
+        [
+            "io.covalence.videohub@0.1.0=plugins/videohub/mod.ts",
+            "io.covalence.streamdeck@0.1.0=plugins/streamdeck/mod.ts",
         ]
+        .iter()
+        .map(|s| s.parse().expect("valid spec"))
+        .collect()
     }
 
     /// The Deno plugin host, with the coarse allowlist from

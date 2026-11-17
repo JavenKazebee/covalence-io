@@ -6,7 +6,8 @@
     "./packages/protocol",
     "./packages/sdk",
     "./packages/plugin-host",
-    "./plugins/videohub"
+    "./plugins/videohub",
+    "./plugins/streamdeck"
   ],
   "fmt": {
     "include": [

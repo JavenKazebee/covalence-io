@@ -1,6 +1,6 @@
 # Milestone 7: Surfaces from plugins
 
-- **Status:** In progress (Phases 0–3 done)
+- **Status:** In progress (Phases 0–4 done)
 
 A real Stream Deck drives Covalence, through a plugin. The core gets a device layer: it enumerates HID and serial devices, watches hotplug, matches them to plugins' manifests and performs their I/O, so a plugin of plain TypeScript can drive hardware with no native add-ons ([ADR 0025](../adr/0025-device-drivers-are-plugins.md)). The plugin host carries the surface protocol ([plugin protocol §8](../specs/plugin-protocol.md)), and `io.covalence.streamdeck` translates between the deck's reports and M5's surface model. Network transports arrive too, and the Videohub plugin moves onto them. MIDI, Orbitals and controls beyond keys stay out.
 
@@ -49,10 +49,10 @@ A real Stream Deck drives Covalence, through a plugin. The core gets a device la
 - [x] SDK: `ctx.surfaces.attach(...)` with the button presets, giving input to send and draws to receive: `down`, `up`, `turn`, `value` and `touch` with the device's `ts`, and `onDraw`. Presets: `button`, `encoder`, `fader`, `touchstrip`, `lcd`, `led`, `keys(cols, rows, image)` and `row`. A destroyed connection detaches its surfaces.
 
 ### Phase 4: The Stream Deck plugin
-- [ ] `plugins/streamdeck`: `devices` for Elgato's vendor ID and the MK.2's product IDs, `autoCreate: true`.
-- [ ] Attaches 15 `momentary` + `image` controls placed with `at`, in the device's native image size, format and rotation; turns key reports into `surface.input` with the report's time as `ts`; writes `surface.draw` images to the device.
-- [ ] Other models the library supports work if they only have keys, but only the MK.2 is checked by hand.
-- [ ] A protocol-level simulator of the MK.2 for tests. The UI's virtual deck is unchanged.
+- [x] `plugins/streamdeck`: `devices` for Elgato's vendor ID and the MK.2's product IDs, `autoCreate: true`. It's a first-party plugin the server loads by default. Its `devices` list every keys-only model in `@elgato-stream-deck/core`'s table, not just the MK.2's. Its one action sets the brightness, and its state has the model, serial number and firmware.
+- [x] Attaches 15 `momentary` + `image` controls placed with `at`, in the device's native image size, format and rotation; turns key reports into `surface.input` with the report's time as `ts`; writes `surface.draw` images to the device. `io.data` gains `ts`, when the core read the report, which becomes the press's `deviceTs` in the journal. The format and rotation come from a probe at open: the library prepares (without sending) an image whose pixels hold their own coordinates, and where they land in `encodeJPEG` gives the core's turn. The MK.2 comes out at JPEG turned 180°, as the spike found. The core's JPEG then goes out through `encodeJPEG` unchanged. Unplugged, the surface detaches; plugged back in, it attaches again and is redrawn.
+- [x] Other models the library supports work if they only have keys, but only the MK.2 is checked by hand. Gen-1 models, which the library packs as BMP itself, are sent raw RGB: `rgb` joins the protocol's image formats and the renderer's.
+- [x] A protocol-level simulator of the MK.2 for tests: `covalence_devices::fake::Mk2` answers the serial number and firmware feature reports, sends 512-byte key reports, and reassembles the JPEG of each key from its image reports. The UI's virtual deck is unchanged. The test plugin moved to pid.codes' test vendor ID, so it no longer competes with this plugin for MK.2s.
 
 ### Phase 5: Network transports and the Videohub plugin
 - [ ] The Videohub plugin moves from `Deno.connect` to `ctx.tcp`, with reconnects from the core.

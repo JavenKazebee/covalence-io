@@ -1,0 +1,11 @@
+{
+  "name": "@covalence-io/plugin-streamdeck",
+  "version": "0.0.0",
+  "exports": {
+    ".": "./mod.ts"
+  },
+  "imports": {
+    "@elgato-stream-deck/core": "npm:@elgato-stream-deck/core@7.9.0",
+    "eventemitter3": "npm:eventemitter3@^5.0.4"
+  }
+}

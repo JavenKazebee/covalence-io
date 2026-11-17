@@ -138,6 +138,9 @@ pub enum ImageFormat {
     Bmp,
     Png,
     Rgb565,
+    /// Raw 8-bit RGB, rows top to bottom, for devices whose driver packs
+    /// images itself.
+    Rgb,
 }
 
 /// `surface.draw` params (core → host, ntf), for `image` outputs.

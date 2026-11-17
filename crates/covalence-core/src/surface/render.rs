@@ -100,8 +100,8 @@ impl Default for Renderer {
 }
 
 impl Renderer {
-    /// `look` as an image of `width` × `height` in `format`, `png` or
-    /// `jpeg`, turned `rotation` degrees clockwise for a device mounted that
+    /// `look` as an image of `width` × `height` in `format` (`png`, `jpeg`,
+    /// or `rgb`: raw bytes for a driver that packs images itself), turned `rotation` degrees clockwise for a device mounted that
     /// way (gen-2 Stream Decks: 180). At 90 and 270, the look is drawn
     /// `height` wide before it turns.
     pub fn render(
@@ -131,6 +131,7 @@ impl Renderer {
         }
         let rgb = rotate(&rgb_of(&pixmap), draw_w, draw_h, rotation);
         match format {
+            "rgb" => Ok(rgb),
             "png" => {
                 encode_png(&rgb, width, height).map_err(|e| RenderError::Encode(e.to_string()))
             }
@@ -208,7 +209,7 @@ impl Renderer {
 
 /// Whether the renderer can make images in `format`, turned `rotation`.
 pub fn check_output(format: &str, rotation: u16) -> Result<(), RenderError> {
-    if !matches!(format, "png" | "jpeg") {
+    if !matches!(format, "png" | "jpeg" | "rgb") {
         return Err(RenderError::Format(format.to_owned()));
     }
     if !matches!(rotation, 0 | 90 | 180 | 270) {
@@ -373,6 +374,8 @@ mod tests {
         let jpeg = r.render(&look, 72, 72, "jpeg", 180).unwrap();
         assert_eq!(&jpeg[..2], [0xff, 0xd8], "a JPEG's SOI marker");
         assert_eq!(&jpeg[jpeg.len() - 2..], [0xff, 0xd9]);
+        let rgb = r.render(&look, 72, 72, "rgb", 0).unwrap();
+        assert_eq!(rgb.len(), 72 * 72 * 3);
     }
 
     #[test]

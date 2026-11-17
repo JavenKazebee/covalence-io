@@ -260,7 +260,7 @@ The SDK exposes these as `ctx.tcp`, `ctx.udp`, `ctx.ws`, `ctx.http`, `ctx.serial
 |---|---|---|
 | `io.open` | host → core, req | `{kind: "tcp" \| "udp" \| "ws" \| "serial" \| "hid" \| "midi", target, options: {reconnect?, backoff?, framing?: "raw" \| "line" \| "length", baud?}}` → `{handle}`. **(M7)** For `serial`, `hid` and `midi`, `target` is a device ID (§7.1) |
 | `io.write` | host → core, ntf | `{handle, data: bytes}`. For `hid`, an output report whose first byte is the report ID; for `midi`, one or more MIDI messages |
-| `io.data` | core → host, ntf | `{handle, data: bytes}`. For `hid`, an input report; for `midi`, one message |
+| `io.data` | core → host, ntf | `{handle, data: bytes, ts?}`. For `hid`, an input report; for `midi`, one message. **(M7)** `ts` is when the core read it, in ms since the epoch on the core's clock: a surface plugin sends it as its input's `ts` |
 | `io.feature` | host → core, req | **(M7)** `hid` only: `{handle, op: "get", reportId, length}` → `{data}`, or `{handle, op: "send", data}` → `{}` |
 | `io.state` | core → host, ntf | `{handle, state: "open" \| "closed" \| "reconnecting" \| "error", error?}`. **(M7)** A device handle closes with `error: "unplugged"` and opens again when the same device returns |
 | `io.close` | host → core, ntf | `{handle}` |
@@ -323,7 +323,7 @@ A surface is a two-way device ([ADR 0024](../adr/0024-surfaces-as-two-way-device
 | `surface.attach` | host → core, ntf | `{surface, model, serial?, name, controls: ControlDef[], outputs?: {brightness?: boolean}}`. **(Now)** No `layout`. **(M7)** From the plugin host, `surface` is the host's own key for the device, and the core matches the attach to a surface entity by `model` and `serial` (surfaces §1), or by `model` and the connection when there's no serial, creating one on the first attach with `provider` set to the connection |
 | `surface.detach` | host → core, ntf | `{surface}` |
 | `surface.input` | host → core, ntf | `{surface, control, kind: "down" \| "up" \| "turn" \| "touch" \| "value", value?, ts, echo?}` |
-| `surface.draw` | core → host, ntf | `{surface, control, image: bytes, format: "jpeg" \| "bmp" \| "png" \| "rgb565"}`, for `image` outputs |
+| `surface.draw` | core → host, ntf | `{surface, control, image: bytes, format: "jpeg" \| "bmp" \| "png" \| "rgb565" \| "rgb"}`, for `image` outputs. **(M7)** `rgb` is raw 8-bit RGB, rows top to bottom, for a driver that packs images itself |
 | `surface.led` | core → host, ntf | `{surface, control, color}`, for `led` outputs **(Later)** |
 | `surface.level` | core → host, ntf | `{surface, control, value: 0..1}`, for `level` outputs: motor faders, encoder rings, meters **(Later)** |
 | `surface.text` | core → host, ntf | `{surface, control, text}`, for `text` outputs **(Later)** |
@@ -365,7 +365,7 @@ type OutputCap =
 - **A host can't run helpers.** It can `suggest` defaults for a control, such as a jog wheel's acceleration. **(M9)** A plugin can also ship transforms (§4), which the core runs in its own sandbox, never in the host ([ADR 0029](../adr/0029-dataflow-sources-transforms-sinks.md)).
 - **`echo: true`** **(Later)** marks input the device sent because the core moved it, such as a motor fader reaching its requested position (surfaces §4.4). A host that can't tell leaves it out, and the core decides from timing.
 - **Input that doesn't match a control's capabilities** (a `turn` on a control with no `relative` input) is dropped and logged, rate-limited.
-- **The core renders images** at each `image` output's native size and format, and sends only the outputs that changed. **(M7)** It draws `png` and `jpeg`, turned by `rotation` degrees clockwise; an attach with an image output it can't draw is refused. From the plugin host, `surface.draw`'s `surface` is the connection's own key.
+- **The core renders images** at each `image` output's native size and format, and sends only the outputs that changed. **(M7)** It draws `png`, `jpeg` and `rgb`, turned by `rotation` degrees clockwise; an attach with an image output it can't draw is refused. From the plugin host, `surface.draw`'s `surface` is the connection's own key.
 - **(M7) A connection that stops** (destroyed, or its plugin host lost) detaches its surfaces, which releases their input (surfaces §4.1). The device keeps what it shows until it's attached again.
 
 ---

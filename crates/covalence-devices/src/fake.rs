@@ -333,3 +333,119 @@ pub fn esp32(path: &str, serial: Option<&str>) -> DeviceInfo {
         usage: None,
     }
 }
+
+/// A test deck at `path`: the test plugin's device, on pid.codes' test
+/// vendor ID, so it isn't a Stream Deck.
+pub fn test_deck(path: &str, serial: Option<&str>) -> DeviceInfo {
+    DeviceInfo {
+        vendor_id: Some(0x1209),
+        product_id: Some(0x0001),
+        manufacturer: Some("Covalence".into()),
+        product: Some("Test deck".into()),
+        ..stream_deck_mk2(path, serial)
+    }
+}
+
+/// A Stream Deck MK.2, at the level of its HID reports: what
+/// `@elgato-stream-deck/core` reads and writes (M7 Phase 4).
+///
+/// - Feature report 6 answers the serial number, and 5 the firmware.
+/// - [`Mk2::press`] and [`Mk2::release`] send key reports:
+///   `[0x01, 0x00, 0x0f, 0x00, k0 … k14]`, 512 bytes.
+/// - [`Mk2::images`] reassembles the JPEG written to each key from its
+///   1024-byte image reports: `[0x02, 0x07, key, last, len (LE), part (LE),
+///   …]`.
+/// - [`Mk2::brightness`] is the last brightness set: `[0x03, 0x08, percent]`.
+pub struct Mk2 {
+    fake: Fake,
+    path: String,
+    keys: std::sync::Mutex<[bool; MK2_KEYS]>,
+}
+
+/// An MK.2's keys: 5 × 3.
+pub const MK2_KEYS: usize = 15;
+
+impl Mk2 {
+    /// Plugs one in.
+    pub fn plug(fake: &Fake, path: &str, serial: &str) -> Mk2 {
+        fake.plug(stream_deck_mk2(path, Some(serial)));
+        let mut serial_report = vec![0x06, serial.len() as u8];
+        serial_report.extend_from_slice(serial.as_bytes());
+        serial_report.resize(32, 0);
+        fake.set_feature(path, 0x06, &serial_report);
+        let firmware = b"1.01.000";
+        let mut firmware_report = vec![0x05, 4 + firmware.len() as u8, 0, 0, 0, 0];
+        firmware_report.extend_from_slice(firmware);
+        firmware_report.resize(32, 0);
+        fake.set_feature(path, 0x05, &firmware_report);
+        Mk2 {
+            fake: fake.clone(),
+            path: path.to_owned(),
+            keys: std::sync::Mutex::new([false; MK2_KEYS]),
+        }
+    }
+
+    fn send_keys(&self, keys: &[bool; MK2_KEYS]) {
+        let mut report = vec![0x01, 0x00, MK2_KEYS as u8, 0x00];
+        report.extend(keys.iter().map(|&k| u8::from(k)));
+        report.resize(512, 0);
+        self.fake.input(&self.path, &report);
+    }
+
+    pub fn press(&self, key: usize) {
+        let mut keys = self.keys.lock().unwrap_or_else(|e| e.into_inner());
+        keys[key] = true;
+        self.send_keys(&keys);
+    }
+
+    pub fn release(&self, key: usize) {
+        let mut keys = self.keys.lock().unwrap_or_else(|e| e.into_inner());
+        keys[key] = false;
+        self.send_keys(&keys);
+    }
+
+    /// Every complete image written to each key, oldest first.
+    pub fn images(&self) -> BTreeMap<u8, Vec<Vec<u8>>> {
+        let mut done: BTreeMap<u8, Vec<Vec<u8>>> = BTreeMap::new();
+        let mut partial: BTreeMap<u8, Vec<u8>> = BTreeMap::new();
+        for w in self.fake.log(&self.path).writes {
+            if w.len() < 8 || w[0] != 0x02 || w[1] != 0x07 {
+                continue;
+            }
+            let (key, last) = (w[2], w[3] == 1);
+            let len = usize::from(u16::from_le_bytes([w[4], w[5]]));
+            let part = u16::from_le_bytes([w[6], w[7]]);
+            let body = &w[8..(8 + len).min(w.len())];
+            let image = partial.entry(key).or_default();
+            if part == 0 {
+                image.clear();
+            }
+            image.extend_from_slice(body);
+            if last {
+                done.entry(key)
+                    .or_default()
+                    .push(partial.remove(&key).unwrap_or_default());
+            }
+        }
+        done
+    }
+
+    /// The last brightness set, in percent.
+    pub fn brightness(&self) -> Option<u8> {
+        self.fake
+            .log(&self.path)
+            .features_sent
+            .iter()
+            .rev()
+            .find(|f| f.len() >= 3 && f[0] == 0x03 && f[1] == 0x08)
+            .map(|f| f[2])
+    }
+
+    pub fn unplug(&self) {
+        self.fake.unplug(&self.path);
+    }
+
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+}
