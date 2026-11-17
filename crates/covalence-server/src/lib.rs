@@ -340,6 +340,15 @@ impl App {
                 dataflow.put(cell, None);
             }
         }
+        for b in bindings.values() {
+            if let Some(layer) = layers.get(&b.layer) {
+                dataflow.replace(
+                    &binding::helper_cell_id(&b.id, ""),
+                    b.helper_cells(&layer.slug),
+                    None,
+                );
+            }
+        }
         let surfaces = Surfaces::new(core.shared().clone(), Timing::default());
         surfaces.set_aliases(alias_map(&conns));
         for layer in layers.values() {
@@ -458,6 +467,23 @@ impl App {
         let mut scope = expr::Scope::new(&self.core.shared().state, &aliases);
         scope.trigger = trigger;
         expr::Evaluator::evaluate(self.evaluator.as_ref(), source, &scope)
+    }
+
+    /// Makes a binding's helper cells match it (surfaces §4.3).
+    pub(crate) fn sync_helpers(&self, b: &ControlBinding) {
+        let slug = read(&self.layers).get(&b.layer).map(|l| l.slug.clone());
+        if let Some(slug) = slug {
+            self.sync_helpers_on(b, &slug);
+        }
+    }
+
+    /// [`sync_helpers`](Self::sync_helpers) for a layer with this slug.
+    pub(crate) fn sync_helpers_on(&self, b: &ControlBinding, layer_slug: &str) {
+        self.dataflow.replace(
+            &binding::helper_cell_id(&b.id, ""),
+            b.helper_cells(layer_slug),
+            None,
+        );
     }
 
     /// Tells the runtime the current aliases, after a connection changes.

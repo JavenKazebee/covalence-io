@@ -59,7 +59,11 @@ Notes from Phase 2:
 
 ### Phase 4: Helpers on controls (Rust)
 - [ ] `ControlBinding.helpers` and `gestures`. Helper cells under the layer or the surface; helper events at their cell; `{layer, controls}` triggers matching helper event names.
-- [ ] `follow`, `holdoff` and `pickup`.
+  - [x] `helpers`: a map of reducers on the binding, each with `as` (default its key), `scope`, `to` and `journal`. A layer-scoped helper is a cell at `layer.<slug>.controls.<id>.<name>`, identified by `helper:<binding>/<key>`, kept in step with the binding and its layer's slug by the server. Its `on` defaults to `{from: {layer, controls: <id>}}` with the definition's event names; with no `input`, an input-stepped reducer takes the control's `turn` (detents, counted from 0) and `change` (a value) as its input.
+  - [x] Helper events are journaled at the cell with the binding's `layer` and `control`, so event triggers on `{layer, controls}` match them by name (the flow runtime now indexes `{layer}` sources under `layer` as well as `surface`). A cell never steps on its own events.
+  - [ ] `scope: "surface"` (one cell per surface) is `unsupported` for now.
+  - [ ] `gestures`: per-control gesture timing.
+- [x] `follow`, `holdoff` and `pickup`. `follow` applies when what it follows changes, through the definition's `follow` (`absolute` drops its pickup) or by taking the value; it pauses while the control is touched and for `holdoff` (default 250 ms; a number of ms or a duration) after the last input, then catches up. A helper starts where what it follows is. Changes from `follow` send nothing to sinks.
 - [ ] Echoes (surfaces §4.4): `requested.<output>`, echo marking by the host (`echo: true`) and by `echoWindow`, no events from echoes unless a trigger opts in.
 - [ ] The virtual surface gains an optional encoder (`relative` + `momentary`) and fader (`absolute` + `touch`, with a `level` output and a motor mode that echoes) for tests and the UI.
 

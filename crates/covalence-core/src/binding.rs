@@ -17,7 +17,7 @@ use serde_json::Value as Json;
 use crate::expr::Evaluator;
 use crate::flow::{Code, Problem, Report};
 use crate::source::{Part, Ref, Source};
-use crate::state::ConnId;
+use crate::state::{ConnId, StatePath};
 use crate::surface::render::{Look, Rgb};
 use crate::surface::{Layer, LayerId, OutputCapKind};
 use crate::transform::{MapTo, Transform};
@@ -36,7 +36,124 @@ pub struct ControlBinding {
     pub id: String,
     pub layer: LayerId,
     pub control: String,
+    #[serde(default)]
     pub props: BTreeMap<Prop, Binding>,
+    /// Reducers on the control's input, by key (bindings §5).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub helpers: BTreeMap<String, Helper>,
+}
+
+/// A helper (bindings §5, surfaces §4.3): a reducer whose `on` and input
+/// default to its control, and whose value is a cell under the layer.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Helper {
+    pub reducer: crate::transform::Reducer,
+    /// The cell's name; default the helper's key.
+    pub name: Option<String>,
+    pub scope: HelperScope,
+    pub to: Vec<crate::dataflow::Sink>,
+    pub journal: Option<crate::variable::Journaling>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HelperScope {
+    /// `layer.<slug>.controls.<id>.<name>`, shared by every surface.
+    #[default]
+    Layer,
+    /// `surface.<slug>.controls.<id>.helpers.<name>`, one per surface.
+    Surface,
+}
+
+impl<'de> Deserialize<'de> for Helper {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        let Json::Object(mut map) = Json::deserialize(deserializer)? else {
+            return Err(D::Error::custom("a helper is {use: \"toggle\", …}"));
+        };
+        let take = |map: &mut serde_json::Map<String, Json>, k: &str| map.remove(k);
+        let name = match take(&mut map, "as") {
+            None => None,
+            Some(Json::String(s)) => Some(s),
+            Some(_) => return Err(D::Error::custom("as: a helper's name is text")),
+        };
+        let scope = take(&mut map, "scope")
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|e| D::Error::custom(format!("scope: {e}")))?
+            .unwrap_or_default();
+        let to = match take(&mut map, "to") {
+            None => Vec::new(),
+            Some(Json::Array(items)) => serde_json::from_value(Json::Array(items))
+                .map_err(|e| D::Error::custom(format!("to: {e}")))?,
+            Some(one) => vec![
+                serde_json::from_value(one).map_err(|e| D::Error::custom(format!("to: {e}")))?,
+            ],
+        };
+        let journal = take(&mut map, "journal")
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|e| D::Error::custom(format!("journal: {e}")))?;
+        if !map.contains_key("use") {
+            return Err(D::Error::custom(
+                "a helper names its reducer: {use: \"toggle\", …}",
+            ));
+        }
+        let reducer =
+            match Source::<Json>::from_json(Json::Object(map)).map_err(D::Error::custom)? {
+                Source::Use { transform, .. } => match *transform {
+                    crate::transform::Transform::Reducer(r) => *r,
+                    other => {
+                        return Err(D::Error::custom(format!(
+                            "a helper is a reducer, and {} isn't one",
+                            other.id()
+                        )));
+                    }
+                },
+                _ => unreachable!("an object with `use` is a transform"),
+            };
+        Ok(Helper {
+            reducer,
+            name,
+            scope,
+            to,
+            journal,
+        })
+    }
+}
+
+impl Serialize for Helper {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::Error;
+        let mut map = self.reducer.to_map().map_err(S::Error::custom)?;
+        if let Some(n) = &self.name {
+            map.insert("as".into(), Json::String(n.clone()));
+        }
+        if self.scope != HelperScope::Layer {
+            map.insert(
+                "scope".into(),
+                serde_json::to_value(self.scope).map_err(S::Error::custom)?,
+            );
+        }
+        if !self.to.is_empty() {
+            map.insert(
+                "to".into(),
+                serde_json::to_value(&self.to).map_err(S::Error::custom)?,
+            );
+        }
+        if let Some(j) = &self.journal {
+            map.insert(
+                "journal".into(),
+                serde_json::to_value(j).map_err(S::Error::custom)?,
+            );
+        }
+        Json::Object(map).serialize(serializer)
+    }
+}
+
+/// A helper's cell identity: its binding and its key (dataflow §5.4).
+pub fn helper_cell_id(binding: &str, key: &str) -> String {
+    format!("helper:{binding}/{key}")
 }
 
 /// A property of a control. M5 has the three a key image needs. In the
@@ -128,6 +245,73 @@ fn at(base: &[PathSegment], more: &[PathSegment]) -> Path {
 }
 
 impl ControlBinding {
+    /// Its helpers' cells, for a layer with this slug (surfaces §4.3).
+    /// Surface-scoped helpers aren't cells yet.
+    pub fn helper_cells(&self, layer_slug: &str) -> Vec<crate::dataflow::CellDef> {
+        use crate::dataflow::{CellDef, ControlContext, JournalMode};
+        use crate::flow::EventSource;
+        use crate::select::Selector;
+        use crate::transform::reducer::On;
+        self.helpers
+            .iter()
+            .filter(|(_, h)| h.scope == HelperScope::Layer)
+            .map(|(k, h)| {
+                let name = h.name.clone().unwrap_or_else(|| k.clone());
+                let home = StatePath::new(
+                    "layer",
+                    vec![
+                        key(layer_slug),
+                        key("controls"),
+                        key(&self.control),
+                        key(&name),
+                    ],
+                );
+                let mut reducer = h.reducer.clone();
+                // `on` defaults to the control's events on this layer.
+                let from = EventSource::Layer {
+                    layer: self.layer.clone(),
+                    controls: Some(Selector::One(self.control.clone())),
+                };
+                match &mut reducer.on {
+                    Some(on) if on.from.is_none() => on.from = Some(from),
+                    Some(_) => {}
+                    None => {
+                        reducer.on = Some(On {
+                            from: Some(from),
+                            event: None,
+                            filter: None,
+                        })
+                    }
+                }
+                let input = reducer.input.is_none() && reducer.definition().steps.input.is_some();
+                CellDef {
+                    journal: match &h.journal {
+                        Some(crate::variable::Journaling::Sampled { sampled }) => {
+                            JournalMode::Sampled(sampled.get())
+                        }
+                        _ => JournalMode::Full,
+                    },
+                    to: h.to.clone(),
+                    control: Some(ControlContext {
+                        layer: self.layer.clone(),
+                        control: self.control.clone(),
+                        input,
+                    }),
+                    ..CellDef::new(
+                        helper_cell_id(&self.id, k),
+                        home,
+                        Source::Use {
+                            transform: Box::new(crate::transform::Transform::Reducer(Box::new(
+                                reducer,
+                            ))),
+                            fallback: None,
+                        },
+                    )
+                }
+            })
+            .collect()
+    }
+
     /// The outputs its properties drive, which its layer must give the
     /// control (`noOutput`).
     pub fn outputs(&self) -> BTreeSet<OutputCapKind> {
@@ -275,6 +459,9 @@ pub fn validate(binding: &ControlBinding, ctx: &Context) -> Report {
     for (prop, b) in &binding.props {
         v.binding(*prop, b, &[key("props"), key(prop.as_str())]);
     }
+    for (name, helper) in &binding.helpers {
+        v.helper(helper, &[key("helpers"), key(name)]);
+    }
     Report {
         errors: v.errors,
         warnings: Vec::new(),
@@ -292,6 +479,65 @@ impl Validation<'_> {
     }
 
     fn binding(&mut self, prop: Prop, b: &Binding, base: &[PathSegment]) {
+        self.sources(b, base, false);
+        self.result(prop, b, base);
+    }
+
+    /// A helper (bindings §5): its reducer's sources and its sinks.
+    fn helper(&mut self, helper: &Helper, base: &[PathSegment]) {
+        if helper.scope == HelperScope::Surface {
+            self.error(
+                at(base, &[key("scope")]),
+                Code::Unsupported,
+                "helpers with `scope: surface` aren't supported yet".into(),
+            );
+        }
+        let source = Source::Use {
+            transform: Box::new(crate::transform::Transform::Reducer(Box::new(
+                helper.reducer.clone(),
+            ))),
+            fallback: None,
+        };
+        self.sources(&source, base, true);
+        for (i, sink) in helper.to.iter().enumerate() {
+            let here = at(base, &[key("to"), index(i)]);
+            match sink {
+                crate::dataflow::Sink::Set { set } => {
+                    let ok = matches!(set, Ref::Root { root: crate::source::Root::Vars, path }
+                        if matches!(path.as_slice(), [PathSegment::Key(_)]));
+                    if !ok {
+                        self.error(
+                            at(&here, &[key("set")]),
+                            Code::BadPath,
+                            "a `set` sink writes vars.<name>".into(),
+                        );
+                    }
+                }
+                crate::dataflow::Sink::Action { action } => {
+                    if let Some(t) = action.target.literal()
+                        && !self.ctx.conns.contains(&t.conn)
+                    {
+                        self.error(
+                            at(&here, &[key("action"), key("target")]),
+                            Code::UnknownConnection,
+                            format!("no connection {:?}", t.conn),
+                        );
+                    }
+                    for (name, s) in &action.params {
+                        self.sources(
+                            s,
+                            &at(&here, &[key("action"), key("params"), key(name)]),
+                            false,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Checks the expressions, refs and transforms in a source. A reducer
+    /// may only be the whole source, and only where `home` says it has one.
+    fn sources(&mut self, b: &Binding, base: &[PathSegment], home: bool) {
         let mut found = Vec::new();
         let (conns, evaluator) = (self.ctx.conns, self.ctx.evaluator);
         b.walk(&mut base.to_vec(), &mut |path, part| match part {
@@ -312,7 +558,7 @@ impl Validation<'_> {
                 }
             }
             Part::Transform(t) => {
-                if t.is_reducer() {
+                if t.is_reducer() && !(home && path.as_slice() == base) {
                     found.push(Problem::new(
                         at(path, &[key("use")]),
                         Code::Unsupported,
@@ -329,7 +575,6 @@ impl Validation<'_> {
             }
         });
         self.errors.extend(found);
-        self.result(prop, b, base);
     }
 
     /// Checks that what a source can give fits the property: its literals,

@@ -103,6 +103,7 @@ fn cell(id: &str, home: StatePath, source: Json) -> CellDef {
         source: Source::from_json(source).unwrap(),
         journal: JournalMode::Full,
         to: Vec::new(),
+        control: None,
     }
 }
 
@@ -761,4 +762,118 @@ fn a_sink_stays_quiet_for_its_own_echo_and_for_edits() {
     assert_eq!(value(&shared, &var("fader")), Some(json!(60)));
     std::thread::sleep(Duration::from_millis(100));
     assert_eq!(sent.sent().len(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// Helpers on controls (surfaces §4.3): M8 Phase 4
+
+const LAYER: &str = "01JC5PAGE00000000000000001";
+
+/// A control's input event, as a surface journals it.
+fn control_event(shared: &Shared, control: &str, name: &str, payload: Option<Json>) -> Seq {
+    shared
+        .journal
+        .append(NewEntry::new(
+            Origin::Surface {
+                surface: "deck".into(),
+                orbital: None,
+            },
+            Record::Event(EventRecord {
+                surface: Some("01JC5URFACE000000000000001".into()),
+                layer: Some(LAYER.into()),
+                control: Some(control.into()),
+                ..EventRecord::at(
+                    path("surface", &["deck", "controls", control]),
+                    name,
+                    payload.as_ref().map(covalence_core::expr::json_to_value),
+                )
+            }),
+        ))
+        .unwrap()
+        .seq
+}
+
+fn helper_cells(json: Json) -> Vec<CellDef> {
+    let b = covalence_core::binding::ControlBinding::parse(&json).unwrap();
+    b.helper_cells("cams")
+}
+
+#[tokio::test]
+async fn an_encoder_follows_the_volume_and_sends_only_its_own_turns() {
+    let shared = shared();
+    let (time, clock) = Time::new();
+    let df = Dataflow::with_clock(&shared, clock);
+    aliases(&df);
+    let sent = Recorder::start(&shared, &df);
+    let volume = path("c1", &["volume"]);
+    set(&shared, &volume, Value::from(50));
+    let cells = helper_cells(json!({
+        "id": "b1", "layer": LAYER, "control": "e1",
+        "helpers": { "vol": {
+            "use": "position", "max": 100,
+            "follow": { "ref": { "conn": "c1", "path": ["volume"] } },
+            "to": { "action": { "target": "c1", "action": "setVolume", "param": "level" } }
+        } }
+    }));
+    df.replace("helper:b1/", cells, None);
+    let vol = path("layer", &["cams", "controls", "e1", "vol"]);
+    // It starts where the volume is, and sends nothing for that.
+    assert_eq!(value(&shared, &vol), Some(json!(50)));
+
+    // Turning sends.
+    control_event(&shared, "e1", "turn", Some(json!({ "delta": 3 })));
+    df.flush().await;
+    assert_eq!(value(&shared, &vol), Some(json!(53)));
+    let requests = sent.wait_for(1);
+    assert_eq!(requests[0].2, json!({ "level": 53 }));
+
+    // The volume moving from elsewhere during the hold-off doesn't move it...
+    time.advance(100);
+    set(&shared, &volume, Value::from(70));
+    assert_eq!(value(&shared, &vol), Some(json!(53)));
+    // ...until the hold-off is over; then it follows and sends nothing back.
+    time.advance(200);
+    df.tick();
+    assert_eq!(value(&shared, &vol), Some(json!(70)));
+
+    // Touched, it doesn't follow at all.
+    control_event(&shared, "e1", "touch", None);
+    df.flush().await;
+    time.advance(1_000);
+    set(&shared, &volume, Value::from(20));
+    df.tick();
+    assert_eq!(value(&shared, &vol), Some(json!(70)));
+    control_event(&shared, "e1", "untouch", None);
+    df.flush().await;
+    time.advance(300);
+    df.tick();
+    assert_eq!(value(&shared, &vol), Some(json!(20)));
+
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(sent.sent().len(), 1, "{:?}", sent.sent());
+}
+
+#[tokio::test]
+async fn a_select_helper_pages_through_a_list() {
+    let shared = shared();
+    let df = Dataflow::start(&shared);
+    let cells = helper_cells(json!({
+        "id": "b2", "layer": LAYER, "control": "e2",
+        "helpers": { "page": { "use": "select", "items": ["cams", "audio", "lights"],
+                               "to": { "set": { "root": "vars", "path": ["page"] } } } }
+    }));
+    df.replace("helper:b2/", cells, None);
+    let page = path("layer", &["cams", "controls", "e2", "page"]);
+    assert_eq!(value(&shared, &page), Some(json!("cams")));
+    control_event(&shared, "e2", "turn", Some(json!({ "delta": 1 })));
+    control_event(&shared, "e2", "turn", Some(json!({ "delta": 1 })));
+    df.flush().await;
+    assert_eq!(value(&shared, &page), Some(json!("lights")));
+    assert_eq!(value(&shared, &var("page")), Some(json!("lights")));
+    control_event(&shared, "e2", "turn", Some(json!({ "delta": -5 })));
+    df.flush().await;
+    assert_eq!(value(&shared, &page), Some(json!("cams")));
+    // Removing the binding's helpers removes their values.
+    df.replace("helper:b2/", Vec::new(), None);
+    assert_eq!(value(&shared, &page), None);
 }

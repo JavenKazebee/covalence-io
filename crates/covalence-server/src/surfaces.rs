@@ -390,6 +390,15 @@ impl EntityKind for Layer {
 
     fn apply(&self, app: &App) -> Result<(), SaveError> {
         app.surfaces.set_layer(self.clone())?;
+        // Helpers live under the layer's slug, which may have changed.
+        let bindings: Vec<ControlBinding> = read(&app.bindings)
+            .values()
+            .filter(|b| b.layer == self.id)
+            .cloned()
+            .collect();
+        for b in bindings {
+            app.sync_helpers_on(&b, &self.slug);
+        }
         Ok(())
     }
 
@@ -461,11 +470,14 @@ impl EntityKind for ControlBinding {
 
     fn apply(&self, app: &App) -> Result<(), SaveError> {
         app.surfaces.set_binding(self.clone());
+        app.sync_helpers(self);
         Ok(())
     }
 
     fn unapply(id: &str, app: &App) -> Result<(), SaveError> {
         app.surfaces.remove_binding(id);
+        app.dataflow
+            .replace(&binding::helper_cell_id(id, ""), Vec::new(), None);
         Ok(())
     }
 

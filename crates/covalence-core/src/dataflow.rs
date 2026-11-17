@@ -83,6 +83,20 @@ pub struct CellDef {
     pub journal: JournalMode,
     /// Sinks (dataflow §7).
     pub to: Vec<Sink>,
+    /// A helper's control (surfaces §4.3): its events carry it, and it
+    /// pauses `follow` while the control is touched.
+    pub control: Option<ControlContext>,
+}
+
+/// The control a helper belongs to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ControlContext {
+    /// The layer's ID.
+    pub layer: String,
+    pub control: String,
+    /// The reducer has no `input` of its own: the control's `turn` and
+    /// `change` events move it (bindings §5).
+    pub input: bool,
 }
 
 impl CellDef {
@@ -94,9 +108,14 @@ impl CellDef {
             source,
             journal: JournalMode::Full,
             to: Vec::new(),
+            control: None,
         }
     }
 }
+
+/// `follow`'s pause after the last input, when `holdoff` doesn't say
+/// (dataflow §4.2).
+pub const DEFAULT_HOLDOFF: u64 = 250;
 
 /// Where a cell's value goes (dataflow §7).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -251,6 +270,30 @@ impl Dataflow {
     /// Removes a cell and its value.
     pub fn remove(&self, id: &str, cause: Option<Seq>) {
         self.graph.lock().remove(id, cause);
+        self.settle();
+    }
+
+    /// Makes the cells whose IDs start with `prefix` exactly `cells`: a
+    /// control binding's helpers, all at once.
+    pub fn replace(&self, prefix: &str, cells: Vec<CellDef>, cause: Option<Seq>) {
+        let mut inner = self.graph.lock();
+        let keep: BTreeSet<CellId> = cells.iter().map(|c| c.id.clone()).collect();
+        let gone: Vec<CellId> = inner
+            .cells
+            .keys()
+            .filter(|id| id.starts_with(prefix) && !keep.contains(*id))
+            .cloned()
+            .collect();
+        for id in gone {
+            inner.remove(&id, cause);
+        }
+        for cell in cells {
+            let same = inner.cells.get(&cell.id).is_some_and(|c| c.def == cell);
+            if !same {
+                inner.put(cell, cause);
+            }
+        }
+        drop(inner);
         self.settle();
     }
 
@@ -609,6 +652,14 @@ struct Run {
     /// The input at the last step.
     input: Option<Json>,
     wake_at: Option<u64>,
+    /// What `follow` gave when it was last applied (dataflow §4.3).
+    followed: Option<Json>,
+    /// Whether its control is touched, which pauses `follow`.
+    touched: bool,
+    /// When input last stepped it, for `holdoff`.
+    last_input: Option<u64>,
+    /// When a paused `follow` is due to be looked at again.
+    follow_at: Option<u64>,
 }
 
 impl Inner {
@@ -680,10 +731,10 @@ impl Inner {
                     }
                     _ => None,
                 };
-                c.run
-                    .as_ref()
-                    .and_then(|r| r.wake_at)
+                let run = c.run.as_ref();
+                run.and_then(|r| r.wake_at)
                     .into_iter()
+                    .chain(run.and_then(|r| r.follow_at))
                     .chain(sample)
             })
             .min()
@@ -770,11 +821,10 @@ impl Turn<'_> {
             if changed.iter().any(|p| touches(&cell.reads, p)) {
                 due.insert(id.clone());
             }
-            let woken = cell
-                .run
-                .as_ref()
-                .and_then(|r| r.wake_at)
-                .is_some_and(|at| at <= self.now);
+            let woken = cell.run.as_ref().is_some_and(|r| {
+                r.wake_at.is_some_and(|at| at <= self.now)
+                    || r.follow_at.is_some_and(|at| at <= self.now)
+            });
             let sample = match (cell.def.journal, cell.unsampled, cell.sampled_at) {
                 (JournalMode::Sampled(every), true, Some(at)) => {
                     at + every.as_millis() as u64 <= self.now
@@ -917,10 +967,25 @@ impl Turn<'_> {
             };
             let Some(on) = &r.on else { continue };
             let Some(from) = &on.from else { continue };
-            let named = match &on.event {
-                Some(names) => names.contains(&event.event),
-                None => r.definition().steps_on(&event.event),
-            };
+            // A cell never steps on its own events.
+            if event.path == cell.def.home {
+                continue;
+            }
+            // Control input is at the surface; a helper's events aren't.
+            let at_surface = event.path.conn == crate::surface::STATE_ROOT;
+            let control_input = at_surface && cell.def.control.as_ref().is_some_and(|c| c.input);
+            let touch = at_surface
+                && cell.def.control.is_some()
+                && r.follow.is_some()
+                && matches!(event.event.as_str(), "touch" | "untouch");
+            let named = touch
+                || match &on.event {
+                    Some(names) => names.contains(&event.event),
+                    None => {
+                        r.definition().steps_on(&event.event)
+                            || (control_input && matches!(event.event.as_str(), "turn" | "change"))
+                    }
+                };
             if !named {
                 continue;
             }
@@ -1059,6 +1124,16 @@ impl Turn<'_> {
                 Err(e) => fail(e),
             }
         }
+        let holdoff = match &r.holdoff {
+            Some(s) => match eval.nested(s) {
+                Ok(v) => millis(v.as_ref()).unwrap_or(DEFAULT_HOLDOFF),
+                Err(e) => {
+                    fail(e);
+                    DEFAULT_HOLDOFF
+                }
+            },
+            None => DEFAULT_HOLDOFF,
+        };
         let reads = eval.reads;
         let options = d.with_defaults(&options);
         let current = self.state.read(|tree| {
@@ -1084,6 +1159,7 @@ impl Turn<'_> {
                 // a restored variable, or the same cell before an edit.
                 Some(run) => Run {
                     input: input.clone(),
+                    followed: followed.clone(),
                     ..run
                 },
                 None => {
@@ -1099,13 +1175,33 @@ impl Turn<'_> {
                             return None;
                         }
                     };
-                    let run = Run {
+                    let mut run = Run {
                         name: d.name(),
                         state,
                         value: value.clone(),
                         input: input.clone(),
                         wake_at: None,
+                        followed: None,
+                        touched: false,
+                        last_input: None,
+                        follow_at: None,
                     };
+                    // It starts where what it follows is.
+                    if r.follow.is_some() && followed.is_some() {
+                        let ctx = StepCtx {
+                            followed: followed.clone(),
+                            value: value.clone(),
+                            options: options.clone(),
+                            now: self.now,
+                            ..StepCtx::default()
+                        };
+                        if let Ok(s) = follow(&self.inner.sandbox, d, run.state.as_ref(), &ctx) {
+                            run.state = s.state;
+                            run.value = s.value;
+                        }
+                        run.followed = followed.clone();
+                    }
+                    let value = run.value.clone();
                     let meta = meta_of(&run, value.as_ref());
                     let cell = self.inner.cells.get_mut(id)?;
                     cell.run = Some(run);
@@ -1131,33 +1227,83 @@ impl Turn<'_> {
             }
         }
 
-        // Step: each event, then the input's change, or a wake.
+        // Steps: each event in order (a helper's control input moves its
+        // input), then its own input's change, or a wake. Then `follow`.
+        let control_input = def.control.as_ref().is_some_and(|c| c.input);
         let mut value = run.value.clone();
         let mut emitted: Vec<(Option<Seq>, crate::transform::definition::Emitted)> = Vec::new();
         let mut cause: Option<Seq> = None;
         let mut stepped_any = false;
-        let mut steps: Vec<(Option<Seq>, Option<StepEvent>)> =
-            events.into_iter().map(|(s, e)| (s, Some(e))).collect();
-        let input_changed = input != run.input;
+        let mut steps: Vec<(Option<Seq>, Option<StepEvent>, Option<Json>)> = Vec::new();
+        for (seq, e) in events {
+            match e.name.as_str() {
+                "touch" | "untouch" if def.control.is_some() && r.follow.is_some() => {
+                    run.touched = e.name == "touch";
+                    if !run.touched {
+                        run.last_input = Some(self.now);
+                        run.follow_at = Some(self.now + holdoff);
+                    }
+                    let named = r.on.as_ref().and_then(|on| on.event.as_ref());
+                    if !named.is_some_and(|n| n.contains(&e.name)) && !d.steps_on(&e.name) {
+                        continue;
+                    }
+                    steps.push((seq, Some(e), None));
+                }
+                "turn" | "change" if control_input && !d.steps_on(&e.name) => {
+                    let payload = e.payload.as_ref();
+                    let moved = if e.name == "turn" {
+                        let delta = payload.and_then(|p| p.get("delta")).and_then(Json::as_f64);
+                        let base = steps
+                            .iter()
+                            .rev()
+                            .find_map(|(_, _, i)| i.clone())
+                            .or_else(|| run.input.clone())
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(0.0);
+                        delta.map(|d| crate::transform::reducer::num(base + d))
+                    } else {
+                        payload.and_then(|p| p.get("value")).cloned()
+                    };
+                    if let Some(moved) = moved {
+                        steps.push((seq, None, Some(moved)));
+                    }
+                }
+                _ => steps.push((seq, Some(e), None)),
+            }
+        }
+        if r.input.is_some() && input != run.input {
+            steps.push((None, None, input.clone()));
+        }
         let woken = run.wake_at.is_some_and(|at| at <= self.now);
-        if input_changed || (steps.is_empty() && woken) {
-            steps.push((None, None));
+        if steps.is_empty() && woken {
+            steps.push((None, None, None));
         }
-        let mut sample_flush = false;
-        if steps.is_empty() {
-            // Due for its sample's last entry, or for an option's change,
-            // which applies from its next step.
-            sample_flush = true;
-        }
-        let previous = run.input.clone();
-        for (i, (seq, event)) in steps.into_iter().enumerate() {
+        // Due for its sample's last entry, a paused `follow`, or an
+        // option's change, which applies from its next step.
+        let sample_flush = steps.is_empty();
+        // A control's detents count from where they were when it started:
+        // its first turn moves it.
+        let mut current_input = match &run.input {
+            None if control_input => Some(Json::from(0)),
+            other => other.clone(),
+        };
+        for (seq, event, moved) in steps {
+            let previous = current_input.clone();
+            let is_input = moved.is_some();
+            if let Some(m) = moved {
+                current_input = Some(m);
+            }
+            let wake = event.is_none() && !is_input;
+            if !wake {
+                run.last_input = Some(self.now);
+            }
             let ctx = StepCtx {
                 event,
-                input: input.clone(),
-                previous: if i == 0 {
-                    previous.clone()
+                input: current_input.clone(),
+                previous: if is_input {
+                    previous
                 } else {
-                    input.clone()
+                    current_input.clone()
                 },
                 value: value.clone(),
                 followed: followed.clone(),
@@ -1181,7 +1327,7 @@ impl Turn<'_> {
                     cause = cause.max(seq);
                 }
                 Ok(None) => {
-                    if ctx.event.is_none() && !input_changed {
+                    if wake {
                         // A wake that changed nothing ends.
                         run.wake_at = None;
                     }
@@ -1194,14 +1340,53 @@ impl Turn<'_> {
                 }
             }
         }
-        run.input = input;
+        run.input = current_input;
+
+        // `follow` (dataflow §4.3): paused while the control is touched and
+        // for `holdoff` after the last input, then caught up.
+        let mut followed_now = false;
+        if r.follow.is_some() {
+            let resume_at = run.last_input.map(|t| t + holdoff);
+            let paused = run.touched || resume_at.is_some_and(|at| self.now < at);
+            if paused {
+                run.follow_at = if run.touched { None } else { resume_at };
+            } else {
+                run.follow_at = None;
+                if followed != run.followed {
+                    let ctx = StepCtx {
+                        followed: followed.clone(),
+                        value: value.clone(),
+                        options: options.clone(),
+                        now: self.now,
+                        ..StepCtx::default()
+                    };
+                    match follow(&self.inner.sandbox, d, run.state.as_ref(), &ctx) {
+                        Ok(s) => {
+                            run.state = s.state;
+                            value = s.value;
+                            run.followed = followed.clone();
+                            followed_now = true;
+                        }
+                        Err(e) => tracing::warn!(cell = %id, "follow failed: {e}"),
+                    }
+                }
+            }
+        }
         run.value = value.clone();
         let meta = meta_of(&run, value.as_ref());
         let cell = self.inner.cells.get_mut(id)?;
         cell.run = Some(run);
-        if !stepped_any && !sample_flush && current.1.as_ref() == Some(&meta) && current.0 == value
+        if !stepped_any
+            && !followed_now
+            && !sample_flush
+            && current.1.as_ref() == Some(&meta)
+            && current.0 == value
         {
             return None;
+        }
+        // Following the device sends nothing back to it.
+        if followed_now && !stepped_any {
+            self.quiet = true;
         }
         let (read_cause, _) = {
             let reads = cell.reads.clone();
@@ -1218,11 +1403,15 @@ impl Turn<'_> {
         // Events happen at the cell (dataflow §3), after its patch.
         let patch = self.journal.last_seq();
         for (seq, e) in emitted {
-            let record = EventRecord::at(
-                def.home.clone(),
-                e.name.clone(),
-                e.payload.as_ref().map(json_to_value),
-            );
+            let record = EventRecord {
+                layer: def.control.as_ref().map(|c| c.layer.clone()),
+                control: def.control.as_ref().map(|c| c.control.clone()),
+                ..EventRecord::at(
+                    def.home.clone(),
+                    e.name.clone(),
+                    e.payload.as_ref().map(json_to_value),
+                )
+            };
             let event_cause = if home.is_some() { patch } else { seq };
             let appended = self.journal.append(
                 NewEntry::new(dataflow_origin(), Record::Event(record.clone())).cause(event_cause),
@@ -1541,6 +1730,10 @@ fn resume(d: &Definition, (value, meta): &(Option<Json>, Option<ReducerMeta>)) -
         value: value.clone(),
         input: None,
         wake_at: meta.wake_at,
+        followed: None,
+        touched: false,
+        last_input: None,
+        follow_at: None,
     })
 }
 
@@ -1561,6 +1754,37 @@ pub fn fits(value: Option<&Json>, result: &Json) -> bool {
         "object" => value.is_object(),
         _ => true,
     })
+}
+
+/// What following a value does: the definition's `follow`, or the value
+/// as both state and value.
+fn follow(
+    sandbox: &Sandbox,
+    d: &Definition,
+    state: Option<&Json>,
+    ctx: &StepCtx,
+) -> Result<Stepped, crate::expr::ExprError> {
+    let custom = match native(&d.id) {
+        Some(n) => n.follow(state, ctx),
+        None => sandbox.follow(d, state, ctx)?,
+    };
+    Ok(custom.unwrap_or_else(|| Stepped {
+        state: ctx.followed.clone(),
+        value: ctx.followed.clone(),
+        ..Stepped::default()
+    }))
+}
+
+/// A duration as milliseconds: a number, or text like `250ms`.
+fn millis(v: Option<&Json>) -> Option<u64> {
+    match v? {
+        Json::Number(n) => n.as_f64().map(|x| x.max(0.0) as u64),
+        Json::String(s) => s
+            .parse::<crate::flow::Duration>()
+            .ok()
+            .map(|d| d.get().as_millis() as u64),
+        _ => None,
+    }
 }
 
 fn step(

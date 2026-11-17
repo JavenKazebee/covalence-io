@@ -585,3 +585,113 @@ async fn key_down_to_first_action(what: &str, from: serde_json::Value, others: u
     );
     runtime.shutdown().await;
 }
+
+/// M8's first "done when": a latching key. A `toggle` helper on `k3`, its
+/// background a `rules` source on the helper's value, and a flow that runs
+/// on the helper's `on` event.
+#[tokio::test]
+async fn a_toggle_helper_latches_a_key_and_its_events_start_flows() {
+    use covalence_core::dataflow::Dataflow;
+    let w = world();
+    let dataflow = Dataflow::start(&w.shared);
+    let (requested, mut requests) = tokio::sync::mpsc::unbounded_channel();
+    let runtime = Runtime::start(
+        w.shared.clone(),
+        Arc::new(Timed(requested)),
+        Arc::new(QuickJs::default()),
+    );
+    let helper = json!({ "root": "layer", "path": ["cams", "controls", "k3", "latched"] });
+    let b = ControlBinding::parse(&json!({
+        "id": "b3", "layer": CAMS, "control": "k3",
+        "helpers": { "latched": { "use": "toggle" } },
+        "props": { "background": {
+            "use": "rules",
+            "rules": [{ "when": { "ref": helper }, "value": "#e02020" }],
+            "else": "#000000",
+        } },
+    }))
+    .unwrap();
+    w.surfaces.set_binding(b.clone());
+    dataflow.replace("helper:b3/", b.helper_cells("cams"), None);
+    let flow: Flow = serde_json::from_value(json!({
+        "id": "01JC5FLOWLATCH000000000001",
+        "name": "On air", "slug": "onAir", "enabled": true,
+        "triggers": [{ "kind": "event", "from": { "layer": CAMS, "controls": "k3" }, "event": "on" }],
+        "concurrency": "parallel",
+        "body": [{
+            "id": "route", "kind": "action", "target": { "conn": VH },
+            "action": "route", "params": { "output": 1, "input": 2 },
+        }],
+    }))
+    .unwrap();
+    runtime.set_flow(flow);
+
+    let mut link = w.surfaces.attach(DECK, deck()).unwrap();
+    w.surfaces.flush().await;
+    let first = draws(&mut link);
+    assert_eq!(first["k3"], image(Look::default()));
+
+    let press = |kind, ts| Input {
+        control: "k3".into(),
+        kind,
+        value: None,
+        ts,
+    };
+    let latched = path("layer", &["cams", "controls", "k3", "latched"]);
+    for (n, (on, red)) in [(true, true), (false, false)].into_iter().enumerate() {
+        let ts = 1_000.0 * (n as f64 + 1.0);
+        link.input.send(press(InputKind::Down, ts)).await.unwrap();
+        link.input
+            .send(press(InputKind::Up, ts + 50.0))
+            .await
+            .unwrap();
+        // Input reaches the surface's own task; wait for it to land.
+        for _ in 0..400 {
+            w.surfaces.flush().await;
+            dataflow.flush().await;
+            if w.shared.state.value(&latched) == Some(Value::from(on)) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        assert_eq!(w.shared.state.value(&latched), Some(Value::from(on)));
+        w.surfaces.flush().await;
+        let look = Look {
+            background: if red {
+                Rgb(0xe0, 0x20, 0x20)
+            } else {
+                Rgb(0, 0, 0)
+            },
+            ..Look::default()
+        };
+        assert_eq!(draws(&mut link)["k3"], image(look));
+    }
+    // The flow ran once: on `on`, not on `off`.
+    tokio::time::timeout(std::time::Duration::from_secs(2), requests.recv())
+        .await
+        .expect("the flow ran on `on`")
+        .unwrap();
+    assert!(requests.try_recv().is_err());
+    // The helper's events are at its cell, with its layer and control.
+    let events: Vec<_> = w
+        .shared
+        .journal
+        .range(1, usize::MAX)
+        .unwrap()
+        .into_iter()
+        .filter_map(|e| match &e.record {
+            covalence_core::journal::Record::Event(ev) if ev.path == latched => {
+                Some((ev.event.clone(), ev.layer.clone(), ev.control.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        events,
+        [
+            ("on".into(), Some(CAMS.into()), Some("k3".into())),
+            ("off".into(), Some(CAMS.into()), Some("k3".into()))
+        ]
+    );
+    runtime.shutdown().await;
+}

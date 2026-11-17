@@ -130,3 +130,33 @@ fn native_steps_are_much_cheaper_than_sandboxed_ones() {
     assert!(natively < sandboxed);
     assert!(sandboxed < Duration::from_millis(50), "{sandboxed:?}");
 }
+
+#[test]
+fn helpers_on_a_binding_round_trip_and_must_be_reducers() {
+    use covalence_core::binding::ControlBinding;
+    let json = json!({
+        "id": "b1", "layer": "L", "control": "k3", "props": {},
+        "helpers": {
+            "latched": { "use": "toggle", "as": "on" },
+            "vol": { "use": "position", "max": 100, "holdoff": "300ms",
+                     "follow": { "ref": { "conn": "c1", "path": ["volume"] } },
+                     "to": [{ "action": { "target": "c1", "action": "setVolume", "param": "level" } }],
+                     "journal": { "sampled": "100ms" } }
+        }
+    });
+    let b = ControlBinding::parse(&json).unwrap();
+    assert_eq!(serde_json::to_value(&b).unwrap(), json);
+    let cells = b.helper_cells("cams");
+    let homes: Vec<String> = cells.iter().map(|c| format!("{:?}", c.home.path)).collect();
+    assert_eq!(cells.len(), 2);
+    assert!(homes[0].contains("\"on\""), "{homes:?}");
+    assert!(cells[1].control.as_ref().unwrap().input);
+
+    for bad in [
+        json!({ "id": "b", "layer": "L", "control": "k", "helpers": { "x": { "use": "not", "input": true } } }),
+        json!({ "id": "b", "layer": "L", "control": "k", "helpers": { "x": { "as": "y" } } }),
+        json!({ "id": "b", "layer": "L", "control": "k", "helpers": { "x": { "use": "toggle", "scope": "room" } } }),
+    ] {
+        assert!(ControlBinding::parse(&bad).is_err(), "{bad} parsed");
+    }
+}

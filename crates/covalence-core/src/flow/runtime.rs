@@ -556,9 +556,13 @@ fn source_roots(from: &EventSource) -> Option<Vec<String>> {
     match from {
         EventSource::Path { path } => paths(path),
         EventSource::Target { .. } => None,
-        EventSource::Layer { .. } | EventSource::Surface { .. } => {
-            Some(vec![crate::surface::STATE_ROOT.to_owned()])
-        }
+        // Control input is at the surface; a helper's events are at its
+        // cell under the layer (surfaces §4.3).
+        EventSource::Layer { .. } => Some(vec![
+            crate::surface::STATE_ROOT.to_owned(),
+            "layer".to_owned(),
+        ]),
+        EventSource::Surface { .. } => Some(vec![crate::surface::STATE_ROOT.to_owned()]),
     }
 }
 
