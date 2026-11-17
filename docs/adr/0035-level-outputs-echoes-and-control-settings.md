@@ -2,7 +2,7 @@
 
 - **Status:** Proposed
 - **Date:** 2026-11-17
-- **Revised in place while Proposed:** echoes are decided by touch, not by a timing window (2026-11-17)
+- **Revised in place while Proposed:** echoes are marked by the device's plugin, not recognised by the core (2026-11-17)
 - **Answers:** the rest of [M8 Phase 4](../milestones/m8-dataflow.md): echoes, the virtual encoder and fader, `gestures`, and helpers with `scope: "surface"`
 - **Specs:** [surfaces §2, §4.2–§4.4, §8](../specs/surfaces.md), [bindings §1, §5](../specs/bindings.md), [plugin protocol §8](../specs/plugin-protocol.md), [dataflow §3.1, §5](../specs/dataflow.md)
 - **Milestone:** [M8: Dataflow](../milestones/m8-dataflow.md), Phase 4
@@ -22,11 +22,11 @@
 - **`surface.level {surface, control, value}`** (core → host) is implemented as plugin protocol §8 sketches it: in the TypeSpec and its generated types, the SDK (`onLevel`), the plugin host and the web surface. `led` and `text` stay Later and will take the same path.
 - **What was sent is state.** Each level sent is written to `surface.<slug>.controls.<id>.requested.level`, with `cause` → the latest change among what the binding read. `why` on a fader's movement reaches the volume change that moved it.
 
-### Echoes: touch decides
-- **A motor fader's movement counts as a person's only while it's touched.** A `value` input on a control with a motorised `level` output and a `touch` input, arriving while `touched` is false, is an **echo**: the motor moving it.
-- **The host may also mark an input `echo: true`.** That's for hardware whose plugin knows when its motor moved it, such as a motor fader with no touch sensor. Any timing heuristic that needs belongs in that plugin, not in the core.
-- **An echo updates input state** (`value`), with `cause` → the `requested.level` patch, so bindings and `why` see where the fader is. **It gives no `change` event,** so helpers don't step and nothing is sent back.
-- **This is what DAW controllers and lighting desks do** (Mackie Control and HUI, motor-fader consoles): the touch sensor exists for it. The other loops are already handled: a sink doesn't send back a change caused by its own action (dataflow §7), `follow` pauses while touched and for `holdoff`, `pickup` covers faders without a motor, and endless encoders send deltas, which can't echo.
+### Echoes: the device's plugin marks them
+- **The loop only exists with a separate motorised controller** (an X-Touch relaying to a mixer through Covalence): told to move, its fader reports the motor's movement as if a hand moved it, and that would be sent on to the mixer. The on-screen fader and a mixer's own faders can't loop.
+- **The plugin that drives the controller marks its motor's movement `echo: true`** on `surface.input`, as plugin protocol §8 already allows. It knows its hardware: most motor faders sense touch, so the usual rule is "moving while untouched is the motor", which is what DAW controllers and lighting desks do. A device without touch sensing can use whatever it offers, timing included, inside its plugin.
+- **The core's only rule:** a marked input updates input state and gives no events, so nothing reacts to a device moving itself: no `change`, no helper step, nothing sent back. No windows, tolerances or opt-ins in the core.
+- **The other loops are already handled:** a sink doesn't send back a change caused by its own action (dataflow §7), `follow` pauses while touched and for `holdoff`, `pickup` covers faders without a motor, and endless encoders send deltas, which can't echo.
 
 ### The configurable virtual surface
 - **The virtual surface entity gains `virtual`:** `{encoders?: 0–4, faders?: 0–4, motor?: boolean}`, default none, none and `true`. Without it, a virtual surface is today's 15-key deck, so existing surfaces don't change.
@@ -56,12 +56,14 @@
 - The protocol gains its first output besides images. Plugins that drive faders or rings get `onLevel` in the SDK; others ignore it.
 - Echo handling lives in the surface module, beside gesture recognition, so it applies to every surface, plugin or web.
 - A motor fader's own movement is in the journal as state patches, with no events. Nothing can trigger on it, which is the point.
+- Each motorised-controller plugin owns its echo rule. The core is implemented now (M8); the rule arrives with the first such plugin.
 - Gesture timing becomes per control, at the cost of an evaluation per press when a control's timing isn't a literal.
 - Surface-scoped helpers make cells appear as surfaces show layers, and stay. A deleted surface takes its helpers' values with it.
 
 ## Alternatives considered
 - **A second fixed `virtual.console` model** for the encoder and fader: simpler to lay out, but every new mix of controls would need another model.
-- **Echoes by timing in the core:** an input within a window (100 ms) and a tolerance of what was sent is an echo, journaled as a marked event that triggers can opt into. It works without a touch sensor, but needs two numbers that can be wrong (a hand grabbing the fader just after it moved is ignored), a new kind of event and an opt-in. Touch is exact where it exists, and plugins can mark the rest.
-- **Echoes only when the host marks them:** exact for devices that do, but leaves every touch-sensing fader to its plugin.
+- **Echoes by timing in the core:** an input within a window (100 ms) and a tolerance of what was sent is an echo, journaled as a marked event that triggers can opt into. It works without a touch sensor, but needs two numbers that can be wrong (a hand grabbing the fader just after it moved is ignored), a new kind of event and an opt-in.
+- **Touch decides, in the core:** exact for touch-sensing faders, but puts one family of hardware's rule in the core, and still needs the plugin for faders without touch.
+- **No motor feedback, with `pickup`:** no loop is possible, but the controller's faders don't show the real level.
 - **Gesture timing as literals only:** simpler, but a mode that slows double-presses for a new operator would need every binding edited.
 - **Surface-scoped helpers that reset when their layer leaves the surface:** fewer cells, but a deck's toggles would forget themselves on every page change.

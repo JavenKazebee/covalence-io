@@ -561,6 +561,7 @@ async fn key_down_to_first_action(what: &str, from: serde_json::Value, others: u
         kind,
         value: None,
         ts,
+        echo: false,
     };
     let mut times = Vec::new();
     for n in 1..=40 {
@@ -636,6 +637,7 @@ async fn a_toggle_helper_latches_a_key_and_its_events_start_flows() {
         kind,
         value: None,
         ts,
+        echo: false,
     };
     let latched = path("layer", &["cams", "controls", "k3", "latched"]);
     for (n, (on, red)) in [(true, true), (false, false)].into_iter().enumerate() {

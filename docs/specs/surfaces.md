@@ -237,14 +237,10 @@ A **helper** builds on a control's input to give derived state, events, or both.
   - what the core last sent (`requested.level`, `requested.led`, `requested.text`)
 
   Bindings and expressions can read both.
-- **Echoes.** Input is an **echo** when either:
-  - the host marks it (`echo: true`)
-  - it arrives within `echoWindow` (default 100 ms) of an output to the same control, and matches it
-
-  An echo updates input state with `cause` → the output's patch. It gives no `change`, `press` or `release` unless the trigger opts in (`echo: true` on an event trigger).
+- **Echoes.** Input is an **echo** when the host marks it `echo: true`: the device moving itself, such as a motor fader following what it was sent. Recognising its own motor's movement is the job of the plugin that drives the device, by touch or whatever the device offers ([ADR 0035](../adr/0035-level-outputs-echoes-and-control-settings.md)). An echo updates input state and gives no events.
 - The loop guard (flows §8.6) is the backstop for loops the echo rule misses.
 - **Two kinds of loop, two rules.** The echo rule is for a control reporting back what the core just sent it: a motor fader moving to a `value` binding, an encoder ring. A device's own state coming back after a sink's action (a mixer's volume, a PTZ's position while it moves) is handled by the sink and `follow` (dataflow §4.3, §7): a sink doesn't fire on a change that descends from its own action, and `follow` pauses while the control is touched and for `holdoff` after the last input.
-- **Why it's in M8.** M8 brings faders, encoders and `follow`, and M9's `range` brings position feedback from PTZ heads. Without echo handling a motor fader fights its own feedback the first time both directions are bound.
+- **Why it's in M8.** M8 brings faders, encoders and `follow`. A separate motorised controller would fight its own feedback the first time both directions are bound, unless its plugin marks the motor's movement. The core's half is in M8; each such plugin brings its own rule.
 
 ### 4.5 Injecting input (M6)
 
@@ -374,7 +370,7 @@ Flows can start from a control in two ways (flows §1.1). **A control's binding 
 **Event triggers** are the quick way in, for events. **(M6)** A control's events are events like any other ([ADR 0027](../adr/0027-events-addressed-by-path.md)), so the `control` trigger of M5 Phase 5 becomes an `event` trigger whose source names controls (dataflow §3.1):
 
 ```ts
-{ kind: "event", from: EventSource, event: string | string[], filter?: Expr, echo?: boolean }
+{ kind: "event", from: EventSource, event: string | string[], filter?: Expr }
 
 // The control forms of EventSource:
   | { layer: string; controls?: Selector<ControlId> }    // on any surface where the layer controls them

@@ -131,7 +131,6 @@ interface EventSpec {
   from: EventSource;
   event: string | string[];           // names; "*" for any
   filter?: Expr;                      // `trigger` in scope
-  echo?: boolean;                     // (Later) include echoes (surfaces §4.4)
 }
 
 type EventSource =

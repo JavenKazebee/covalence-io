@@ -16,7 +16,7 @@ Helpers on controls are reducers whose input defaults to their control. Layers b
 - [ ] A GPIO-style contact from a test plugin latches the same way, through a variable whose `value` is a `toggle` on the plugin's events. No surface is involved.
 - [ ] `vars.isLive` declared as `{expr: "atem.program == 3"}` (against a simulated switcher) is a read-only cell. A binding and a `state` trigger read it, and `why` on the trigger's action passes through the variable's patch to the switcher's.
 - [ ] A virtual encoder with a `position` helper that `follow`s `vh`'s simulated volume and has `to: {action: setVolume}`. Turning it sends rate-limited actions with the latest value. When the volume changes from elsewhere, the helper follows it and sends nothing back.
-- [ ] The virtual fader in motor mode: `value` bound to `vh`'s simulated volume moves it, and the fader's own report of that move is an echo (surfaces §4.4). It updates `value` with `cause` → the output's patch, gives no `change`, and its `absolute` helper sends nothing. Touching and moving it sends rate-limited actions again, and `requested.level` and `value` are both readable.
+- [ ] The virtual fader in motor mode: `value` bound to `vh`'s simulated volume moves it, and sends nothing back. Dragging it sends rate-limited actions, and `requested.level` and `value` are both readable. A fader input the host marks `echo: true` updates `value` and gives no `change` (ADR 0035).
 - [ ] A virtual encoder with a `select` helper over `core` surfaces' layers and `to: {action: navigate}` pages a deck.
 - [ ] A shift layer (`level: over`, `when: {while: …k15.pressed}`) takes over three keys while `k15` is held and redraws within 16 ms. A latching shift reads a `toggle`.
 - [ ] (Proposed) The same shift layer with `cascade: through` binds only `label` and claims input: the keys keep the base layer's background and tally, and `why` on k3's background names the base layer. A lock layer that binds an icon and `input: block` leaves every key's look live and ignores presses. Two layers that tie on a control get `ambiguousOrder` in the editor.
@@ -64,8 +64,10 @@ Notes from Phase 2:
   - [ ] `scope: "surface"`: one cell per surface, from the first time it shows the layer until the binding or the surface is deleted ([ADR 0035](../adr/0035-level-outputs-echoes-and-control-settings.md)).
   - [ ] `gestures`: per-control timing, as sources read when needed: at `down` and at the next press (ADR 0035).
 - [x] `follow`, `holdoff` and `pickup`. `follow` applies when what it follows changes, through the definition's `follow` (`absolute` drops its pickup) or by taking the value; it pauses while the control is touched and for `holdoff` (default 250 ms; a number of ms or a duration) after the last input, then catches up. A helper starts where what it follows is. Changes from `follow` send nothing to sinks.
-- [ ] Echoes (surfaces §4.4), per [ADR 0035](../adr/0035-level-outputs-echoes-and-control-settings.md): the `value` property, `surface.level` and `requested.level`. Touch decides: a motor fader's `value` while untouched, or marked `echo: true` by its host, updates state with `cause` → the `requested.level` patch and gives no `change` event.
-- [ ] The virtual surface gains an optional encoder (`relative` + `momentary`) and fader (`absolute` + `touch`, with a `level` output and a motor mode that echoes) for tests and the UI. Per ADR 0035: configured on the surface entity, `virtual: {encoders, faders, motor}`, up to four of each.
+- [ ] Echoes (surfaces §4.4), per [ADR 0035](../adr/0035-level-outputs-echoes-and-control-settings.md): the plugin driving a motorised controller marks its motor's movement `echo: true`.
+  - [x] The core's rule: a marked input updates input state and gives no events (`Input.echo`).
+  - [ ] The `value` property, `surface.level` and `requested.level`.
+- [ ] The virtual surface gains an optional encoder (`relative` + `momentary`) and fader (`absolute` + `touch`, with a `level` output and a motor mode that moves it) for tests and the UI. Per ADR 0035: configured on the surface entity, `virtual: {encoders, faders, motor}`, up to four of each.
 
 ### Phase 5: Layer resolution (Rust)
 - [ ] `when`, `level`, `rank` and `on` as sources and selectors; the resolution rule of surfaces §5.2; `surface.<slug>.layers` and `.controls.<id>.layer`; `resolutionCycle`.

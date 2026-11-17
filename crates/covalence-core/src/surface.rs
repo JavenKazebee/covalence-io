@@ -362,6 +362,10 @@ pub struct Input {
     pub value: Option<InputValue>,
     /// The host's timestamp, in milliseconds on its own clock.
     pub ts: f64,
+    /// The host says the device moved itself: a motor fader following what
+    /// it was sent (ADR 0035). It updates input state and gives no events.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub echo: bool,
 }
 
 /// An input's `value`: velocity, detents, a position or a touch.
@@ -666,6 +670,7 @@ impl Surfaces {
                 kind,
                 value,
                 ts: crate::clock::epoch_ms() as f64,
+                echo: false,
             },
             origin,
             cause,
@@ -1336,7 +1341,10 @@ impl Task {
         let found = self
             .recogniser
             .change(&input.control, write.change, input.ts, Instant::now());
-        self.journal_events(layer.as_deref(), found, Some(seq));
+        // An echo is state only: nothing reacts to a device moving itself.
+        if !input.echo {
+            self.journal_events(layer.as_deref(), found, Some(seq));
+        }
         Some(write.edge.then_some(turn))
     }
 

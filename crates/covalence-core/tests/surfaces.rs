@@ -250,6 +250,7 @@ async fn send_value(
             kind,
             value,
             ts,
+            echo: false,
         })
         .await
         .unwrap();
@@ -1009,4 +1010,37 @@ async fn a_control_trigger_on_a_dial_gets_the_turn() {
     settle(&w.surfaces).await;
     assert_eq!(var(&w.shared, "turned"), Some("turn -2".into()));
     runtime.shutdown().await;
+}
+
+/// ADR 0035: input the host marks as an echo (a motor fader following what
+/// it was sent) moves the control's state and gives no events.
+#[tokio::test(start_paused = true)]
+async fn echoes_marked_by_the_host_are_state_only() {
+    let w = world();
+    let link = w.surfaces.attach(DECK, mixer()).unwrap();
+    let send = |value: f64, ts: f64, echo: bool| {
+        let input = link.input.clone();
+        async move {
+            input
+                .send(Input {
+                    control: "fader".into(),
+                    kind: InputKind::Value,
+                    value: Some(value.into()),
+                    ts,
+                    echo,
+                })
+                .await
+                .unwrap();
+        }
+    };
+    send(0.3, 10.0, true).await;
+    send(0.6, 20.0, true).await;
+    settle(&w.surfaces).await;
+    assert_eq!(control_state(&w.shared, "fader", "value"), Some(0.6.into()));
+    assert!(names(&w.shared).is_empty(), "{:?}", names(&w.shared));
+
+    // A person moving it still gives `change`.
+    send(0.4, 30.0, false).await;
+    settle(&w.surfaces).await;
+    assert_eq!(names(&w.shared), ["fader:change"]);
 }

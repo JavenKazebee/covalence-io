@@ -368,6 +368,7 @@ async fn surfaces_layers_and_bindings_survive_a_restart() {
             kind: covalence_core::journal::InputKind::Down,
             value: None,
             ts: 1.0,
+            echo: false,
         })
         .await
         .unwrap();
