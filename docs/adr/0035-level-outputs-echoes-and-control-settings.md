@@ -2,6 +2,7 @@
 
 - **Status:** Proposed
 - **Date:** 2026-11-17
+- **Revised in place while Proposed:** echoes are decided by touch, not by a timing window (2026-11-17)
 - **Answers:** the rest of [M8 Phase 4](../milestones/m8-dataflow.md): echoes, the virtual encoder and fader, `gestures`, and helpers with `scope: "surface"`
 - **Specs:** [surfaces §2, §4.2–§4.4, §8](../specs/surfaces.md), [bindings §1, §5](../specs/bindings.md), [plugin protocol §8](../specs/plugin-protocol.md), [dataflow §3.1, §5](../specs/dataflow.md)
 - **Milestone:** [M8: Dataflow](../milestones/m8-dataflow.md), Phase 4
@@ -21,30 +22,26 @@
 - **`surface.level {surface, control, value}`** (core → host) is implemented as plugin protocol §8 sketches it: in the TypeSpec and its generated types, the SDK (`onLevel`), the plugin host and the web surface. `led` and `text` stay Later and will take the same path.
 - **What was sent is state.** Each level sent is written to `surface.<slug>.controls.<id>.requested.level`, with `cause` → the latest change among what the binding read. `why` on a fader's movement reaches the volume change that moved it.
 
-### Echoes
-- **An input is an echo** when either:
-  - the host marks it `echo: true`
-  - it's a `value` that arrives within `echoWindow` (default 100 ms) of a level sent to the same control, and is within `echoTolerance` (default 0.01) of it. Motor faders and 7-bit MIDI never land exactly where they were sent.
-- **Input while the control is touched is never an echo.** A hand on the fader means a person is moving it, whatever was just sent.
-- **The window is on the core's clock,** from sending to receiving. A device's timestamps can't be compared with the core's.
-- **An echo updates input state** (`value`) with `cause` → the `requested.level` patch.
-- **Echoes are journaled, marked.** Their `change` event is journaled with `echo: true`. Event triggers and reducers skip echo events unless they set `echo: true` (dataflow §3.1's `EventSpec.echo`, brought forward from Later). So an `absolute` helper on the fader doesn't step on its motor's movement, and its sink sends nothing back, while the timeline still shows what the fader did.
+### Echoes: touch decides
+- **A motor fader's movement counts as a person's only while it's touched.** A `value` input on a control with a motorised `level` output and a `touch` input, arriving while `touched` is false, is an **echo**: the motor moving it.
+- **The host may also mark an input `echo: true`.** That's for hardware whose plugin knows when its motor moved it, such as a motor fader with no touch sensor. Any timing heuristic that needs belongs in that plugin, not in the core.
+- **An echo updates input state** (`value`), with `cause` → the `requested.level` patch, so bindings and `why` see where the fader is. **It gives no `change` event,** so helpers don't step and nothing is sent back.
+- **This is what DAW controllers and lighting desks do** (Mackie Control and HUI, motor-fader consoles): the touch sensor exists for it. The other loops are already handled: a sink doesn't send back a change caused by its own action (dataflow §7), `follow` pauses while touched and for `holdoff`, `pickup` covers faders without a motor, and endless encoders send deltas, which can't echo.
 
 ### The configurable virtual surface
 - **The virtual surface entity gains `virtual`:** `{encoders?: 0–4, faders?: 0–4, motor?: boolean}`, default none, none and `true`. Without it, a virtual surface is today's 15-key deck, so existing surfaces don't change.
 - **Layout:** the keys stay 5 × 3 (`k0`…`k14`).
   - Encoders `e0`…`e3` form a row beneath them, each `relative` + `momentary` with a non-motor `level` output for its ring.
   - Faders `f0`…`f3` stand to the right of the keys, each three cells tall, `absolute` + `touch` with a `level` output, `motor` as configured.
-- **A motorised virtual fader moves itself:** on `surface.level` it glides to the value and reports `value` input on the way, unmarked, as hardware does. That exercises the echo window.
+- **A motorised virtual fader moves itself:** on `surface.level` it glides to the value. It reports `value` only while it's being dragged, with `touch` 1 on pointer down and 0 on pointer up, as a touch-sensing fader does.
 - **Changing `virtual` re-attaches** the browser with the new controls. A layer that uses a control the surface no longer has gets the existing `doesNotFit`.
 - **Core tests** attach the same controls in process, without a browser.
 
 ### `gestures`
-- **`gestures` on a control binding:** `{doubleWindow?, longAfter?, holdEvery?, echoWindow?, echoTolerance?}`. Each is a `Source`: a duration (`400ms`) or a number of milliseconds, a `{ref}` or an `{expr}`. Tolerance is a number.
+- **`gestures` on a control binding:** `{doubleWindow?, longAfter?, holdEvery?}`. Each is a `Source`: a duration (`400ms`) or a number of milliseconds, a `{ref}` or an `{expr}`.
 - **They're read when they're needed, not followed** (one-shot positions, dataflow §1.2):
   - `longAfter` and `holdEvery` when the control goes down
   - `doubleWindow` at the next press
-  - `echoWindow` and `echoTolerance` when a value arrives
 
   So they cost nothing between presses, and a change ("novice mode" on) applies from the next press, never during one.
 - **The timing for a control comes from the binding on the layer controlling it on that surface** at the time it's read. A press keeps the timing it started with, even if the layer changes during it.
@@ -58,13 +55,13 @@
 ## Consequences
 - The protocol gains its first output besides images. Plugins that drive faders or rings get `onLevel` in the SDK; others ignore it.
 - Echo handling lives in the surface module, beside gesture recognition, so it applies to every surface, plugin or web.
-- The journal shows a motor fader's movement as marked echoes. A flow that wants it opts in with `echo: true`.
+- A motor fader's own movement is in the journal as state patches, with no events. Nothing can trigger on it, which is the point.
 - Gesture timing becomes per control, at the cost of an evaluation per press when a control's timing isn't a literal.
 - Surface-scoped helpers make cells appear as surfaces show layers, and stay. A deleted surface takes its helpers' values with it.
 
 ## Alternatives considered
 - **A second fixed `virtual.console` model** for the encoder and fader: simpler to lay out, but every new mix of controls would need another model.
-- **Not journaling echoes:** leaner, but the timeline wouldn't show the fader's own moves, and nothing could react to them.
-- **Echoes only when the host marks them:** exact for devices that do, but most MIDI and OSC hardware can't.
+- **Echoes by timing in the core:** an input within a window (100 ms) and a tolerance of what was sent is an echo, journaled as a marked event that triggers can opt into. It works without a touch sensor, but needs two numbers that can be wrong (a hand grabbing the fader just after it moved is ignored), a new kind of event and an opt-in. Touch is exact where it exists, and plugins can mark the rest.
+- **Echoes only when the host marks them:** exact for devices that do, but leaves every touch-sensing fader to its plugin.
 - **Gesture timing as literals only:** simpler, but a mode that slows double-presses for a new operator would need every binding edited.
 - **Surface-scoped helpers that reset when their layer leaves the surface:** fewer cells, but a deck's toggles would forget themselves on every page change.
