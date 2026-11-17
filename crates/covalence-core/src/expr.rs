@@ -259,6 +259,12 @@ pub fn to_json(value: &Value) -> serde_json::Value {
     }
 }
 
+/// JSON as a value, as an expression's result becomes one: whole numbers
+/// within JavaScript's safe range are integers.
+pub fn json_to_value(json: &serde_json::Value) -> Value {
+    quickjs::convert(json)
+}
+
 /// Whether a result counts as true where an expression decides something:
 /// JavaScript truthiness, with `None` as `undefined` (spec §8.7).
 pub fn truthy(value: Option<&Value>) -> bool {

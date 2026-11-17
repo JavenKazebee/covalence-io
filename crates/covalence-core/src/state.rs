@@ -8,7 +8,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock, Weak};
 use std::time::Duration;
 
 use covalence_protocol::Value;
@@ -82,6 +82,23 @@ pub struct Meta {
     pub source: Source,
 }
 
+/// A reducer cell's own state, kept beside its value so it can resume
+/// after a failover or a restart (state spec §1.3, dataflow §5.2). Not
+/// visible to expressions.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReducerMeta {
+    /// The definition that made it, `toggle@1`, for the kept-state rule
+    /// (dataflow §5.4).
+    pub transform: String,
+    /// Absent when it's the same as the value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<serde_json::Value>,
+    /// The pending wake, in scheduler time (ms).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wake_at: Option<u64>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Leaf {
     pub value: Value,
@@ -104,6 +121,9 @@ pub enum Probe<'a> {
 pub struct StateTree {
     // Ordered so that a path's descendants are contiguous right after it.
     leaves: BTreeMap<StatePath, Leaf>,
+    /// Reducer metadata, by the leaf it belongs to. Dropped when anything
+    /// else changes that leaf.
+    reducers: BTreeMap<StatePath, ReducerMeta>,
 }
 
 impl StateTree {
@@ -113,6 +133,29 @@ impl StateTree {
 
     pub fn leaf(&self, path: &StatePath) -> Option<&Leaf> {
         self.leaves.get(path)
+    }
+
+    /// A reducer cell's metadata at `path`.
+    pub fn reducer(&self, path: &StatePath) -> Option<&ReducerMeta> {
+        self.reducers.get(path)
+    }
+
+    /// Sets or clears the reducer metadata at `path`. It isn't a change of
+    /// value, so nothing is dirtied.
+    pub fn set_reducer(&mut self, path: &StatePath, meta: Option<ReducerMeta>) {
+        match meta {
+            Some(m) => {
+                self.reducers.insert(path.clone(), m);
+            }
+            None => {
+                self.reducers.remove(path);
+            }
+        }
+    }
+
+    /// Every reducer's metadata, by path.
+    pub fn reducers(&self) -> impl Iterator<Item = (&StatePath, &ReducerMeta)> {
+        self.reducers.iter()
     }
 
     /// Every leaf at or below `path`, in path order.
@@ -206,6 +249,7 @@ impl StateTree {
         for k in old {
             if !fresh.leaves.contains_key(&k) {
                 self.leaves.remove(&k);
+                self.reducers.remove(&k);
                 dirty.insert(k);
             }
         }
@@ -236,6 +280,7 @@ impl StateTree {
         // A leaf above the path is replaced by the new branch.
         for len in 0..path.path.len() {
             let ancestor = StatePath::new(path.conn.clone(), path.path[..len].to_vec());
+            self.reducers.remove(&ancestor);
             if self.leaves.remove(&ancestor).is_some() {
                 dirty.insert(ancestor);
             }
@@ -249,6 +294,7 @@ impl StateTree {
             .collect();
         for k in stale {
             self.leaves.remove(&k);
+            self.reducers.remove(&k);
             dirty.insert(k);
         }
         for (k, value) in fresh {
@@ -264,6 +310,7 @@ impl StateTree {
         let keys: Vec<StatePath> = self.leaves_under(path).map(|(k, _)| k.clone()).collect();
         for k in keys {
             self.leaves.remove(&k);
+            self.reducers.remove(&k);
             dirty.insert(k);
         }
     }
@@ -278,14 +325,29 @@ impl StateTree {
         {
             return;
         }
+        self.reducers.remove(&path);
         self.leaves.insert(path.clone(), leaf);
         dirty.insert(path);
     }
 }
 
+/// Settles a turn (dataflow §5.3): run by [`LiveState`] after every
+/// mutation, before its dirty set is published, so that whoever consumes
+/// the feed sees settled state. The dataflow graph is the one settler.
+pub trait Settler: Send + Sync {
+    /// Evaluates whatever `dirty` (the turn's changes so far) makes due,
+    /// writing through [`LiveState::write_in_turn`] and adding what it
+    /// changed to `dirty`. Called with the tree unlocked and the turn held,
+    /// so it can read state freely and nothing else writes meanwhile.
+    fn settle(&self, state: &LiveState, dirty: &mut Dirty);
+}
+
 /// The live state tree, shared between tasks, with a feed of dirty sets.
 pub struct LiveState {
     tree: Mutex<StateTree>,
+    /// Held for a whole turn: a writer's mutation, then settling.
+    turn: Mutex<()>,
+    settler: RwLock<Option<Arc<dyn Settler>>>,
     dirty: broadcast::Sender<Arc<Dirty>>,
     turns: Arc<Turns>,
 }
@@ -305,6 +367,8 @@ impl Default for LiveState {
         let (dirty, _) = broadcast::channel(1024);
         LiveState {
             tree: Mutex::new(StateTree::new()),
+            turn: Mutex::new(()),
+            settler: RwLock::new(None),
             dirty,
             turns: Arc::default(),
         }
@@ -342,13 +406,57 @@ impl LiveState {
     /// [`mutate`](Self::mutate), and the turn it published, for
     /// [`seen`](Self::seen).
     pub fn mutate_turn<R>(&self, f: impl FnOnce(&mut StateTree) -> (R, Dirty)) -> (R, u64) {
-        let mut tree = self.lock();
-        let (result, dirty) = f(&mut tree);
+        let _turn = self.turn.lock().unwrap_or_else(|e| e.into_inner());
+        let (result, mut dirty) = {
+            let mut tree = self.lock();
+            f(&mut tree)
+        };
+        if !dirty.is_empty() {
+            self.run_settler(&mut dirty);
+        }
+        (result, self.publish(dirty))
+    }
+
+    /// A turn with no mutation of its own, for what the settler has waiting:
+    /// events, wakes and edits. The turn it published, if it changed anything.
+    pub fn settle(&self) -> u64 {
+        let _turn = self.turn.lock().unwrap_or_else(|e| e.into_inner());
+        let mut dirty = Dirty::new();
+        self.run_settler(&mut dirty);
+        self.publish(dirty)
+    }
+
+    /// Installs the settler (dataflow §5.3); `None` removes it.
+    pub fn set_settler(&self, settler: Option<Arc<dyn Settler>>) {
+        *self.settler.write().unwrap_or_else(|e| e.into_inner()) = settler;
+    }
+
+    fn run_settler(&self, dirty: &mut Dirty) {
+        let settler = self
+            .settler
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some(settler) = settler {
+            settler.settle(self, dirty);
+        }
+    }
+
+    /// Publishes a turn's changes; the latest turn's number.
+    fn publish(&self, dirty: Dirty) -> u64 {
+        // Only changed with the tree locked, as `subscribe_turns` counts on.
+        let _tree = self.lock();
         if !dirty.is_empty() {
             self.turns.published.fetch_add(1, Ordering::SeqCst);
             let _ = self.dirty.send(Arc::new(dirty));
         }
-        (result, self.turns.published.load(Ordering::SeqCst))
+        self.turns.published.load(Ordering::SeqCst)
+    }
+
+    /// Writes during a turn, for the [`Settler`]: the tree, without a turn
+    /// of its own. Only call it from [`Settler::settle`].
+    pub fn write_in_turn<R>(&self, f: impl FnOnce(&mut StateTree) -> R) -> R {
+        f(&mut self.lock())
     }
 
     /// Dirty sets, one per mutation, in order (§1.5).

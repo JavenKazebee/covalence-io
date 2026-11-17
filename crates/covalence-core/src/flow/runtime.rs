@@ -752,78 +752,14 @@ impl Inner {
     ) -> Option<(Option<Vec<String>>, Option<Target>)> {
         let scope = Scope::new(&self.shared.state, aliases);
         let mut eval = Eval::new(&scope, self.evaluator.as_ref());
-        let failed = |e: ExprError| {
-            tracing::warn!("an event source's expression failed, matching nothing: {e}");
-        };
-        // A control selector, tried on the one control the event is from.
-        // M6 implements IDs, lists and combinators here; the other forms
-        // are `unsupported` until a field needs them.
-        let control_in = |controls: &Option<crate::select::Selector<crate::select::Controls>>,
-                          eval: &mut Eval<'_>| {
-            let Some(control) = &event.control else {
-                return false;
-            };
-            let Some(selector) = controls else {
-                return true;
-            };
-            let view = ControlView {
-                id: control.clone(),
-                at: None,
-                inputs: Vec::new(),
-                outputs: Vec::new(),
-            };
-            match selector.resolve(&[view], Some(eval)) {
-                Ok(picked) => !picked.is_empty(),
-                Err(e) => {
-                    failed(e);
-                    false
-                }
-            }
-        };
-        match from {
-            EventSource::Path { path } => {
-                match path.matches(&event.path, aliases, Some(&mut eval)) {
-                    Ok(Some(c)) => Some(((!c.is_empty()).then_some(c), None)),
-                    Ok(None) => None,
-                    Err(e) => {
-                        failed(e);
-                        None
-                    }
-                }
-            }
-            EventSource::Target { target } => {
-                let conn = event.conn.as_ref()?;
-                // Selector forms test one connection at a time, so the
-                // event's own connection is the whole universe needed.
-                let view = self
-                    .targets
-                    .read()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .get(conn)
-                    .cloned()
-                    .unwrap_or_else(|| TargetView {
-                        conn: conn.clone(),
-                        plugin: String::new(),
-                        interfaces: Vec::new(),
-                    });
-                match target.resolve(&[view], Some(&mut eval)) {
-                    Ok(picked) if !picked.is_empty() => {
-                        Some((None, Some(Target::conn(conn.clone()))))
-                    }
-                    Ok(_) => None,
-                    Err(e) => {
-                        failed(e);
-                        None
-                    }
-                }
-            }
-            EventSource::Layer { layer, controls } => (event.layer.as_ref() == Some(layer)
-                && control_in(controls, &mut eval))
-            .then_some((None, None)),
-            EventSource::Surface { surface, controls } => (event.surface.as_ref() == Some(surface)
-                && control_in(controls, &mut eval))
-            .then_some((None, None)),
-        }
+        let view = event.conn.as_ref().and_then(|conn| {
+            self.targets
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(conn)
+                .cloned()
+        });
+        source_matches(from, event, aliases, &mut eval, view)
     }
 
     /// Journals a flow's own event at `flow.<slug>` (flows spec §1.1).
@@ -2201,6 +2137,7 @@ impl RunTask {
                     Some(v) => JournalOp::Set {
                         path: at.clone(),
                         value: v.clone(),
+                        reducer: None,
                     },
                     None => JournalOp::Delete {
                         path: at.clone(),
@@ -2267,5 +2204,78 @@ impl RunTask {
             End::Failed(e) => Err(e),
             End::Cancelled => Err(cancelled_error()),
         })
+    }
+}
+
+/// Whether `from` (dataflow §3.1) picks the event: `Some((captures,
+/// source))`. `view` is the event's connection, when known.
+pub(crate) fn source_matches(
+    from: &EventSource,
+    event: &EventRecord,
+    aliases: &BTreeMap<String, ConnId>,
+    eval: &mut Eval<'_>,
+    view: Option<TargetView>,
+) -> Option<(Option<Vec<String>>, Option<Target>)> {
+    let failed = |e: ExprError| {
+        tracing::warn!("an event source's expression failed, matching nothing: {e}");
+    };
+    // A control selector, tried on the one control the event is from.
+    // M6 implements IDs, lists and combinators here; the other forms
+    // are `unsupported` until a field needs them.
+    let control_in = |controls: &Option<crate::select::Selector<crate::select::Controls>>,
+                      eval: &mut Eval<'_>| {
+        let Some(control) = &event.control else {
+            return false;
+        };
+        let Some(selector) = controls else {
+            return true;
+        };
+        let view = ControlView {
+            id: control.clone(),
+            at: None,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+        };
+        match selector.resolve(&[view], Some(eval)) {
+            Ok(picked) => !picked.is_empty(),
+            Err(e) => {
+                failed(e);
+                false
+            }
+        }
+    };
+    match from {
+        EventSource::Path { path } => match path.matches(&event.path, aliases, Some(&mut *eval)) {
+            Ok(Some(c)) => Some(((!c.is_empty()).then_some(c), None)),
+            Ok(None) => None,
+            Err(e) => {
+                failed(e);
+                None
+            }
+        },
+        EventSource::Target { target } => {
+            let conn = event.conn.as_ref()?;
+            // Selector forms test one connection at a time, so the
+            // event's own connection is the whole universe needed.
+            let view = view.unwrap_or_else(|| TargetView {
+                conn: conn.clone(),
+                plugin: String::new(),
+                interfaces: Vec::new(),
+            });
+            match target.resolve(&[view], Some(&mut *eval)) {
+                Ok(picked) if !picked.is_empty() => Some((None, Some(Target::conn(conn.clone())))),
+                Ok(_) => None,
+                Err(e) => {
+                    failed(e);
+                    None
+                }
+            }
+        }
+        EventSource::Layer { layer, controls } => (event.layer.as_ref() == Some(layer)
+            && control_in(controls, eval))
+        .then_some((None, None)),
+        EventSource::Surface { surface, controls } => (event.surface.as_ref() == Some(surface)
+            && control_in(controls, eval))
+        .then_some((None, None)),
     }
 }

@@ -89,6 +89,8 @@ pub enum CoreOrigin {
     Scheduler,
     System,
     Replication,
+    /// Cells: variables' values and helpers (dataflow spec §5.1).
+    Dataflow,
 }
 
 /// The kind and its data. On the wire: `{kind, data}`.
@@ -161,8 +163,17 @@ pub struct StatePatchRecord {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum JournalOp {
-    Delete { path: StatePath, delete: True },
-    Set { path: StatePath, value: Value },
+    Delete {
+        path: StatePath,
+        delete: True,
+    },
+    Set {
+        path: StatePath,
+        value: Value,
+        /// A reducer cell's state and wake (dataflow spec §5.2).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reducer: Option<crate::state::ReducerMeta>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -790,6 +801,7 @@ mod tests {
                     JournalOp::Set {
                         path: path.clone(),
                         value: Value::Binary(vec![1, 2]),
+                        reducer: None,
                     },
                     JournalOp::Delete {
                         path: path.clone(),

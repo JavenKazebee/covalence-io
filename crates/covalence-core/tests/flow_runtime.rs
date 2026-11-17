@@ -730,6 +730,7 @@ impl World {
                         ops: vec![JournalOp::Set {
                             path: at.clone(),
                             value: value.clone(),
+                            reducer: None,
                         }],
                         replaces: None,
                         device_ts: None,
@@ -1440,4 +1441,49 @@ async fn a_target_held_in_vars_is_checked_against_its_constraint() {
         unreachable!()
     };
     assert_eq!((r.conn.as_str(), r.key.as_deref()), ("core", Some("S1")));
+}
+
+/// A `state` trigger on a computed variable (M8 Phase 2): it sees the cell
+/// in the same turn as its input, and `why` passes through the cell's patch.
+#[tokio::test(start_paused = true)]
+async fn a_state_trigger_reads_a_cell_in_the_turn_of_its_input() {
+    use covalence_core::dataflow::{CellDef, Dataflow, JournalMode};
+    let world = World::new();
+    let aliases: std::collections::BTreeMap<String, String> =
+        [("vh".to_owned(), VH.to_owned())].into();
+    world.runtime.set_aliases(aliases.clone());
+    let dataflow = Dataflow::start(&world.shared);
+    dataflow.set_aliases(aliases);
+    dataflow.put(
+        CellDef {
+            id: "variable:isLive".into(),
+            home: StatePath::new("vars", vec![PathSegment::Key("isLive".into())]),
+            source: covalence_core::source::Source::from_json(json!({ "expr": "vh.program == 3" }))
+                .unwrap(),
+            journal: JournalMode::Full,
+        },
+        None,
+    );
+    world.add(json!({
+        "id": "live", "name": "live", "slug": "live", "enabled": true,
+        "triggers": [{ "kind": "state", "when": "vars.isLive", "edge": "rising" }],
+        "concurrency": "parallel",
+        "body": [{ "id": "seen", "kind": "set", "path": "local.v", "value": "1" }],
+    }));
+    world.settle().await;
+    let patch = world.set_state(VH, &["program"], Value::from(3));
+    world.settle().await;
+    let matched = world.last_of(|e| matches!(e.record, Record::TriggerMatched(_)));
+    let chain = world.shared.journal.why(matched.seq).unwrap();
+    let seqs: Vec<Seq> = chain.iter().map(|e| e.seq).collect();
+    assert_eq!(seqs.last(), Some(&patch), "{chain:#?}");
+    assert!(
+        chain.iter().any(|e| matches!(
+            e.origin,
+            Origin::Core {
+                core: covalence_core::journal::CoreOrigin::Dataflow
+            }
+        )),
+        "{chain:#?}"
+    );
 }

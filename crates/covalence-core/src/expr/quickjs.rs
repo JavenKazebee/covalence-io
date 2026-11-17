@@ -495,7 +495,7 @@ fn from_json(json: &str) -> Result<Value, ExprError> {
     Ok(convert(&parsed))
 }
 
-fn convert(json: &serde_json::Value) -> Value {
+pub(super) fn convert(json: &serde_json::Value) -> Value {
     use serde_json::Value as J;
     match json {
         J::Null => Value::Nil,

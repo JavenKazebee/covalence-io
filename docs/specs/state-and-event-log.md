@@ -65,7 +65,7 @@ Each leaf value carries:
 | `seq` | Journal sequence number of the patch that set it |
 | `quality` | `good` · `stale` (source disconnected; the last value is kept) · `unknown` (never received) |
 | `source` | Connection ID, `core` or `user` |
-| `reducer` | **(M8)** A reducer cell's `{state?, wakeAt?}` ([dataflow §5.2](dataflow.md)), so it can resume after a failover or a restart. Not visible to expressions |
+| `reducer` | **(M8)** A reducer cell's `{transform, state?, wakeAt?}` ([dataflow §5.2](dataflow.md)), so it can resume after a failover or a restart. Not visible to expressions |
 
 When a connection drops, its subtree is marked **`stale` rather than deleted**. The UI greys it out, and expressions can test it with `stale(pp.timers.countdown.remaining)`. Reading a path that doesn't exist returns `undefined`.
 

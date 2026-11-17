@@ -1488,6 +1488,7 @@ impl Inner {
                     Some(value) => JournalOp::Set {
                         path: path.clone(),
                         value: value.clone(),
+                        reducer: None,
                     },
                     None => JournalOp::Delete {
                         path: path.clone(),

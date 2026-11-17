@@ -1,6 +1,6 @@
 # Milestone 8: Dataflow
 
-- **Status:** In progress (Phases 0 and 1 done)
+- **Status:** In progress (Phases 0–2 done)
 
 Covalence gets its continuous half. Values can be computed, accumulated and sent somewhere without a flow ([ADR 0029](../adr/0029-dataflow-sources-transforms-sinks.md)):
 - **Reducers** (`toggle`, `position`, `select` …) are sandboxed transform definitions.
@@ -43,9 +43,14 @@ Helpers on controls are reducers whose input defaults to their control. Layers b
 - [x] Native implementations where the benchmark asks for them: every reducer but `script` (a sandboxed step costs about 2 ms in a debug build, a native one a few µs; `tests/transforms.rs` prints both).
 
 ### Phase 2: Cells and the graph (Rust)
-- [ ] `covalence_core::dataflow`: cells, dependency-ordered evaluation within a turn, cycle detection, `cause` on cell patches, `{core: "dataflow"}` origin, quality propagation, sampled journaling.
-- [ ] Bindings, `state` triggers, `waitUntil` and (Phase 5) layer resolution become consumers of the settled turn.
-- [ ] Reducer state: in memory, restored from a persisted variable, resumed from replicated patches.
+- [x] `covalence_core::dataflow`: cells, dependency-ordered evaluation within a turn, cycle detection, `cause` on cell patches, `{core: "dataflow"}` origin, quality propagation, sampled journaling. A cell is a `CellDef` (`id` by entity, `home`, `source`, `journal`), added with `Dataflow::put` and removed with `Dataflow::remove`.
+- [x] Bindings, `state` triggers, `waitUntil` and (Phase 5) layer resolution become consumers of the settled turn. The graph is the state tree's **settler**: `LiveState` holds a turn lock across a writer's mutation and the graph's evaluation, and publishes one dirty set with both, so everything on the feed sees settled state without changing how it subscribes. Events, wakes and edits start turns of their own (`LiveState::settle`), events and wakes from the `dataflow` thread. This is the first step to ADR 0033's single turn thread: writers still apply their own patches, under the turn.
+- [x] Reducer state: in memory, restored from a persisted variable, resumed from replicated patches. All three go through the leaf: a reducer cell's patch op and leaf carry `reducer: {transform, state?, wakeAt?}`, and a cell with no state in memory resumes from its leaf when `transform` names the same definition and the value still fits its `result`. A standby (`Dataflow::set_active(false)`) never steps; on promotion it resumes from the leaves and evaluates stateless cells once.
+
+Notes from Phase 2:
+- The turn's evaluations have a 2 ms limit in release builds, as ADR 0033 says, and 50 ms in debug builds, where building a fresh QuickJS context alone can take longer.
+- A reducer whose value is `undefined` (an `absolute` before any input) keeps its metadata on the leaf but can't journal it, since a delete op has no `reducer`. It restarts from `init` after a failover.
+- Not yet: the derived journal tier and `inputCause` (state spec §2.4), and the save-time `cycle` error on static reads, which needs the `variable` entity (Phase 3).
 
 ### Phase 3: Variables and sinks (Rust)
 - [ ] The `variable` entity: schema, `initial`, `persist`, `value`, `to`, `journal`. `set` on a computed variable is `readOnly`; an undeclared `set` warns.

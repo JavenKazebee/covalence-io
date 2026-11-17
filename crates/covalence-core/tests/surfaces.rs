@@ -415,7 +415,7 @@ async fn a_press_patches_input_state_then_journals_events() {
     assert_eq!(patches.len(), 2);
     assert_eq!(patches[0].1.device_ts, Some(1000.0));
     assert!(
-        matches!(&patches[0].1.ops[..], [JournalOp::Set { path, value }]
+        matches!(&patches[0].1.ops[..], [JournalOp::Set { path, value, .. }]
         if *path == control_path("k3", "pressed") && *value == Value::from(true))
     );
     let down = w.shared.journal.get(patches[0].0).unwrap().unwrap();
@@ -585,8 +585,10 @@ async fn detaching_disconnects_and_releases_held_keys() {
     let Record::StatePatch(patch) = &released.record else {
         panic!("release caused by {released:?}");
     };
-    assert!(matches!(&patch.ops[..], [JournalOp::Set { path, value }]
-        if *path == control_path("k2", "pressed") && *value == Value::from(false)));
+    assert!(
+        matches!(&patch.ops[..], [JournalOp::Set { path, value, .. }]
+        if *path == control_path("k2", "pressed") && *value == Value::from(false))
+    );
     let disconnected = w
         .shared
         .journal

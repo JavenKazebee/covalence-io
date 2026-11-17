@@ -969,6 +969,7 @@ fn route(inner: &Inner, ntf: Notification) {
                 .map(|PathValue { p, v }| JournalOp::Set {
                     path: StatePath::new(conn.clone(), p.clone()),
                     value: v.clone(),
+                    reducer: None,
                 })
                 .collect();
             let record = StatePatchRecord {
@@ -989,6 +990,7 @@ fn route(inner: &Inner, ntf: Notification) {
                     PatchOp::Set(PathValue { p, v }) => JournalOp::Set {
                         path: StatePath::new(conn.clone(), p.clone()),
                         value: v.clone(),
+                        reducer: None,
                     },
                     PatchOp::Delete(d) => JournalOp::Delete {
                         path: StatePath::new(conn.clone(), d.p.clone()),

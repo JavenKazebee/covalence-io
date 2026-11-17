@@ -1,0 +1,518 @@
+//! Cells and the graph (dataflow spec §5): M8 Phase 2.
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
+
+use covalence_core::Shared;
+use covalence_core::dataflow::{CellDef, Clock, Dataflow, JournalMode};
+use covalence_core::journal::{
+    CoreOrigin, EventRecord, Journal, JournalOp, NewEntry, Origin, Record, Seq, StatePatchRecord,
+};
+use covalence_core::source::Source;
+use covalence_core::state::{Meta, Quality, ReducerMeta, Source as Setter, StatePath};
+use covalence_protocol::Value;
+use covalence_protocol::state::PathSegment;
+use serde_json::{Value as Json, json};
+
+fn path(conn: &str, keys: &[&str]) -> StatePath {
+    StatePath::new(
+        conn,
+        keys.iter().map(|k| PathSegment::Key((*k).into())).collect(),
+    )
+}
+
+fn var(name: &str) -> StatePath {
+    path("vars", &[name])
+}
+
+fn shared() -> Shared {
+    Shared::new(Journal::in_memory(10_000))
+}
+
+struct Time(Arc<AtomicU64>);
+
+impl Time {
+    fn new() -> (Self, Clock) {
+        let t = Arc::new(AtomicU64::new(1_000));
+        let c = t.clone();
+        (Time(t), Arc::new(move || c.load(Ordering::SeqCst)))
+    }
+
+    fn advance(&self, ms: u64) {
+        self.0.fetch_add(ms, Ordering::SeqCst);
+    }
+}
+
+/// A connection's patch, journaled and applied as the host does.
+fn set(shared: &Shared, at: &StatePath, value: Value) -> Seq {
+    let journal = &shared.journal;
+    shared.state.mutate(|tree| {
+        let seq = journal
+            .append(NewEntry::new(
+                Origin::conn(at.conn.clone()),
+                Record::StatePatch(StatePatchRecord {
+                    ops: vec![JournalOp::Set {
+                        path: at.clone(),
+                        value: value.clone(),
+                        reducer: None,
+                    }],
+                    replaces: None,
+                    device_ts: None,
+                }),
+            ))
+            .unwrap()
+            .seq;
+        let meta = Meta {
+            ts: 0,
+            seq,
+            quality: Quality::Good,
+            source: Setter::Conn(at.conn.clone()),
+        };
+        (seq, tree.set(at, &value, &meta))
+    })
+}
+
+/// A plugin's event at `at`.
+fn event(shared: &Shared, at: &StatePath, name: &str) -> Seq {
+    shared
+        .journal
+        .append(NewEntry::new(
+            Origin::conn(at.conn.clone()),
+            Record::Event(EventRecord {
+                conn: Some(at.conn.clone()),
+                ..EventRecord::at(at.clone(), name, None)
+            }),
+        ))
+        .unwrap()
+        .seq
+}
+
+fn value(shared: &Shared, at: &StatePath) -> Option<Json> {
+    shared
+        .state
+        .value(at)
+        .as_ref()
+        .map(covalence_core::expr::to_json)
+}
+
+fn cell(id: &str, home: StatePath, source: Json) -> CellDef {
+    CellDef {
+        id: id.into(),
+        home,
+        source: Source::from_json(source).unwrap(),
+        journal: JournalMode::Full,
+    }
+}
+
+fn expr(e: &str) -> Json {
+    json!({ "expr": e })
+}
+
+/// The latest dataflow patch at `at`.
+fn last_patch(shared: &Shared, at: &StatePath) -> Option<Arc<covalence_core::journal::Entry>> {
+    let all = shared.journal.range(1, 100_000).unwrap();
+    all.into_iter().rev().find(|e| {
+        e.origin
+            == Origin::Core {
+                core: CoreOrigin::Dataflow,
+            }
+            && matches!(&e.record, Record::StatePatch(p)
+                if p.ops.iter().any(|op| matches!(op,
+                    JournalOp::Set { path, .. } | JournalOp::Delete { path, .. } if path == at)))
+    })
+}
+
+fn aliases(df: &Dataflow) {
+    df.set_aliases([("vh".to_string(), "c1".to_string())].into());
+}
+
+#[test]
+fn a_computed_cell_settles_in_the_turn_of_its_input() {
+    let shared = shared();
+    let df = Dataflow::start(&shared);
+    aliases(&df);
+    df.put(
+        cell("variable:double", var("double"), expr("vh.level * 2")),
+        None,
+    );
+    let mut feed = shared.state.subscribe();
+
+    let level = path("c1", &["level"]);
+    let seq = set(&shared, &level, Value::from(4));
+    // One published turn has the input and the cell both.
+    let dirty = feed.try_recv().unwrap();
+    assert!(
+        dirty.contains(&level) && dirty.contains(&var("double")),
+        "{dirty:?}"
+    );
+    assert!(feed.try_recv().is_err());
+    assert_eq!(value(&shared, &var("double")), Some(json!(8)));
+
+    // Journaled from the dataflow, caused by the input's patch.
+    let patch = last_patch(&shared, &var("double")).unwrap();
+    assert_eq!(patch.cause, Some(seq));
+    let why = shared.journal.why(patch.seq).unwrap();
+    assert_eq!(why.last().unwrap().seq, seq);
+    let leaf = shared.state.leaf(&var("double")).unwrap();
+    assert_eq!((leaf.meta.seq, leaf.meta.source), (patch.seq, Setter::Core));
+}
+
+#[test]
+fn cells_evaluate_in_dependency_order_whatever_order_they_were_added_in() {
+    let shared = shared();
+    let df = Dataflow::start(&shared);
+    aliases(&df);
+    // c reads b reads a reads the connection, added backwards.
+    df.put(cell("variable:c", var("c"), expr("vars.b + 1")), None);
+    df.put(cell("variable:b", var("b"), expr("vars.a * 10")), None);
+    df.put(cell("variable:a", var("a"), expr("vh.level")), None);
+    let before = shared.journal.last_seq().unwrap_or(0);
+    set(&shared, &path("c1", &["level"]), Value::from(2));
+    assert_eq!(value(&shared, &var("c")), Some(json!(21)));
+    assert!(df.problems().is_empty(), "{:?}", df.problems());
+    // Once each, in order: no cell was written twice.
+    let patches: Vec<_> = shared
+        .journal
+        .range(before + 1, 100)
+        .unwrap()
+        .into_iter()
+        .filter(|e| matches!(e.origin, Origin::Core { .. }))
+        .collect();
+    assert_eq!(patches.len(), 3, "{patches:#?}");
+}
+
+#[test]
+fn a_cycle_is_reported_on_both_cells_and_the_rest_of_the_turn_goes_on() {
+    let shared = shared();
+    let df = Dataflow::start(&shared);
+    aliases(&df);
+    df.put(
+        cell("variable:other", var("other"), expr("vh.level + 100")),
+        None,
+    );
+    df.put(
+        cell("variable:a", var("a"), expr("(vars.b ?? 0) + vh.level")),
+        None,
+    );
+    df.put(
+        cell("variable:b", var("b"), expr("(vars.a ?? 0) + 1")),
+        None,
+    );
+    let a_before = value(&shared, &var("a"));
+    let b_before = value(&shared, &var("b"));
+    set(&shared, &path("c1", &["level"]), Value::from(5));
+    let problems = df.problems();
+    assert_eq!(problems["variable:a"].code, "cycle", "{problems:?}");
+    assert_eq!(problems["variable:b"].code, "cycle");
+    assert!(!problems.contains_key("variable:other"));
+    assert_eq!(value(&shared, &var("other")), Some(json!(105)));
+    // Both keep what they had before the turn.
+    assert_eq!(value(&shared, &var("a")), a_before);
+    assert_eq!(value(&shared, &var("b")), b_before);
+}
+
+#[tokio::test]
+async fn a_toggle_latches_on_a_plugin_event_without_a_surface() {
+    let shared = shared();
+    let df = Dataflow::start(&shared);
+    aliases(&df);
+    let contact = path("c1", &["inputs", "gpio3"]);
+    df.put(
+        cell(
+            "variable:armed",
+            var("armed"),
+            json!({ "use": "toggle", "on": { "from": { "path": { "match": "vh.inputs.*" } } } }),
+        ),
+        None,
+    );
+    assert_eq!(value(&shared, &var("armed")), Some(json!(false)));
+    let mut journal = shared.journal.subscribe();
+
+    let press = event(&shared, &contact, "press");
+    df.flush().await;
+    assert_eq!(value(&shared, &var("armed")), Some(json!(true)));
+    let patch = last_patch(&shared, &var("armed")).unwrap();
+    assert_eq!(patch.cause, Some(press));
+    // Its own event happens at its cell, after its patch.
+    let mut on = None;
+    while let Ok(e) = journal.try_recv() {
+        if let Record::Event(ev) = &e.record
+            && ev.path == var("armed")
+        {
+            on = Some((ev.event.clone(), e.cause));
+        }
+    }
+    assert_eq!(on, Some(("on".to_string(), Some(patch.seq))));
+
+    // Other names don't step it; another press flips it back.
+    event(&shared, &contact, "release");
+    event(&shared, &contact, "press");
+    df.flush().await;
+    assert_eq!(value(&shared, &var("armed")), Some(json!(false)));
+}
+
+#[test]
+fn a_position_follows_its_input_and_options_apply_from_the_next_step() {
+    let shared = shared();
+    let df = Dataflow::start(&shared);
+    aliases(&df);
+    let detents = path("c1", &["detents"]);
+    set(&shared, &detents, Value::from(0));
+    set(&shared, &var("top"), Value::from(10));
+    df.put(
+        cell(
+            "variable:pos",
+            var("pos"),
+            json!({ "use": "position", "input": { "ref": { "conn": "c1", "path": ["detents"] } },
+                    "max": { "ref": { "root": "vars", "path": ["top"] } } }),
+        ),
+        None,
+    );
+    assert_eq!(value(&shared, &var("pos")), Some(json!(0)));
+    set(&shared, &detents, Value::from(4));
+    assert_eq!(value(&shared, &var("pos")), Some(json!(4)));
+    // A smaller max doesn't move it until it next steps.
+    set(&shared, &var("top"), Value::from(2));
+    assert_eq!(value(&shared, &var("pos")), Some(json!(4)));
+    set(&shared, &detents, Value::from(5));
+    assert_eq!(value(&shared, &var("pos")), Some(json!(2)));
+}
+
+#[test]
+fn a_velocity_decays_by_its_wakes() {
+    let shared = shared();
+    let (time, clock) = Time::new();
+    let df = Dataflow::with_clock(&shared, clock);
+    let detents = path("c1", &["detents"]);
+    set(&shared, &detents, Value::from(0));
+    df.put(
+        cell(
+            "variable:speed",
+            var("speed"),
+            json!({ "use": "velocity", "input": { "ref": { "conn": "c1", "path": ["detents"] } },
+                    "window": 100, "decay": 50 }),
+        ),
+        None,
+    );
+    time.advance(10);
+    set(&shared, &detents, Value::from(3));
+    assert_eq!(value(&shared, &var("speed")), Some(json!(30)));
+    let meta = shared
+        .state
+        .read(|t| t.reducer(&var("speed")).cloned())
+        .unwrap();
+    assert_eq!(meta.transform, "velocity@1");
+    assert!(meta.wake_at.is_some() && meta.state.is_some(), "{meta:?}");
+    // Past the window it decays, then stops.
+    time.advance(150);
+    df.tick();
+    let decayed = value(&shared, &var("speed")).unwrap().as_f64().unwrap();
+    assert!(decayed > 0.0 && decayed < 30.0, "{decayed}");
+    time.advance(5_000);
+    df.tick();
+    assert_eq!(value(&shared, &var("speed")), Some(json!(0)));
+    let meta = shared
+        .state
+        .read(|t| t.reducer(&var("speed")).cloned())
+        .unwrap();
+    assert_eq!(meta.wake_at, None);
+}
+
+#[tokio::test]
+async fn an_edit_keeps_state_for_the_same_transform_and_resets_it_otherwise() {
+    let shared = shared();
+    let df = Dataflow::start(&shared);
+    aliases(&df);
+    let key = path("c1", &["key"]);
+    let on = json!({ "from": { "path": { "match": "vh.key" } } });
+    df.put(
+        cell("variable:t", var("t"), json!({ "use": "toggle", "on": on })),
+        None,
+    );
+    event(&shared, &key, "press");
+    df.flush().await;
+    assert_eq!(value(&shared, &var("t")), Some(json!(true)));
+
+    // Same transform, new options: kept.
+    df.put(
+        cell(
+            "variable:t",
+            var("t"),
+            json!({ "use": "toggle@1", "on": on, "initial": false }),
+        ),
+        Some(1),
+    );
+    assert_eq!(value(&shared, &var("t")), Some(json!(true)));
+    // Renamed: kept, at its new home, and the old one is gone.
+    df.put(
+        cell(
+            "variable:t",
+            var("t2"),
+            json!({ "use": "toggle", "on": on }),
+        ),
+        Some(1),
+    );
+    assert_eq!(value(&shared, &var("t2")), Some(json!(true)));
+    assert_eq!(value(&shared, &var("t")), None);
+
+    // Another transform: reset, caused by the edit.
+    let edit = event(&shared, &path("c1", &["unrelated"]), "noted");
+    df.put(
+        cell(
+            "variable:t",
+            var("t2"),
+            json!({ "use": "counter", "on": on }),
+        ),
+        Some(edit),
+    );
+    assert_eq!(value(&shared, &var("t2")), Some(json!(0)));
+    assert_eq!(last_patch(&shared, &var("t2")).unwrap().cause, Some(edit));
+}
+
+#[tokio::test]
+async fn a_reducer_resumes_from_its_leaf_and_a_standby_never_steps() {
+    // What a standby holds after applying the leader's patches.
+    let shared = shared();
+    let meta = Meta {
+        ts: 0,
+        seq: 1,
+        quality: Quality::Good,
+        source: Setter::Core,
+    };
+    shared.state.mutate(|tree| {
+        let dirty = tree.set(&var("n"), &Value::from(7), &meta);
+        tree.set_reducer(
+            &var("n"),
+            Some(ReducerMeta {
+                transform: "counter@1".into(),
+                state: None,
+                wake_at: None,
+            }),
+        );
+        ((), dirty)
+    });
+    let df = Dataflow::start(&shared);
+    aliases(&df);
+    df.set_active(false);
+    let key = path("c1", &["key"]);
+    df.put(
+        cell(
+            "variable:n",
+            var("n"),
+            json!({ "use": "counter", "on": { "from": { "path": { "match": "vh.key" } } } }),
+        ),
+        None,
+    );
+    event(&shared, &key, "press");
+    df.flush().await;
+    assert_eq!(
+        value(&shared, &var("n")),
+        Some(json!(7)),
+        "a standby stepped"
+    );
+
+    // Promoted: it resumes from 7, without stepping or writing.
+    let before = shared.journal.last_seq();
+    df.set_active(true);
+    assert_eq!(shared.journal.last_seq(), before);
+    event(&shared, &key, "press");
+    df.flush().await;
+    assert_eq!(value(&shared, &var("n")), Some(json!(8)));
+}
+
+#[test]
+fn a_sampled_cell_changes_state_every_time_and_journals_once_per_interval() {
+    let shared = shared();
+    let (time, clock) = Time::new();
+    let df = Dataflow::with_clock(&shared, clock);
+    aliases(&df);
+    let fader = path("c1", &["fader"]);
+    df.put(
+        CellDef {
+            journal: JournalMode::Sampled(Duration::from_millis(100)),
+            ..cell("variable:level", var("level"), expr("vh.fader"))
+        },
+        None,
+    );
+    let count = |shared: &Shared| {
+        shared
+            .journal
+            .range(1, 100_000)
+            .unwrap()
+            .iter()
+            .filter(|e| matches!(e.origin, Origin::Core { .. }))
+            .count()
+    };
+    set(&shared, &fader, Value::from(1));
+    let first = count(&shared);
+    for v in 2..6 {
+        time.advance(10);
+        set(&shared, &fader, Value::from(v));
+        assert_eq!(value(&shared, &var("level")), Some(json!(v)));
+    }
+    assert_eq!(count(&shared), first, "sampled values were journaled");
+    // When it settles, the last value is journaled.
+    time.advance(100);
+    df.tick();
+    assert_eq!(count(&shared), first + 1);
+    match &last_patch(&shared, &var("level")).unwrap().record {
+        Record::StatePatch(p) => {
+            assert!(matches!(&p.ops[0], JournalOp::Set { value, .. } if *value == Value::from(5)))
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_cell_is_stale_while_what_it_reads_is() {
+    let shared = shared();
+    let df = Dataflow::start(&shared);
+    aliases(&df);
+    let level = path("c1", &["level"]);
+    set(&shared, &level, Value::from(1));
+    df.put(cell("variable:copy", var("copy"), expr("vh.level")), None);
+    assert_eq!(
+        shared.state.leaf(&var("copy")).unwrap().meta.quality,
+        Quality::Good
+    );
+    shared
+        .state
+        .mutate(|tree| ((), tree.set_quality(&StatePath::root("c1"), Quality::Stale)));
+    assert_eq!(
+        shared.state.leaf(&var("copy")).unwrap().meta.quality,
+        Quality::Stale
+    );
+}
+
+#[test]
+fn a_failing_cell_keeps_its_value_and_a_removed_one_takes_its_value_with_it() {
+    let shared = shared();
+    let df = Dataflow::start(&shared);
+    aliases(&df);
+    let level = path("c1", &["level"]);
+    set(&shared, &level, Value::from(2));
+    df.put(
+        cell(
+            "variable:x",
+            var("x"),
+            expr("if (vh.level > 5) throw new Error('too high'); return vh.level"),
+        ),
+        None,
+    );
+    assert_eq!(value(&shared, &var("x")), Some(json!(2)));
+    set(&shared, &level, Value::from(9));
+    assert_eq!(value(&shared, &var("x")), Some(json!(2)));
+    assert_eq!(df.problems()["variable:x"].code, "exprError");
+    set(&shared, &level, Value::from(3));
+    assert_eq!(
+        value(&shared, &var("x")),
+        Some(json!(3)),
+        "{:?}",
+        df.problems()
+    );
+    assert!(df.problems().is_empty());
+
+    df.remove("variable:x", None);
+    assert_eq!(value(&shared, &var("x")), None);
+}
