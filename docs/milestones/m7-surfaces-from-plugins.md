@@ -1,6 +1,6 @@
 # Milestone 7: Surfaces from plugins
 
-- **Status:** Planned, after [M6](m6-primitives.md)
+- **Status:** In progress (Phase 0)
 
 A real Stream Deck drives Covalence, through a plugin. The core gets a device layer: it enumerates HID and serial devices, watches hotplug, matches them to plugins' manifests and performs their I/O, so a plugin of plain TypeScript can drive hardware with no native add-ons ([ADR 0025](../adr/0025-device-drivers-are-plugins.md)). The plugin host carries the surface protocol ([plugin protocol §8](../specs/plugin-protocol.md)), and `io.covalence.streamdeck` translates between the deck's reports and M5's surface model. Network transports arrive too, and the Videohub plugin moves onto them. MIDI, Orbitals and controls beyond keys stay out.
 
@@ -20,10 +20,15 @@ A real Stream Deck drives Covalence, through a plugin. The core gets a device la
 
 ### Phase 0: Decisions and docs
 - [x] **[ADR 0025](../adr/0025-device-drivers-are-plugins.md):** device drivers are plugins; the core performs hardware I/O; network I/O is the plugin's choice. Protocol shapes in [plugin protocol §4, §7, §7.1 and §8](../specs/plugin-protocol.md), and `provider` and serial matching in [surfaces §1](../specs/surfaces.md).
-- [ ] **Spike: `@elgato-stream-deck/core` under Deno.** It loads from npm, its HID device interface can be implemented over a stub, and it runs with no native add-on in the dependency tree. If it can't, write the MK.2's protocol in the plugin directly; it's small.
-- [ ] **Choose the Rust crates** for HID (`hidapi` or `nusb`-based), serial (`serialport`) and hotplug. `hidapi` has no hotplug; decide between polling enumeration (once a second) and OS notifications.
+- [x] **Spike: `@elgato-stream-deck/core` under Deno.** Passed with 7.9.0: it loads as `npm:@elgato-stream-deck/core`, its only dependencies are `tslib` and `eventemitter3`, and nothing in the tree is native. Its `HIDDevice` (`sendReports`, `sendFeatureReport`, `getFeatureReport`, `input` events) maps onto `ctx.hid`'s output, feature and input reports one for one. Over a stub, an MK.2 input report became `down 3` / `up 3`, and `fillKeyBuffer` wrote 1024-byte image reports.
+  - **Images are the core's to encode.** The MK.2 takes JPEG, and the library calls an `encodeJPEG` the caller provides. In JS (`jpeg-js`) that's 146 ms for 15 keys warm, far over budget. Instead the core renders each key in the output's native format, and the plugin's `encodeJPEG` hands back the JPEG it was sent: 0.9 ms for 15 keys, with the bytes reaching the device unchanged. So the renderer gains `jpeg` (`jpeg-encoder`, pure Rust), and the plugin declares its image outputs as `{format: "jpeg", w: 72, h: 72, rotation: 180}`: gen-2 decks flip both axes, which the library skips when it doesn't encode.
+- [x] **Choose the Rust crates.** All build with no system libraries, which matters for CI and a Raspberry Pi:
+  - HID: `hidapi` with `linux-native-basic-udev` on Linux (hidraw, udev parsed in Rust; the default `linux-native` needs `libudev` headers), and the OS's own HID on macOS and Windows.
+  - Serial: `serialport`, without default features.
+  - Hotplug: `nusb::watch_devices()` for USB arrivals and departures on all three platforms, each one re-enumerating HID and serial; plus a once-a-second enumeration, for what isn't USB and in case a notification is missed.
+  - JPEG: `jpeg-encoder`, for the renderer.
 - [ ] **Protocol schema:** the §7 additions, §7.1 and the §8 `conn` in TypeSpec, with fixtures.
-- [ ] Accept ADR 0025 once the spike passes. (ADR 0024 is accepted in [M6](m6-primitives.md).)
+- [x] ADR 0025 accepted: the spike passed. (ADR 0024 was accepted in [M6](m6-primitives.md).)
 
 ### Phase 1: The core's device layer
 - [ ] **`covalence-devices`:** enumerate HID and serial devices, watch hotplug, and give each a stable `DeviceInfo.id` (§7.1).

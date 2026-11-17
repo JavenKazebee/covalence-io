@@ -10,7 +10,7 @@
 - [M4: Expressions](milestones/m4-expressions.md) (done)
 - [M5: Surfaces and bindings](milestones/m5-surfaces-and-bindings.md) (done)
 - [M6: Primitives](milestones/m6-primitives.md) (done; redraw budget to re-measure): sources, selectors, events by path, the core connection
-- [M7: Surfaces from plugins](milestones/m7-surfaces-from-plugins.md) (planned)
+- [M7: Surfaces from plugins](milestones/m7-surfaces-from-plugins.md) (in progress)
 - [M8: Dataflow](milestones/m8-dataflow.md) (planned): reducers, cells, variables, sinks, helpers, layer resolution
 - [M9: Composition](milestones/m9-composition.md) (planned): one template primitive, composites, components, nesting, `forEach`, plugin transforms
 
@@ -52,7 +52,7 @@
 | [0022](adr/0022-surfaces-pages-and-the-web-surface.md) | Surfaces and pages are core entities; the web surface speaks the surface protocol | Accepted (amended by 0024) |
 | [0023](adr/0023-key-rendering-and-binding-evaluation.md) | Keys are rendered in the core; structured bindings are evaluated without QuickJS | Accepted (amended by 0026, 0033) |
 | [0024](adr/0024-surfaces-as-two-way-devices.md) | Surfaces are two-way devices; control input is device state; layers decide who controls each control | Accepted (amended by 0027, 0029) |
-| [0025](adr/0025-device-drivers-are-plugins.md) | Device drivers are plugins; the core performs hardware I/O, and network I/O is the plugin's choice | Proposed (amended by 0029) |
+| [0025](adr/0025-device-drivers-are-plugins.md) | Device drivers are plugins; the core performs hardware I/O, and network I/O is the plugin's choice | Accepted (amended by 0029) |
 | [0026](adr/0026-sources-and-selectors.md) | One way to give a value, one way to pick things: sources and selectors | Accepted |
 | [0027](adr/0027-events-addressed-by-path.md) | Events are addressed by state path; control triggers become event triggers | Accepted |
 | [0028](adr/0028-the-core-is-a-connection.md) | The core is a connection; surfaces and flows are its targets | Accepted |

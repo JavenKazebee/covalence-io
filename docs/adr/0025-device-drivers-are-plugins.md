@@ -1,6 +1,6 @@
 # 0025 – Device drivers are plugins; the core performs hardware I/O, and network I/O is the plugin's choice
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Amended by:** [0029](0029-dataflow-sources-transforms-sinks.md) (plugins may ship transforms, run in the core's sandbox)
 - **Date:** 2026-10-22
 - **Amends:** [0001](0001-rust-core.md) (built-in device drivers in the core), [0002](0002-protocol-first-plugins.md) (point 5: host transports), [0003](0003-plugin-runtime-deno.md) (hardware access belongs in the core's built-in drivers), [0010](0010-orbital-remote-nodes.md) (Orbital finds devices with the `covalence-surfaces` driver crate). The plugin protocol, the Deno host and the core's surface model ([0024](0024-surfaces-as-two-way-devices.md)) stand.
