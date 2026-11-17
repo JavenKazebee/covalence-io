@@ -45,6 +45,8 @@
 //! | `GET, PUT, DELETE /control-bindings/{id}` | One binding                                 |
 //! | `GET /control-bindings/problems`    | Each failing binding property's last error        |
 //! | `POST /control-bindings/preview`    | `{binding, size?}` → `{look, props, image}`, the key as it would be drawn |
+//! | `GET, POST /variables`              | Variables (dataflow spec §6)                      |
+//! | `GET, PUT, DELETE /variables/{id}`  | One variable. Deleting a computed one removes its value |
 //!
 //! Any other path is the built web UI, when there is one (see `ui`).
 
@@ -56,6 +58,7 @@ use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::time::Duration;
 
 use covalence_core::binding::{self, ControlBinding};
+use covalence_core::dataflow::Dataflow;
 use covalence_core::engine::{ActionOutcome, ActionRequest, Actions};
 use covalence_core::expr::{self, QuickJs};
 use covalence_core::flow::runtime::{STATE_ROOT, VARS_ROOT};
@@ -67,6 +70,7 @@ use covalence_core::state::ConnId;
 use covalence_core::surface::gesture::Timing;
 use covalence_core::surface::render::Renderer;
 use covalence_core::surface::{self, Layer, LayerId, Surface, SurfaceId, Surfaces};
+use covalence_core::variable::Variable;
 use covalence_core::{Core, CoreError, Shared};
 use covalence_protocol::connection::{ConnCreate, ConnMode};
 use covalence_protocol::plugin::{Manifest, Permissions, PluginLoad};
@@ -83,6 +87,7 @@ mod flows;
 mod plugin_surfaces;
 mod surfaces;
 mod ui;
+mod variables;
 mod web_surface;
 mod ws;
 
@@ -286,6 +291,9 @@ pub struct App {
     closing: tokio::sync::watch::Sender<bool>,
     /// HID and serial devices, unless they're off.
     devices: Option<covalence_devices::Devices>,
+    variables: RwLock<BTreeMap<String, Variable>>,
+    /// Computed variables' cells and their sinks (dataflow §5).
+    dataflow: Dataflow,
 }
 
 impl App {
@@ -321,6 +329,17 @@ impl App {
         let surface_entities = load_kind::<Surface>(&store)?;
         let layers = load_kind::<Layer>(&store)?;
         let bindings = load_kind::<ControlBinding>(&store)?;
+        let variables = load_kind::<Variable>(&store)?;
+        // Variables come back before any trigger is armed (dataflow §6):
+        // persisted values first, so reducers resume from them, then cells.
+        let dataflow = Dataflow::start(core.shared());
+        dataflow.set_aliases(alias_map(&conns));
+        variables::restore(core.shared(), &store, &variables);
+        for var in variables.values() {
+            if let Some(cell) = var.cell() {
+                dataflow.put(cell, None);
+            }
+        }
         let surfaces = Surfaces::new(core.shared().clone(), Timing::default());
         surfaces.set_aliases(alias_map(&conns));
         for layer in layers.values() {
@@ -351,8 +370,10 @@ impl App {
                 Arc::new(AppActions(app.clone())),
                 evaluator.clone(),
             );
+            dataflow.set_actions(Arc::new(AppActions(app.clone())));
             runtime.set_aliases(alias_map(&conns));
             runtime.set_targets(target_views(&conns));
+            runtime.set_read_only(variables::read_only(&variables));
             for flow in flows.values() {
                 runtime.set_flow(flow.clone());
             }
@@ -385,8 +406,11 @@ impl App {
                 saving: Mutex::new(()),
                 closing: tokio::sync::watch::Sender::new(false),
                 devices,
+                variables: RwLock::new(variables),
+                dataflow,
             }
         });
+        variables::spawn_persisting(&app);
         devices::spawn(&app);
         let registering = app.clone();
         tokio::spawn(async move { registering.register().await });
@@ -441,6 +465,7 @@ impl App {
         let conns = self.conns();
         let aliases = alias_map(&conns);
         self.surfaces.set_aliases(aliases.clone());
+        self.dataflow.set_aliases(aliases.clone());
         self.runtime.set_aliases(aliases);
         self.runtime.set_targets(target_views(&conns));
     }

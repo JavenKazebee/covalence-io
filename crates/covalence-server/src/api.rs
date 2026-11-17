@@ -40,6 +40,7 @@ pub fn router(app: Arc<App>) -> Router {
         .merge(crate::flows::routes())
         .merge(crate::surfaces::routes())
         .merge(crate::devices::routes())
+        .merge(crate::entity::routes::<covalence_core::variable::Variable>())
         .with_state(app)
 }
 

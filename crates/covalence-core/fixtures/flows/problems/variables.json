@@ -1,0 +1,16 @@
+{
+  "flow": {
+    "name": "Variables",
+    "slug": "variables",
+    "enabled": true,
+    "triggers": [{ "kind": "api" }],
+    "concurrency": "parallel",
+    "body": [
+      { "id": "computed", "kind": "set", "path": "vars.isLive", "value": "true" },
+      { "id": "undeclared", "kind": "set", "path": "vars.scratch", "value": "1" },
+      { "id": "declared", "kind": "set", "path": "vars.lastPick", "value": "2" }
+    ]
+  },
+  "errors": [{ "code": "readOnly", "path": ["body", 0, "path"] }],
+  "warnings": [{ "code": "undeclaredVariable", "path": ["body", 1, "path"] }]
+}

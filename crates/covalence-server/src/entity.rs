@@ -29,6 +29,7 @@ use axum::{Json, Router};
 use covalence_core::binding::ControlBinding;
 use covalence_core::flow::{Flow, Problem, Report};
 use covalence_core::surface::{Layer, Surface};
+use covalence_core::variable::Variable;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value as JsonValue;
@@ -136,6 +137,7 @@ const KINDS: &[&dyn Referrers] = &[
     &Of::<Layer>(PhantomData),
     &Of::<ControlBinding>(PhantomData),
     &Of::<Flow>(PhantomData),
+    &Of::<Variable>(PhantomData),
 ];
 
 /// One entity type, without its type parameter, so they fit in a list.

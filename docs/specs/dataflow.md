@@ -340,7 +340,7 @@ type Sink =
 - **`undefined` sends nothing,** so a `rules` source with no `else` value only sends while a rule matches.
 - **Only the latest value is kept** while a rate limit waits, so a slow device never builds a backlog.
 - **Actions from sinks** go through the output gate and the journal like any other, with origin `{core: "dataflow"}` and `cause` → the cell's patch.
-- **No echo loops:** a sink doesn't fire for a change that descends, through `cause`, from its own previous action. A fader following a mixer's volume and sending it back stays quiet. The flows' loop guard (flows §8.6) is the backstop.
+- **No echo loops:** a sink doesn't fire for a change that descends, through `cause`, from its own previous action: an `action.requested` from the dataflow to the same connection and action, whose `cause` is a patch of the same cell (M8 looks back 32 links). A fader following a mixer's volume and sending it back stays quiet. The flows' loop guard (flows §8.6) is the backstop.
 - **Sinks are for keeping things in step.** "When X, do A then B" is a flow.
 
 ---

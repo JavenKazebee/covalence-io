@@ -966,7 +966,7 @@ pub fn validate_layer(
 }
 
 /// The name and slug problems of a surface or layer.
-fn named(kind: &str, name: &str, slug: &str, taken: &BTreeSet<String>) -> Vec<Problem> {
+pub(crate) fn named(kind: &str, name: &str, slug: &str, taken: &BTreeSet<String>) -> Vec<Problem> {
     let mut errors = Vec::new();
     if name.trim().is_empty() {
         errors.push(Problem::new(

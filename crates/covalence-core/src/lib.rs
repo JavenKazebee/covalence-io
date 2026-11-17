@@ -20,6 +20,7 @@ pub mod state;
 pub mod surface;
 pub mod text_path;
 pub mod transform;
+pub mod variable;
 
 pub use covalence_protocol::PROTOCOL_VERSION;
 pub use engine::{ActionOutcome, ActionRequest, Core, CoreError};

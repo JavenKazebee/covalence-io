@@ -41,12 +41,14 @@ use serde_json::{Map, Value as Json};
 use tokio::sync::{broadcast, mpsc};
 
 use crate::Shared;
+use crate::engine::{ActionRequest, Actions};
 use crate::expr::{Evaluator, Limits, QuickJs, Scope, json_to_value, to_json};
 use crate::journal::{
     CoreOrigin, Entry, EventRecord, Journal, JournalOp, NewEntry, Origin, Record, Seq,
     StatePatchRecord,
 };
-use crate::source::{Eval, Source};
+use crate::select::Target;
+use crate::source::{Eval, Ref, Source};
 use crate::state::{
     ConnId, Dirty, LiveState, Meta, Quality, ReducerMeta, Settler, Source as Setter, StatePath,
 };
@@ -70,7 +72,8 @@ pub const MAX_EVALS: usize = 16;
 /// `variable:<id>`, or `helper:<binding id>/<key>`.
 pub type CellId = String;
 
-/// What a cell is: where it lives, and what gives its value.
+/// What a cell is: where it lives, what gives its value, and where its
+/// value goes.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CellDef {
     pub id: CellId,
@@ -78,7 +81,57 @@ pub struct CellDef {
     /// A stateless source, or a reducer.
     pub source: Source<Json>,
     pub journal: JournalMode,
+    /// Sinks (dataflow §7).
+    pub to: Vec<Sink>,
 }
+
+impl CellDef {
+    /// A fully journaled cell with no sinks.
+    pub fn new(id: impl Into<CellId>, home: StatePath, source: Source<Json>) -> Self {
+        CellDef {
+            id: id.into(),
+            home,
+            source,
+            journal: JournalMode::Full,
+            to: Vec::new(),
+        }
+    }
+}
+
+/// Where a cell's value goes (dataflow §7).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged, deny_unknown_fields)]
+pub enum Sink {
+    /// A writable variable.
+    Set { set: Ref },
+    /// An action parameter.
+    Action { action: ActionSink },
+}
+
+/// An action that receives a cell's value as one of its parameters.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ActionSink {
+    pub target: Source<Target>,
+    /// When the target isn't a literal (ADR 0019).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub constraint: Option<Json>,
+    pub action: String,
+    /// The parameter that receives the value.
+    pub param: String,
+    /// The others.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub params: BTreeMap<String, Source<Json>>,
+    /// Default [`DEFAULT_RATE_LIMIT`]; the latest value wins.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limit: Option<crate::flow::Duration>,
+}
+
+/// A sink's rate limit when it doesn't set one (dataflow §7).
+pub const DEFAULT_RATE_LIMIT: Duration = Duration::from_millis(20);
+
+/// How far back through `cause` a sink looks for its own action.
+const ECHO_DEPTH: usize = 32;
 
 /// How a cell's changes are journaled (dataflow §5.1).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -157,11 +210,14 @@ impl Dataflow {
 
     /// Starts the graph with its own clock, for tests.
     pub fn with_clock(shared: &Shared, clock: Clock) -> Self {
+        let (fires, fired) = mpsc::unbounded_channel();
         let graph = Arc::new(Graph {
             state: Arc::downgrade(&shared.state),
             journal: shared.journal.clone(),
             clock: clock.clone(),
             inner: Mutex::new(Inner::new()),
+            fires,
+            actions: std::sync::RwLock::new(None),
         });
         shared
             .state
@@ -174,7 +230,7 @@ impl Dataflow {
         };
         std::thread::Builder::new()
             .name("dataflow".into())
-            .spawn(move || driver.run(rx, events))
+            .spawn(move || driver.run(rx, events, fired))
             .expect("the dataflow thread starts");
         Dataflow { graph, commands }
     }
@@ -203,6 +259,9 @@ impl Dataflow {
         let mut inner = self.graph.lock();
         inner.aliases = Arc::new(aliases);
         // Their reads may mean something else now.
+        for cell in inner.cells.values_mut() {
+            cell.quiet = true;
+        }
         let ids: Vec<CellId> = inner.cells.keys().cloned().collect();
         inner.due.extend(ids);
         drop(inner);
@@ -223,12 +282,22 @@ impl Dataflow {
             for cell in inner.cells.values_mut() {
                 cell.run = None;
                 cell.evaluated = false;
+                cell.quiet = true;
             }
             let ids: Vec<CellId> = inner.cells.keys().cloned().collect();
             inner.due.extend(ids);
         }
         drop(inner);
         self.settle();
+    }
+
+    /// Who carries out action sinks' requests: the core.
+    pub fn set_actions(&self, actions: Arc<dyn Actions>) {
+        *self
+            .graph
+            .actions
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = Some(actions);
     }
 
     /// Each cell's current problem.
@@ -303,11 +372,13 @@ impl Driver {
         self,
         mut commands: mpsc::UnboundedReceiver<Command>,
         mut events: broadcast::Receiver<Arc<Entry>>,
+        fired: mpsc::UnboundedReceiver<Fire>,
     ) {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_time()
             .build()
             .expect("the dataflow runtime starts");
+        runtime.spawn(send_sinks(fired, Arc::downgrade(&self.graph)));
         runtime.block_on(async {
             loop {
                 let wake = self.graph.lock().next_wake();
@@ -375,6 +446,78 @@ impl Driver {
     }
 }
 
+/// Sends action sinks' requests, at most one per sink per rate limit, the
+/// latest value winning while one waits (dataflow §7).
+async fn send_sinks(mut fired: mpsc::UnboundedReceiver<Fire>, graph: Weak<Graph>) {
+    use tokio::time::Instant as At;
+    struct Slot {
+        last: Option<At>,
+        rate: Duration,
+        pending: Option<ActionRequest>,
+    }
+    let send = |request: ActionRequest| {
+        let actions = graph
+            .upgrade()
+            .and_then(|g| g.actions.read().unwrap_or_else(|e| e.into_inner()).clone());
+        match actions {
+            Some(actions) => {
+                tokio::spawn(async move {
+                    let what = format!("{}.{}", request.conn, request.action);
+                    if let Err(e) = actions.request_action(request).await {
+                        tracing::warn!(action = %what, "a sink's action failed: {e}");
+                    }
+                });
+            }
+            None => tracing::warn!(
+                action = %request.action,
+                "a sink fired, but nothing carries out actions here"
+            ),
+        }
+    };
+    let mut slots: BTreeMap<(CellId, usize), Slot> = BTreeMap::new();
+    loop {
+        let next = slots
+            .values()
+            .filter(|s| s.pending.is_some())
+            .filter_map(|s| s.last.map(|l| l + s.rate))
+            .min();
+        let wait = async {
+            match next {
+                Some(at) => tokio::time::sleep_until(at).await,
+                None => std::future::pending().await,
+            }
+        };
+        tokio::select! {
+            fire = fired.recv() => {
+                let Some(fire) = fire else { return };
+                let now = At::now();
+                let slot = slots.entry(fire.key).or_insert(Slot {
+                    last: None,
+                    rate: fire.rate,
+                    pending: None,
+                });
+                slot.rate = fire.rate;
+                if slot.last.is_none_or(|l| now >= l + slot.rate) {
+                    slot.last = Some(now);
+                    slot.pending = None;
+                    send(fire.request);
+                } else {
+                    slot.pending = Some(fire.request);
+                }
+            }
+            () = wait => {
+                let now = At::now();
+                for slot in slots.values_mut() {
+                    if slot.pending.is_some() && slot.last.is_none_or(|l| now >= l + slot.rate) {
+                        slot.last = Some(now);
+                        send(slot.pending.take().expect("checked"));
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn is_dataflow(origin: &Origin) -> bool {
     matches!(
         origin,
@@ -398,6 +541,17 @@ struct Graph {
     journal: Arc<Journal>,
     clock: Clock,
     inner: Mutex<Inner>,
+    /// Action sinks' requests, to the task that rate-limits and sends them.
+    fires: mpsc::UnboundedSender<Fire>,
+    actions: std::sync::RwLock<Option<Arc<dyn Actions>>>,
+}
+
+/// One action sink's request.
+struct Fire {
+    /// The cell and the sink's index in its `to`.
+    key: (CellId, usize),
+    request: ActionRequest,
+    rate: Duration,
 }
 
 impl Graph {
@@ -439,6 +593,9 @@ struct Cell {
     /// is waiting for its final entry.
     sampled_at: Option<u64>,
     unsampled: bool,
+    /// Its next evaluation sends nothing to its sinks: it was just added,
+    /// edited or resumed (dataflow §7).
+    quiet: bool,
 }
 
 /// A running reducer (dataflow §5.2).
@@ -482,6 +639,7 @@ impl Inner {
             problem: None,
             sampled_at: None,
             unsampled: false,
+            quiet: true,
         };
         if let Some(old) = self.cells.remove(&id) {
             if old.def.home != def.home {
@@ -561,6 +719,11 @@ struct Turn<'a> {
     evals: BTreeMap<CellId, usize>,
     /// Events for each cell to step on, in order, with their entry.
     events: BTreeMap<CellId, Vec<(Option<Seq>, StepEvent)>>,
+    /// Whether the cell being evaluated sends to its sinks.
+    quiet: bool,
+    /// Paths `set` sinks wrote, whose readers are due.
+    sunk: Vec<StatePath>,
+    fires: mpsc::UnboundedSender<Fire>,
 }
 
 impl Settler for Graph {
@@ -590,6 +753,9 @@ impl Settler for Graph {
             before: BTreeMap::new(),
             evals: BTreeMap::new(),
             events: BTreeMap::new(),
+            quiet: true,
+            sunk: Vec::new(),
+            fires: self.fires.clone(),
         };
         turn.run();
     }
@@ -636,10 +802,12 @@ impl Turn<'_> {
                 self.cycle(&id, &mut due);
                 continue;
             }
-            if let Some(changed) = self.evaluate(&id) {
-                // Its readers are due in the same turn.
+            let mut changed: Vec<StatePath> = self.evaluate(&id).into_iter().collect();
+            changed.append(&mut self.sunk);
+            // Their readers are due in the same turn.
+            for path in changed {
                 for (other, cell) in &self.inner.cells {
-                    if *other != id && touches(&cell.reads, &changed) {
+                    if *other != id && touches(&cell.reads, &path) {
                         due.insert(other.clone());
                     }
                 }
@@ -713,6 +881,7 @@ impl Turn<'_> {
             if let Some((value, meta)) = self.before.remove(cell_id)
                 && let Some(cell) = self.inner.cells.get(cell_id)
             {
+                self.quiet = true;
                 let home = cell.def.home.clone();
                 let ops = vec![match &value {
                     Some(v) => JournalOp::Set {
@@ -792,7 +961,9 @@ impl Turn<'_> {
 
     /// Evaluates one cell and writes what changed. Its home, if its value did.
     fn evaluate(&mut self, id: &str) -> Option<StatePath> {
-        let cell = self.inner.cells.get(id)?;
+        let cell = self.inner.cells.get_mut(id)?;
+        self.quiet = cell.quiet || !cell.evaluated;
+        cell.quiet = false;
         let def = cell.def.clone();
         let events = self.events.remove(id).unwrap_or_default();
         match reducer_of(&def.source) {
@@ -1126,15 +1297,131 @@ impl Turn<'_> {
         } else {
             Quality::Unknown
         };
-        if journaled {
-            self.patch(&home, value.as_ref(), meta, ops, cause, quality);
+        let patch = if journaled {
+            self.patch(&home, value.as_ref(), meta, ops, cause, quality)
         } else {
             // Applied to state, not journaled: the leaf points at what
             // moved it.
             let seq = cause.or(self.journal.last_seq()).unwrap_or(0);
             self.apply(&home, value.as_ref(), meta, seq, quality);
+            Some(seq)
+        };
+        if value_changed
+            && !self.quiet
+            && let Some(v) = &value
+        {
+            self.sink(id, v, patch, cause);
         }
         value_changed.then_some(home)
+    }
+
+    /// Sends a cell's new value to its sinks (dataflow §7). `patch` is the
+    /// cell's own entry; `cause` what moved the cell.
+    fn sink(&mut self, id: &str, value: &Value, patch: Option<Seq>, cause: Option<Seq>) {
+        let Some(cell) = self.inner.cells.get(id) else {
+            return;
+        };
+        let home = cell.def.home.clone();
+        let to = cell.def.to.clone();
+        for (i, sink) in to.iter().enumerate() {
+            match sink {
+                Sink::Set { set } => {
+                    let at = set.state_path();
+                    let ops = vec![JournalOp::Set {
+                        path: at.clone(),
+                        value: value.clone(),
+                        reducer: None,
+                    }];
+                    self.patch(&at, Some(value), None, ops, patch, Quality::Good);
+                    self.sunk.push(at);
+                }
+                Sink::Action { action } => {
+                    let aliases = self.inner.aliases.clone();
+                    let scope = Scope::new(&self.state, &aliases);
+                    let mut eval = Eval::new(&scope, &self.inner.evaluator as &dyn Evaluator);
+                    let target = match action.target.literal() {
+                        Some(t) => Some(t.clone()),
+                        None => eval
+                            .raw(&action.target)
+                            .ok()
+                            .flatten()
+                            .or_else(|| {
+                                action
+                                    .target
+                                    .fallback()
+                                    .and_then(|f| serde_json::to_value(f).ok())
+                            })
+                            .and_then(|j| serde_json::from_value::<Target>(j).ok()),
+                    };
+                    let Some(target) = target else {
+                        tracing::warn!(cell = %id, "a sink's target gave no connection; nothing sent");
+                        continue;
+                    };
+                    let mut params: Vec<(Value, Value)> = Vec::new();
+                    let mut failed = false;
+                    for (name, s) in &action.params {
+                        match eval.nested(s) {
+                            Ok(Some(v)) => {
+                                params.push((Value::from(name.as_str()), json_to_value(&v)))
+                            }
+                            Ok(None) => {}
+                            Err(e) => {
+                                tracing::warn!(cell = %id, param = %name, "a sink's parameter failed; nothing sent: {e}");
+                                failed = true;
+                            }
+                        }
+                    }
+                    if failed || self.echoes(cause, &home, &target.conn, &action.action) {
+                        continue;
+                    }
+                    params.push((Value::from(action.param.as_str()), value.clone()));
+                    let mut request = ActionRequest::new(
+                        dataflow_origin(),
+                        target.conn.clone(),
+                        action.action.clone(),
+                        Value::Map(params),
+                    );
+                    request.key = target.key.clone();
+                    request.cause = patch;
+                    let rate = action
+                        .rate_limit
+                        .as_ref()
+                        .map_or(DEFAULT_RATE_LIMIT, |d| d.get());
+                    let _ = self.fires.send(Fire {
+                        key: (id.to_owned(), i),
+                        request,
+                        rate,
+                    });
+                }
+            }
+        }
+    }
+
+    /// Whether a change descends, through `cause`, from this cell's own
+    /// earlier action to `conn`'s `action` (dataflow §7): a mixer's volume
+    /// coming back after the fader that set it.
+    fn echoes(&self, cause: Option<Seq>, home: &StatePath, conn: &str, action: &str) -> bool {
+        let mut next = cause;
+        for _ in 0..ECHO_DEPTH {
+            let Some(seq) = next else { return false };
+            let Ok(Some(entry)) = self.journal.get(seq) else {
+                return false;
+            };
+            if let Record::ActionRequested(r) = &entry.record
+                && is_dataflow(&entry.origin)
+                && r.conn == conn
+                && r.action == action
+                && let Some(Ok(Some(from))) = entry.cause.map(|c| self.journal.get(c))
+                && let Record::StatePatch(p) = &from.record
+                && p.ops.iter().any(|op| match op {
+                    JournalOp::Set { path, .. } | JournalOp::Delete { path, .. } => path == home,
+                })
+            {
+                return true;
+            }
+            next = entry.cause;
+        }
+        false
     }
 
     /// Journals a cell's patch and applies it.
@@ -1146,7 +1433,7 @@ impl Turn<'_> {
         ops: Vec<JournalOp>,
         cause: Option<Seq>,
         quality: Quality,
-    ) {
+    ) -> Option<Seq> {
         let entry = NewEntry::new(
             dataflow_origin(),
             Record::StatePatch(StatePatchRecord {
@@ -1157,8 +1444,14 @@ impl Turn<'_> {
         )
         .cause(cause);
         match self.journal.append(entry) {
-            Ok(e) => self.apply(home, value, meta, e.seq, quality),
-            Err(e) => tracing::warn!(home = ?home, "cannot journal a cell's patch: {e}"),
+            Ok(e) => {
+                self.apply(home, value, meta, e.seq, quality);
+                Some(e.seq)
+            }
+            Err(e) => {
+                tracing::warn!(home = ?home, "cannot journal a cell's patch: {e}");
+                None
+            }
         }
     }
 
@@ -1253,7 +1546,7 @@ fn resume(d: &Definition, (value, meta): &(Option<Json>, Option<ReducerMeta>)) -
 
 /// Whether a value fits a definition's `result` type. Only `type` is
 /// checked; `undefined` always fits.
-fn fits(value: Option<&Json>, result: &Json) -> bool {
+pub fn fits(value: Option<&Json>, result: &Json) -> bool {
     let Some(value) = value else { return true };
     let types: Vec<&str> = match result.get("type") {
         Some(Json::String(t)) => vec![t.as_str()],

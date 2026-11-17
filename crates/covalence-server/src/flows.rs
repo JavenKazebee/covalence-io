@@ -191,6 +191,10 @@ impl EntityKind for Flow {
         let mut flow_ids: BTreeSet<String> = flows.keys().cloned().collect();
         flow_ids.insert(self.id.clone());
         drop(flows);
+        let variables: BTreeMap<String, bool> = read(&app.variables)
+            .values()
+            .map(|v| (v.slug.clone(), v.is_computed()))
+            .collect();
         flow::validate(
             self,
             &flow::Context {
@@ -200,6 +204,7 @@ impl EntityKind for Flow {
                 surfaces: &surfaces,
                 flows: &flow_ids,
                 evaluator: app.evaluator.as_ref(),
+                variables: &variables,
             },
         )
     }

@@ -53,6 +53,10 @@ pub enum Code {
     NoOutput,
     /// A binding value that doesn't fit its property: a colour that isn't one.
     BadValue,
+    /// A `set` step or sink on a computed variable (dataflow §6).
+    ReadOnly,
+    /// Computed variables whose reads form a cycle (dataflow §5.3).
+    Cycle,
     // Warnings.
     NoTriggers,
     /// An event trigger on a connection the flow also acts on (spec §8.6).
@@ -61,6 +65,8 @@ pub enum Code {
     Unchecked,
     /// A `waitUntil` that may wait forever.
     NoTimeout,
+    /// A `set` to a variable no `variable` entity declares (dataflow §6).
+    UndeclaredVariable,
 }
 
 /// One problem, with its place in the flow as a segment array:
@@ -112,6 +118,8 @@ pub struct Context<'a> {
     pub flows: &'a BTreeSet<String>,
     /// Compiles expressions.
     pub evaluator: &'a dyn Evaluator,
+    /// Declared variables by slug, and whether each is computed.
+    pub variables: &'a BTreeMap<String, bool>,
 }
 
 fn key(k: &str) -> PathSegment {
@@ -805,12 +813,28 @@ impl<'a> Validation<'a> {
                 }
             }
             StepKind::Set { path, value } => {
-                if parse_set_path(path).is_none() {
-                    self.error(
+                match parse_set_path(path) {
+                    None => self.error(
                         at("path"),
                         Code::BadPath,
                         format!("{path:?} must be local.<name> or vars.<name>"),
-                    );
+                    ),
+                    Some((SetTarget::Vars, name)) => match self.ctx.variables.get(name) {
+                        Some(true) => self.error(
+                            at("path"),
+                            Code::ReadOnly,
+                            format!("vars.{name} is computed; only its own value sets it"),
+                        ),
+                        Some(false) => {}
+                        None => self.warn(
+                            at("path"),
+                            Code::UndeclaredVariable,
+                            &format!(
+                                "no variable declares vars.{name}; declare it to give it a type"
+                            ),
+                        ),
+                    },
+                    Some((SetTarget::Local, _)) => {}
                 }
                 self.expr(at("value"), value);
             }

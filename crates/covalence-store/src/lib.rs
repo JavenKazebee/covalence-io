@@ -77,6 +77,12 @@ const MIGRATIONS: &[&str] = &[
         body TEXT    NOT NULL,
         PRIMARY KEY (type, id)
     ) STRICT;",
+    // 3: the state cache: persisted variables' values and reducer state
+    // (dataflow spec §6).
+    "CREATE TABLE state_cache (
+        path TEXT PRIMARY KEY,
+        body TEXT NOT NULL
+    ) STRICT;",
 ];
 
 pub struct Store {
@@ -223,6 +229,35 @@ impl Store {
     }
 }
 
+impl Store {
+    /// Keeps a cached state value: `path` and `body` are the core's JSON.
+    pub fn put_cached(&self, path: &str, body: &str) -> Result<()> {
+        self.db
+            .prepare_cached(
+                "INSERT INTO state_cache (path, body) VALUES (?1, ?2)
+                 ON CONFLICT (path) DO UPDATE SET body = excluded.body",
+            )?
+            .execute([path, body])?;
+        Ok(())
+    }
+
+    pub fn cached(&self, path: &str) -> Result<Option<String>> {
+        Ok(self
+            .db
+            .prepare_cached("SELECT body FROM state_cache WHERE path = ?1")?
+            .query_row([path], |row| row.get(0))
+            .optional()?)
+    }
+
+    /// Returns whether there was one.
+    pub fn delete_cached(&self, path: &str) -> Result<bool> {
+        Ok(self
+            .db
+            .execute("DELETE FROM state_cache WHERE path = ?1", [path])?
+            > 0)
+    }
+}
+
 const SELECT_ENTITY: &str = "SELECT type, id, rev, body FROM entities";
 
 fn entity_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<EntityRow> {
@@ -258,6 +293,17 @@ fn sql_seq(n: u64) -> Result<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn caches_state() {
+        let store = Store::open_in_memory().unwrap();
+        assert_eq!(store.cached("vars.a").unwrap(), None);
+        store.put_cached("vars.a", "1").unwrap();
+        store.put_cached("vars.a", "2").unwrap();
+        assert_eq!(store.cached("vars.a").unwrap().as_deref(), Some("2"));
+        assert!(store.delete_cached("vars.a").unwrap());
+        assert!(!store.delete_cached("vars.a").unwrap());
+    }
 
     fn row(seq: u64, cause: Option<u64>) -> JournalRow {
         JournalRow {

@@ -1,6 +1,6 @@
 # Milestone 8: Dataflow
 
-- **Status:** In progress (Phases 0–2 done)
+- **Status:** In progress (Phases 0–3 done)
 
 Covalence gets its continuous half. Values can be computed, accumulated and sent somewhere without a flow ([ADR 0029](../adr/0029-dataflow-sources-transforms-sinks.md)):
 - **Reducers** (`toggle`, `position`, `select` …) are sandboxed transform definitions.
@@ -50,12 +50,12 @@ Helpers on controls are reducers whose input defaults to their control. Layers b
 Notes from Phase 2:
 - The turn's evaluations have a 2 ms limit in release builds, as ADR 0033 says, and 50 ms in debug builds, where building a fresh QuickJS context alone can take longer.
 - A reducer whose value is `undefined` (an `absolute` before any input) keeps its metadata on the leaf but can't journal it, since a delete op has no `reducer`. It restarts from `init` after a failover.
-- Not yet: the derived journal tier and `inputCause` (state spec §2.4), and the save-time `cycle` error on static reads, which needs the `variable` entity (Phase 3).
+- Not yet: the derived journal tier and `inputCause` (state spec §2.4).
 
 ### Phase 3: Variables and sinks (Rust)
-- [ ] The `variable` entity: schema, `initial`, `persist`, `value`, `to`, `journal`. `set` on a computed variable is `readOnly`; an undeclared `set` warns.
-- [ ] Sinks: `set`, and `action` with rate limit, latest value wins, `undefined` sends nothing, and no firing on a change that descends from the sink's own action.
-- [ ] Persisted variables restored from `state_cache` before triggers are armed.
+- [x] The `variable` entity: schema, `initial`, `persist`, `value`, `to`, `journal`. `set` on a computed variable is `readOnly`; an undeclared `set` warns. `covalence_core::variable`, served at `/variables` through the generic entity routes. A `set` step on a computed variable is `readOnly` when the flow is saved and fails with `readOnly` if it runs anyway; one on an undeclared variable warns `undeclaredVariable`. Saving a variable whose static reads (`{ref}`s to `vars` and `vars.<name>` in expressions) already form a cycle is `cycle`.
+- [x] Sinks: `set`, and `action` with rate limit, latest value wins, `undefined` sends nothing, and no firing on a change that descends from the sink's own action. A `set` sink writes in the same turn, so cells reading its variable settle with it. An `action` sink's request goes through the core (output gate, journal) with origin `{core: "dataflow"}` and `cause` → the cell's patch. "Its own action" is an `action.requested` from the dataflow to the same connection and action whose `cause` is a patch of the same cell, found within 32 links of `cause`. A cell's first evaluation after it's added, edited, resumed or re-aliased sends nothing.
+- [x] Persisted variables restored from `state_cache` before triggers are armed. The store gains a `state_cache` table, keyed by variable ID so a rename keeps it, holding `{value, reducer?}`; the server writes it whenever a persisted variable's value changes, and at startup puts it back, journaled, before cells are added (so reducers resume) and before flows are armed. A writable variable with nothing cached gets its `initial`.
 
 ### Phase 4: Helpers on controls (Rust)
 - [ ] `ControlBinding.helpers` and `gestures`. Helper cells under the layer or the surface; helper events at their cell; `{layer, controls}` triggers matching helper event names.

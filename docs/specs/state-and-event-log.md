@@ -272,7 +272,7 @@ Surface output (key images, LEDs) is gated by role only. A standby node doesn't 
 | `project_ops` | The project op log |
 | `snapshots` | Restore points: a compacted copy of `entities` plus metadata |
 | `journal` | The runtime journal (time- and size-limited) |
-| `state_cache` | The last known state tree, so the UI shows `stale` values right after a restart. **(M8)** Persisted variables' values and `reducer` metadata are restored from it ([dataflow §6](dataflow.md)) |
+| `state_cache` | The last known state tree, so the UI shows `stale` values right after a restart. **(M8)** Persisted variables' values and `reducer` metadata are restored from it ([dataflow §6](dataflow.md)). M8 keeps only those, keyed by the variable's ID, and writes them as they change rather than with the journal's batch |
 | `assets` | Content-addressed blobs (icons, images) |
 | `meta` | `schemaVersion`, node ID, current term |
 

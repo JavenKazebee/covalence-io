@@ -92,6 +92,9 @@ fn check(json: &Value) -> (Value, Value) {
     )]
     .into();
     let evaluator = QuickJs::default();
+    // `lastPick` is writable and `isLive` computed (dataflow §6).
+    let variables: BTreeMap<String, bool> =
+        [("lastPick".to_owned(), false), ("isLive".to_owned(), true)].into();
     let ctx = Context {
         conns: &conns,
         taken_slugs: &taken,
@@ -99,6 +102,7 @@ fn check(json: &Value) -> (Value, Value) {
         surfaces: &BTreeSet::new(),
         flows: &BTreeSet::new(),
         evaluator: &evaluator,
+        variables: &variables,
     };
     match Flow::parse(json) {
         Err(errors) => (summary(&errors), json!([])),
@@ -163,6 +167,7 @@ fn problems_say_what_is_wrong() {
             surfaces: &BTreeSet::new(),
             flows: &BTreeSet::new(),
             evaluator: &QuickJs::default(),
+            variables: &BTreeMap::new(),
         },
     );
     let messages: Vec<&str> = report.errors.iter().map(|p| p.message.as_str()).collect();

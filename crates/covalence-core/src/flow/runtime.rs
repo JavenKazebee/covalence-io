@@ -150,6 +150,8 @@ struct Inner {
     evaluator: Arc<dyn Evaluator>,
     /// Connection aliases, for expressions.
     aliases: RwLock<Arc<BTreeMap<String, ConnId>>>,
+    /// Computed variables' slugs, which `set` can't write (dataflow §6).
+    read_only: RwLock<std::collections::BTreeSet<String>>,
     book: Mutex<Book>,
     /// `state` triggers, by flow and trigger index.
     watches: Mutex<BTreeMap<(FlowId, usize), Watch>>,
@@ -233,6 +235,7 @@ impl Runtime {
             actions,
             evaluator,
             aliases: RwLock::new(Arc::new(BTreeMap::new())),
+            read_only: RwLock::new(std::collections::BTreeSet::new()),
             book: Mutex::new(Book::default()),
             watches: Mutex::new(BTreeMap::new()),
             patterns: Mutex::new(BTreeMap::new()),
@@ -250,6 +253,16 @@ impl Runtime {
             matcher,
             watcher,
         }
+    }
+
+    /// The computed variables, by slug: a `set` step on one fails with
+    /// `readOnly` (dataflow §6).
+    pub fn set_read_only(&self, slugs: std::collections::BTreeSet<String>) {
+        *self
+            .inner
+            .read_only
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = slugs;
     }
 
     /// Sets the connection aliases expressions can read, by alias.
@@ -2132,6 +2145,12 @@ impl RunTask {
                 };
             }
             SetTarget::Vars => {
+                if read_lock(&self.inner.read_only).contains(name) {
+                    return Ok(Err(RunError::new(
+                        "readOnly",
+                        format!("vars.{name} is computed; only its own value sets it"),
+                    )));
+                }
                 let at = StatePath::new(VARS_ROOT, vec![PathSegment::Key(name.to_owned())]);
                 let op = match &value {
                     Some(v) => JournalOp::Set {
@@ -2278,4 +2297,8 @@ pub(crate) fn source_matches(
             && control_in(controls, eval))
         .then_some((None, None)),
     }
+}
+
+fn read_lock<T>(lock: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+    lock.read().unwrap_or_else(|e| e.into_inner())
 }

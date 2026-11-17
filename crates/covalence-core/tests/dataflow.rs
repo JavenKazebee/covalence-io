@@ -102,6 +102,7 @@ fn cell(id: &str, home: StatePath, source: Json) -> CellDef {
         home,
         source: Source::from_json(source).unwrap(),
         journal: JournalMode::Full,
+        to: Vec::new(),
     }
 }
 
@@ -515,4 +516,249 @@ fn a_failing_cell_keeps_its_value_and_a_removed_one_takes_its_value_with_it() {
 
     df.remove("variable:x", None);
     assert_eq!(value(&shared, &var("x")), None);
+}
+
+// ---------------------------------------------------------------------------
+// Sinks (dataflow §7): M8 Phase 3
+
+/// Journals requests as the core does, and keeps them.
+#[derive(Default)]
+struct Recorder {
+    journal: std::sync::OnceLock<Arc<Journal>>,
+    sent: std::sync::Mutex<Vec<(Seq, String, Json)>>,
+}
+
+impl covalence_core::engine::Actions for Recorder {
+    fn request_action(
+        &self,
+        req: covalence_core::engine::ActionRequest,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<
+                        covalence_core::engine::ActionOutcome,
+                        covalence_core::CoreError,
+                    >,
+                > + Send
+                + '_,
+        >,
+    > {
+        Box::pin(async move {
+            let journal = self.journal.get().unwrap();
+            let entry = journal
+                .append(
+                    NewEntry::new(
+                        req.origin.clone(),
+                        Record::ActionRequested(covalence_core::journal::ActionRequestedRecord {
+                            call: "call".into(),
+                            conn: req.conn.clone(),
+                            key: req.key.clone(),
+                            action: req.action.clone(),
+                            params: req.params.clone(),
+                            deadline: None,
+                        }),
+                    )
+                    .cause(req.cause),
+                )
+                .unwrap();
+            self.sent.lock().unwrap().push((
+                entry.seq,
+                req.action.clone(),
+                covalence_core::expr::to_json(&req.params),
+            ));
+            Ok(covalence_core::engine::ActionOutcome {
+                call: "call".into(),
+                requested: entry.seq,
+                verdict: covalence_core::gate::Verdict::Dispatch,
+                result_seq: None,
+                result: None,
+            })
+        })
+    }
+}
+
+impl Recorder {
+    fn start(shared: &Shared, df: &Dataflow) -> Arc<Recorder> {
+        let r = Arc::new(Recorder::default());
+        let _ = r.journal.set(shared.journal.clone());
+        df.set_actions(r.clone());
+        r
+    }
+
+    fn sent(&self) -> Vec<(Seq, String, Json)> {
+        self.sent.lock().unwrap().clone()
+    }
+
+    /// Waits up to a second for `n` requests.
+    fn wait_for(&self, n: usize) -> Vec<(Seq, String, Json)> {
+        for _ in 0..200 {
+            if self.sent.lock().unwrap().len() >= n {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        self.sent()
+    }
+}
+
+/// A patch with a cause, as a device's answer to an action is journaled.
+fn set_caused(shared: &Shared, at: &StatePath, value: Value, cause: Seq) -> Seq {
+    let journal = &shared.journal;
+    shared.state.mutate(|tree| {
+        let seq = journal
+            .append(
+                NewEntry::new(
+                    Origin::conn(at.conn.clone()),
+                    Record::StatePatch(StatePatchRecord {
+                        ops: vec![JournalOp::Set {
+                            path: at.clone(),
+                            value: value.clone(),
+                            reducer: None,
+                        }],
+                        replaces: None,
+                        device_ts: None,
+                    }),
+                )
+                .cause(cause),
+            )
+            .unwrap()
+            .seq;
+        let meta = Meta {
+            ts: 0,
+            seq,
+            quality: Quality::Good,
+            source: Setter::Conn(at.conn.clone()),
+        };
+        (seq, tree.set(at, &value, &meta))
+    })
+}
+
+fn with_sinks(def: CellDef, to: Json) -> CellDef {
+    CellDef {
+        to: serde_json::from_value(to).unwrap(),
+        ..def
+    }
+}
+
+#[test]
+fn a_set_sink_writes_its_variable_in_the_same_turn() {
+    let shared = shared();
+    let df = Dataflow::start(&shared);
+    aliases(&df);
+    df.put(
+        with_sinks(
+            cell("variable:double", var("double"), expr("vh.level * 2")),
+            json!([{ "set": { "root": "vars", "path": ["copy"] } }]),
+        ),
+        None,
+    );
+    // And a cell that reads what the sink writes.
+    df.put(
+        cell("variable:plus", var("plus"), expr("vars.copy + 1")),
+        None,
+    );
+    let mut feed = shared.state.subscribe();
+    set(&shared, &path("c1", &["level"]), Value::from(3));
+    let dirty = feed.try_recv().unwrap();
+    assert!(
+        dirty.contains(&var("copy")) && dirty.contains(&var("plus")),
+        "{dirty:?}"
+    );
+    assert_eq!(value(&shared, &var("copy")), Some(json!(6)));
+    assert_eq!(value(&shared, &var("plus")), Some(json!(7)));
+    let copy = last_patch(&shared, &var("copy")).unwrap();
+    assert_eq!(
+        copy.cause,
+        Some(last_patch(&shared, &var("double")).unwrap().seq)
+    );
+}
+
+#[test]
+fn an_action_sink_sends_changes_rate_limited_with_the_latest_value() {
+    let shared = shared();
+    let df = Dataflow::start(&shared);
+    aliases(&df);
+    let sent = Recorder::start(&shared, &df);
+    let level = path("c1", &["level"]);
+    set(&shared, &level, Value::from(1));
+    df.put(
+        with_sinks(
+            cell(
+                "variable:out",
+                var("out"),
+                expr("vh.level > 0 ? vh.level : undefined"),
+            ),
+            json!([{ "action": { "target": "c1", "action": "setVolume", "param": "level",
+                                  "params": { "bus": 2 }, "rateLimit": "200ms" } }]),
+        ),
+        None,
+    );
+    // Loading it sends nothing.
+    std::thread::sleep(Duration::from_millis(50));
+    assert!(sent.sent().is_empty());
+
+    for v in 2..6 {
+        set(&shared, &level, Value::from(v));
+    }
+    let first = sent.wait_for(1);
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].2, json!({ "bus": 2, "level": 2 }));
+    // The rest wait for the rate limit, and only the latest goes.
+    let all = sent.wait_for(2);
+    assert_eq!(all.len(), 2, "{all:?}");
+    assert_eq!(all[1].2["level"], json!(5));
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(sent.sent().len(), 2);
+    // Its request is caused by the cell's patch.
+    let request = shared.journal.get(all[0].0).unwrap().unwrap();
+    let patch = shared.journal.get(request.cause.unwrap()).unwrap().unwrap();
+    assert!(matches!(
+        patch.origin,
+        Origin::Core {
+            core: CoreOrigin::Dataflow
+        }
+    ));
+
+    // `undefined` sends nothing.
+    set(&shared, &level, Value::from(0));
+    assert_eq!(value(&shared, &var("out")), None);
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(sent.sent().len(), 2);
+}
+
+#[test]
+fn a_sink_stays_quiet_for_its_own_echo_and_for_edits() {
+    let shared = shared();
+    let df = Dataflow::start(&shared);
+    aliases(&df);
+    let sent = Recorder::start(&shared, &df);
+    let volume = path("c1", &["volume"]);
+    set(&shared, &volume, Value::from(1));
+    let fader = || {
+        with_sinks(
+            cell("variable:fader", var("fader"), expr("vh.volume")),
+            json!([{ "action": { "target": "c1", "action": "setVolume", "param": "level" } }]),
+        )
+    };
+    df.put(fader(), None);
+    // A change from elsewhere is sent on.
+    set(&shared, &volume, Value::from(5));
+    let requests = sent.wait_for(1);
+    assert_eq!(requests.len(), 1);
+    // The mixer's answer to that request isn't sent back.
+    set_caused(&shared, &volume, Value::from(6), requests[0].0);
+    assert_eq!(value(&shared, &var("fader")), Some(json!(6)));
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(sent.sent().len(), 1);
+    // An edit that changes the value sends nothing either.
+    df.put(
+        with_sinks(
+            cell("variable:fader", var("fader"), expr("vh.volume * 10")),
+            json!([{ "action": { "target": "c1", "action": "setVolume", "param": "level" } }]),
+        ),
+        Some(1),
+    );
+    assert_eq!(value(&shared, &var("fader")), Some(json!(60)));
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(sent.sent().len(), 1);
 }
