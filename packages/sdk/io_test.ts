@@ -115,6 +115,46 @@ Deno.test("tcp.connect is shaped like a Deno.Conn", async () => {
   await assertRejects(() => io.tcp.connect({ port: 1 }), ActionError);
 });
 
+Deno.test("tcp state changes keep their place among the bytes", async () => {
+  const core = new FakeCore();
+  const io = new Transports(core);
+  // The first state beats the answer to the wrapper: it's replayed to it.
+  core.answer = (m) => {
+    if (m === "io.open") {
+      io.receive("io.state", {
+        handle: "h1",
+        state: "reconnecting",
+        error: "refused",
+      });
+      return { handle: "h1" };
+    }
+    return {};
+  };
+  const log: string[] = [];
+  const conn = await io.tcp.connect({ port: 9990, reconnect: true });
+  assertEquals(conn.handle.state, "reconnecting");
+  conn.onState((s) => log.push(s));
+
+  io.receive("io.state", { handle: "h1", state: "open" });
+  io.receive("io.data", { handle: "h1", data: [1, 2] });
+  io.receive("io.state", { handle: "h1", state: "reconnecting", error: "x" });
+  io.receive("io.state", { handle: "h1", state: "open" });
+  io.receive("io.data", { handle: "h1", data: [3] });
+  assertEquals(log, [], "the first change waited for a listener and a read");
+
+  const buf = new Uint8Array(1);
+  assertEquals(await conn.read(buf), 1);
+  assertEquals(log, ["reconnecting", "open"], "before [1, 2]");
+  assertEquals(await conn.read(buf), 1);
+  assertEquals(log, ["reconnecting", "open", "reconnecting", "open"]);
+  assertEquals(await conn.read(buf), 1);
+  assertEquals([...buf], [3]);
+
+  // Nothing unread, and a listener: at once.
+  io.receive("io.state", { handle: "h1", state: "reconnecting", error: "y" });
+  assertEquals(log.at(-1), "reconnecting");
+});
+
 Deno.test("tcp readable and writable streams", async () => {
   const core = new FakeCore();
   const io = new Transports(core);

@@ -127,13 +127,23 @@ async fn plugins(State(app): State<Arc<App>>) -> Json<JsonValue> {
     Json(JsonValue::Array(out))
 }
 
-/// The project's connections, and `core`, which always exists.
+/// The project's connections, and `core`, which always exists. A connection
+/// whose plugin opens its own sockets says `directNetwork` (ADR 0025): its
+/// traffic isn't seen by the core, so the UI marks it as not inspectable.
 async fn connections(State(app): State<Arc<App>>) -> Json<JsonValue> {
-    let mut out: Vec<JsonValue> = app
-        .conns()
-        .values()
-        .map(|c| serde_json::to_value(c).expect("a connection encodes as JSON"))
-        .collect();
+    let conns: Vec<Connection> = app.conns().values().cloned().collect();
+    let mut out = Vec::with_capacity(conns.len() + 1);
+    for conn in conns {
+        let direct = app
+            .manifest(&conn.plugin)
+            .await
+            .is_some_and(|m| m.direct_network == Some(true));
+        let mut json = serde_json::to_value(&conn).expect("a connection encodes as JSON");
+        if direct {
+            json["directNetwork"] = JsonValue::Bool(true);
+        }
+        out.push(json);
+    }
     out.push(json!({
         "id": core_conn::CORE,
         "alias": core_conn::CORE,

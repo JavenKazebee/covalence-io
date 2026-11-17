@@ -6,20 +6,35 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import type { ActionError } from "@covalence-io/sdk";
 import { ConnectionRuntime } from "@covalence-io/sdk/runtime";
+import { LocalTcp } from "@covalence-io/sdk/testing";
 import plugin from "./mod.ts";
 import { FakeVideohub } from "./fake_server.ts";
 
 type Sent = [string, Record<string, unknown>];
 
+/** The runtime, with `LocalTcp` standing in for the core's sockets. */
 function harness(mode: "live" | "simulate", config: Record<string, unknown>) {
   const sent: Sent[] = [];
+  /** `io.open` requests, as the core would see them. */
+  const opened: Record<string, unknown>[] = [];
   const waiters: (() => void)[] = [];
-  const rt = new ConnectionRuntime(plugin, { alias: "vh", mode, config }, {
-    notify(m, p) {
-      sent.push([m, p as Record<string, unknown>]);
-      waiters.splice(0).forEach((w) => w());
+  const tcp = new LocalTcp((m, p) => rt.receive(m, p));
+  const rt: ConnectionRuntime = new ConnectionRuntime(
+    plugin,
+    { alias: "vh", mode, config },
+    {
+      notify(m, p) {
+        if (tcp.notify(m, p)) return;
+        sent.push([m, p as Record<string, unknown>]);
+        waiters.splice(0).forEach((w) => w());
+      },
+      request(m, p) {
+        if (m === "io.open") opened.push(p as Record<string, unknown>);
+        return tcp.request(m, p) ??
+          Promise.reject(new Error(`unexpected ${m}`));
+      },
     },
-  });
+  );
   /** Waits until a sent message matches. */
   async function until(match: (s: Sent) => boolean, ms = 3000): Promise<Sent> {
     const deadline = Date.now() + ms;
@@ -37,7 +52,7 @@ function harness(mode: "live" | "simulate", config: Record<string, unknown>) {
       });
     }
   }
-  return { rt, sent, until };
+  return { rt, sent, opened, until, tcp };
 }
 
 const status = (s: string) => ([m, p]: Sent) =>
@@ -98,12 +113,22 @@ Deno.test("simulate: routes, patches and emits once per change", async () => {
 
 Deno.test("live: prelude becomes the snapshot; routes go through the device", async () => {
   const hub = new FakeVideohub({ inputs: 4, outputs: 2 });
-  const { rt, sent, until } = harness("live", {
+  const { rt, sent, opened, until } = harness("live", {
     host: hub.hostname,
     port: hub.port,
   });
   try {
     assert(await rt.start());
+    // One socket through the core, which reconnects it and cuts it in lines.
+    assertEquals(opened, [{
+      kind: "tcp",
+      target: `${hub.hostname}:${hub.port}`,
+      options: {
+        reconnect: true,
+        backoff: { initialMs: 500, maxMs: 5000 },
+        framing: "line",
+      },
+    }]);
     assertEquals(sent.map(([m, p]) => m === "conn.status" ? p.status : m), [
       "connecting",
       "state.snapshot",
@@ -201,5 +226,32 @@ Deno.test("live: an unreachable device reports error and actions fail not_connec
     assertEquals(err.code, "not_connected");
   } finally {
     await rt.destroy("test");
+  }
+});
+
+Deno.test("live: a device that comes up later is found by the core's retries", async () => {
+  const probe = new FakeVideohub();
+  const port = probe.port;
+  await probe.close();
+  const { rt, sent, opened, until } = harness("live", {
+    host: "127.0.0.1",
+    port,
+  });
+  let hub: FakeVideohub | undefined;
+  try {
+    assert(await rt.start());
+    assertEquals(sent.at(-1)![1].status, "error");
+    hub = new FakeVideohub({ inputs: 2, outputs: 2, port });
+    await until(status("ok"));
+    assertEquals(opened.length, 1, "the same socket, reconnected");
+    await rt.invoke({
+      call: "c",
+      action: "route",
+      params: { output: 0, input: 1 },
+    });
+    assertEquals(hub.routes, [1, 1]);
+  } finally {
+    await rt.destroy("test");
+    await hub?.close();
   }
 });

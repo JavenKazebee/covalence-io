@@ -1,13 +1,15 @@
 /**
  * A fake core for testing the host end to end: spawns the host process with
  * the coarse allowlist from README.md and speaks the protocol on its stdio.
- * Answers the host's `host.hello` and `ping` itself.
+ * Answers the host's `host.hello` and `ping` itself, and its `tcp` sockets
+ * with `LocalTcp`, as the core would.
  *
  * @module
  */
 
 import {
   encodeFrame,
+  type ErrorCode,
   type Format,
   FrameDecoder,
   type HostHello,
@@ -15,6 +17,7 @@ import {
   type Notification,
   type ProtocolError,
 } from "@covalence-io/protocol";
+import { LocalTcp } from "@covalence-io/sdk/testing";
 
 const ROOT = new URL("../../", import.meta.url).pathname.replace(/\/$/, "");
 
@@ -55,6 +58,13 @@ export class FakeCore {
   readonly #reading: Promise<void>;
   readonly #stderr: Promise<string>;
   #nextId = 1;
+  /** Which connection each socket belongs to. */
+  readonly #socketConns = new Map<string, string>();
+  readonly #tcp = new LocalTcp((m, p) => {
+    const conn = this.#socketConns.get((p as { handle: string }).handle);
+    if (conn === undefined) return;
+    this.#send({ t: "ntf", m, p: p as Record<string, unknown>, conn });
+  });
   #helloSeen!: () => void;
   readonly helloSeen: Promise<void> = new Promise((r) => this.#helloSeen = r);
 
@@ -93,6 +103,8 @@ export class FakeCore {
             this.#helloSeen();
           } else if (msg.m === "ping") {
             this.#send({ t: "res", id: msg.id, ok: true, r: {} });
+          } else if (msg.m === "io.open" && msg.p.kind === "tcp") {
+            this.#openTcp(msg.id, msg.p, msg.conn);
           } else {
             this.#send({
               t: "res",
@@ -107,10 +119,27 @@ export class FakeCore {
           if (msg.ok) waiter?.resolve(msg.r);
           else waiter?.reject(new CoreError(msg.e));
         } else {
+          if (this.#tcp.notify(msg.m, msg.p)) continue;
           this.notifications.push(msg);
           for (const wake of this.#wakers) wake();
         }
       }
+    }
+  }
+
+  async #openTcp(id: number, p: unknown, conn: string | undefined) {
+    try {
+      const r = await this.#tcp.request("io.open", p) as { handle: string };
+      if (conn !== undefined) this.#socketConns.set(r.handle, conn);
+      this.#send({ t: "res", id, ok: true, r });
+    } catch (err) {
+      const e = err as { code?: ErrorCode; message?: string };
+      this.#send({
+        t: "res",
+        id,
+        ok: false,
+        e: { code: e.code ?? "internal", message: e.message ?? String(err) },
+      });
     }
   }
 
@@ -163,6 +192,7 @@ export class FakeCore {
 
   /** Closes the host's stdin and waits for it to exit. */
   async close(): Promise<{ code: number; stderr: string }> {
+    this.#tcp.closeAll();
     await this.#writer.close().catch(() => {});
     const status = await this.#child.status;
     await this.#reading;
@@ -172,6 +202,7 @@ export class FakeCore {
 
   /** Kills the host. */
   kill() {
+    this.#tcp.closeAll();
     this.#child.kill("SIGKILL");
   }
 }

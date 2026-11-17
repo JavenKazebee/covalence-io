@@ -1,6 +1,6 @@
 # Milestone 7: Surfaces from plugins
 
-- **Status:** In progress (Phases 0–4 done)
+- **Status:** In progress (Phases 0–5 done)
 
 A real Stream Deck drives Covalence, through a plugin. The core gets a device layer: it enumerates HID and serial devices, watches hotplug, matches them to plugins' manifests and performs their I/O, so a plugin of plain TypeScript can drive hardware with no native add-ons ([ADR 0025](../adr/0025-device-drivers-are-plugins.md)). The plugin host carries the surface protocol ([plugin protocol §8](../specs/plugin-protocol.md)), and `io.covalence.streamdeck` translates between the deck's reports and M5's surface model. Network transports arrive too, and the Videohub plugin moves onto them. MIDI, Orbitals and controls beyond keys stay out.
 
@@ -55,8 +55,8 @@ A real Stream Deck drives Covalence, through a plugin. The core gets a device la
 - [x] A protocol-level simulator of the MK.2 for tests: `covalence_devices::fake::Mk2` answers the serial number and firmware feature reports, sends 512-byte key reports, and reassembles the JPEG of each key from its image reports. The UI's virtual deck is unchanged. The test plugin moved to pid.codes' test vendor ID, so it no longer competes with this plugin for MK.2s.
 
 ### Phase 5: Network transports and the Videohub plugin
-- [ ] The Videohub plugin moves from `Deno.connect` to `ctx.tcp`, with reconnects from the core.
-- [ ] `directNetwork` in the manifest, shown on the connection.
+- [x] The Videohub plugin moves from `Deno.connect` to `ctx.tcp`, with reconnects from the core. It opens one socket with `reconnect` and `line` framing, so the inspector shows the protocol a line at a time; the socket's `open` resets the prelude and `reconnecting` becomes `disconnected` (or `error` before the first prelude). A link that sends no prelude is closed and a fresh socket opened, with the plugin's own backoff. `TcpConn.onState` now keeps its place among the bytes: a change fires once the bytes before it have been read, and one that arrives before anything listens (the first `open` can beat `connect`'s answer) waits for the next `read`. `@covalence-io/sdk/testing` has `LocalTcp`, the core's `tcp` transport over Deno sockets, for testing plugins live without the core; the plugin's tests and the host's `FakeCore` use it. `crates/covalence-server/tests/videohub.rs` runs the plugin live through the real core against a fake Videohub: routes, the traffic view and a reconnect on the same handle.
+- [x] `directNetwork` in the manifest, shown on the connection: `GET /connections` says `directNetwork: true` for a connection whose plugin declares it (read from the manifest, not stored), and the connections list marks it "direct network". Its traffic is `inspectable: false`, as in Phase 2.
 
 ### Phase 6: UI
 - [ ] Found devices: what's plugged in, which plugin and connection hold each, and offers for unclaimed matches.

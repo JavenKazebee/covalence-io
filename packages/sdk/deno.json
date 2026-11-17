@@ -4,6 +4,7 @@
   "exports": {
     ".": "./mod.ts",
     "./runtime": "./runtime.ts",
-    "./simulator": "./simulator.ts"
+    "./simulator": "./simulator.ts",
+    "./testing": "./testing.ts"
   }
 }

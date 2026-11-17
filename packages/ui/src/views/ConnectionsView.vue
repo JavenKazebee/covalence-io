@@ -99,6 +99,11 @@ async function create() {
               class="badge"
               :class="conn.mode === 'live' ? 'good' : 'warn'"
             >{{ conn.mode }}</span>
+            <span
+              v-if="conn.directNetwork"
+              class="badge"
+              title="The plugin opens its own sockets, so Covalence can't show its traffic."
+            >direct network</span>
           </td>
           <td>
             <span

@@ -218,10 +218,18 @@ export interface NetAddr {
  * A TCP connection through the core, shaped like `Deno.Conn`: `read`,
  * `write`, `readable`, `writable`, `close`. With `reconnect`, it lives across
  * reconnects; `onState` says when it's up.
+ *
+ * `onState` keeps its place among the bytes: a change fires once everything
+ * that arrived before it has been read, so a reader that resets its parser on
+ * `open` never feeds it the last link's bytes. A change that comes before
+ * anything listens (the first `open` can beat `connect`'s answer) waits for
+ * the next `read` too.
  */
 export class TcpConn {
   readonly #handle: IoHandle;
-  readonly #chunks: Uint8Array[] = [];
+  /** Bytes, and state changes still behind unread bytes. */
+  readonly #queue: (Uint8Array | [IoStateKind, string | undefined])[] = [];
+  readonly #states = new Set<Listener<[IoStateKind, string | undefined]>>();
   #waiting: (() => void) | undefined;
   #readable: ReadableStream<Uint8Array> | undefined;
   #writable: WritableStream<Uint8Array> | undefined;
@@ -233,10 +241,15 @@ export class TcpConn {
     this.localAddr = { transport: "tcp", hostname: "0.0.0.0", port: 0 };
     this.remoteAddr = { transport: "tcp", hostname, port };
     handle.onData((d) => {
-      this.#chunks.push(d);
+      this.#queue.push(d);
       this.#wake();
     });
-    handle.onState(() => this.#wake());
+    handle.onState((state, error) => {
+      if (this.#queue.length === 0 && this.#states.size > 0) {
+        this.#fire(state, error);
+      } else this.#queue.push([state, error]);
+      this.#wake();
+    });
   }
 
   /** The core's handle, for state and the inspector. */
@@ -244,8 +257,28 @@ export class TcpConn {
     return this.#handle;
   }
 
+  /**
+   * Calls `fn` when the socket opens, closes or starts reconnecting, after
+   * the bytes before that have been read. Returns an unsubscribe.
+   */
   onState(fn: Listener<[IoStateKind, string | undefined]>): () => void {
-    return this.#handle.onState(fn);
+    this.#states.add(fn);
+    return () => this.#states.delete(fn);
+  }
+
+  #fire(state: IoStateKind, error: string | undefined) {
+    for (const fn of this.#states) fn(state, error);
+  }
+
+  /** Fires the state changes at the head of the queue. */
+  #flush() {
+    while (this.#queue.length > 0 && !(this.#queue[0] instanceof Uint8Array)) {
+      const [state, error] = this.#queue.shift() as [
+        IoStateKind,
+        string | undefined,
+      ];
+      this.#fire(state, error);
+    }
   }
 
   #wake() {
@@ -256,15 +289,19 @@ export class TcpConn {
 
   /** Reads into `p`. Resolves to the bytes read, or `null` once closed. */
   async read(p: Uint8Array): Promise<number | null> {
-    while (this.#chunks.length === 0) {
+    for (;;) {
+      this.#flush();
+      if (this.#queue.length > 0) break;
       if (this.#handle.closed) return null;
       await new Promise<void>((resolve) => this.#waiting = resolve);
     }
-    const chunk = this.#chunks[0];
+    const chunk = this.#queue[0] as Uint8Array;
     const n = Math.min(p.length, chunk.length);
     p.set(chunk.subarray(0, n));
-    if (n === chunk.length) this.#chunks.shift();
-    else this.#chunks[0] = chunk.subarray(n);
+    if (n === chunk.length) {
+      this.#queue.shift();
+      this.#flush();
+    } else this.#queue[0] = chunk.subarray(n);
     return n;
   }
 
@@ -484,6 +521,7 @@ export class Transports {
     kind: IoKind,
     target: string,
     options?: IoOptions,
+    wrap?: (handle: IoHandle) => void,
   ): Promise<IoHandle> {
     const params: Record<string, unknown> = { kind, target };
     if (options) params.options = options;
@@ -496,6 +534,8 @@ export class Transports {
       ? new SerialPort(handle, kind, target, this)
       : new IoHandle(handle, kind, target, this);
     this.#handles.set(handle, io);
+    // The wrapper listens before the events that beat the answer replay.
+    wrap?.(io);
     for (const [m, p] of this.#early.get(handle) ?? []) this.receive(m, p);
     this.#early.delete(handle);
     return io;
@@ -562,12 +602,14 @@ export class Transports {
       if (options.reconnect !== undefined) io.reconnect = options.reconnect;
       if (options.backoff) io.backoff = options.backoff;
       if (options.framing) io.framing = options.framing;
-      const handle = await this.open(
+      let conn!: TcpConn;
+      await this.open(
         "tcp",
         `${hostname}:${options.port}`,
         io,
+        (handle) => conn = new TcpConn(handle, hostname, options.port),
       );
-      return new TcpConn(handle, hostname, options.port);
+      return conn;
     },
   };
 

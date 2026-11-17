@@ -74,6 +74,8 @@ export interface Connection {
   permissions?: Record<string, unknown>;
   /** `core` (core actions §1): always there, can't be edited or deleted. */
   builtIn?: boolean;
+  /** Its plugin opens its own sockets, so its traffic can't be inspected. */
+  directNetwork?: boolean;
 }
 
 export interface NewConnection {
