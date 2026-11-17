@@ -125,6 +125,36 @@ export interface DeviceList {
   scanError?: { code: string; message: string; hint?: string };
 }
 
+/** One traffic entry (ADR 0025): the first 512 bytes in hex, or a note on the handle's state. */
+export interface TrafficEntry {
+  /** Milliseconds since the epoch. */
+  ts: number;
+  dir: "in" | "out" | "state";
+  hex?: string;
+  /** The whole message's length, which can be more than `hex` holds. */
+  len?: number;
+  note?: string;
+}
+
+/** One handle's recent traffic, oldest entry first. */
+export interface HandleTraffic {
+  handle: string;
+  conn: string;
+  kind: "tcp" | "udp" | "ws" | "serial" | "hid" | "midi";
+  /** The device ID or `host:port`. */
+  target: string;
+  open: boolean;
+  entries: TrafficEntry[];
+}
+
+export interface Traffic {
+  conn: string;
+  /** False when its plugin opens its own sockets (`directNetwork`). */
+  inspectable: boolean;
+  /** Open handles first. */
+  handles: HandleTraffic[];
+}
+
 export interface Health {
   host: HostStatus;
   journal: { lastSeq: number; term: number };
@@ -173,6 +203,8 @@ export const api = {
   /** Present devices; with `plugin`, only those its `devices` match. */
   devices: (plugin?: string) =>
     call<DeviceList>("GET", plugin === undefined ? "/devices" : `/devices?plugin=${encodeURIComponent(plugin)}`),
+  /** A connection's traffic, by ID or alias. */
+  traffic: (conn: string) => call<Traffic>("GET", `/connections/${encodeURIComponent(conn)}/traffic`),
   createConnection: (req: NewConnection) => call<Connection>("POST", "/connections", req),
   requestAction: (action: string, params: Record<string, unknown>) =>
     call<ActionOutcome>("POST", "/actions", { action, params }),

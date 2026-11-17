@@ -26,6 +26,8 @@ test("a Videohub connection is created from the manifest's config form", async (
   await page.goto("/#/connections");
   const create = page.getByRole("button", { name: "Create connection" });
   await expect(create).toBeVisible({ timeout: 15_000 });
+  // There's more than one plugin (the Stream Deck's too), so none is picked.
+  await page.getByLabel("Plugin").selectOption("io.covalence.videohub");
 
   // Required fields are checked before anything is sent.
   await create.click();
@@ -40,6 +42,18 @@ test("a Videohub connection is created from the manifest's config form", async (
   const row = page.getByRole("row").filter({ has: page.getByRole("link", { name: "vh", exact: true }) });
   await expect(row).toContainText("simulate");
   await expect(row).toContainText('"port":9990');
+});
+
+test("Connections lists devices, and a connection's traffic opens from its row", async ({ page }) => {
+  await page.goto("/#/connections");
+  await expect(page.getByRole("heading", { name: "Devices" })).toBeVisible();
+
+  const row = page.getByRole("row").filter({ has: page.getByRole("link", { name: "vh", exact: true }) });
+  await row.getByRole("link", { name: "Traffic" }).click();
+  await expect(page).toHaveURL(/#\/connections\/vh$/);
+  await expect(page.getByRole("heading", { name: "Traffic of vh" })).toBeVisible();
+  // Simulated, so it opens nothing through the core.
+  await expect(page.getByText("It hasn't opened anything through the core yet.")).toBeVisible();
 });
 
 test("State shows vh.outputs[*].source updating live as routes change", async ({ page, request }) => {

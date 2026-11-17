@@ -56,7 +56,10 @@ watch(
     <HostStatus />
   </header>
   <main>
-    <ConnectionsView v-if="route.tab === 'connections'" />
+    <ConnectionsView
+      v-if="route.tab === 'connections'"
+      :traffic-of="route.conn"
+    />
     <StateView
       v-else-if="route.tab === 'state'"
       :path="route.path"

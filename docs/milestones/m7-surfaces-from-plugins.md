@@ -1,6 +1,6 @@
 # Milestone 7: Surfaces from plugins
 
-- **Status:** In progress (Phases 0–5 done)
+- **Status:** In progress (Phases 0–6 done)
 
 A real Stream Deck drives Covalence, through a plugin. The core gets a device layer: it enumerates HID and serial devices, watches hotplug, matches them to plugins' manifests and performs their I/O, so a plugin of plain TypeScript can drive hardware with no native add-ons ([ADR 0025](../adr/0025-device-drivers-are-plugins.md)). The plugin host carries the surface protocol ([plugin protocol §8](../specs/plugin-protocol.md)), and `io.covalence.streamdeck` translates between the deck's reports and M5's surface model. Network transports arrive too, and the Videohub plugin moves onto them. MIDI, Orbitals and controls beyond keys stay out.
 
@@ -59,9 +59,9 @@ A real Stream Deck drives Covalence, through a plugin. The core gets a device la
 - [x] `directNetwork` in the manifest, shown on the connection: `GET /connections` says `directNetwork: true` for a connection whose plugin declares it (read from the manifest, not stored), and the connections list marks it "direct network". Its traffic is `inspectable: false`, as in Phase 2.
 
 ### Phase 6: UI
-- [ ] Found devices: what's plugged in, which plugin and connection hold each, and offers for unclaimed matches.
-- [ ] A connection's traffic view, and the "not inspectable" mark for `directNetwork`.
-- [ ] A surface shows its provider, and whether it's attached.
+- [x] Found devices: what's plugged in, which plugin and connection hold each, and offers for unclaimed matches. A Devices panel on the Connections screen lists `GET /devices`, looking again every 2 s since hotplug isn't on the WebSocket: each device's name, kind and USB IDs; the connection that holds it, its handle's state and whether a surface is attached on it; or, for one no connection holds, "Set up with …" for each plugin that matches it, which fills the new connection form (the plugin, live mode, an alias made as the server makes them for `autoCreate`, and the device in the config's `format: "device"` field). A device being given a connection by `autoCreate` says so.
+- [x] A connection's traffic view, and the "not inspectable" mark for `directNetwork`. `#/connections/<alias>`, linked from each connection's row and from the device it holds, shows `GET /connections/{id}/traffic` a handle at a time, newest first, polled every second unless paused: time, direction, length (and whether the 512 bytes kept were cut), and the bytes as text when they're mostly printable, as the Videohub's lines are, or as hex. A connection whose plugin declares `directNetwork` says it isn't inspectable, and why.
+- [x] A surface shows its provider, and whether it's attached. The surfaces list has a Provider column (the connection, linked to its traffic, or "This browser" for a virtual deck). A plugin's surface no longer gets a virtual deck on its page: it shows whether it's attached, its provider, model and serial, and the layers that fit the controls it last attached with.
 
 ### Phase 7: Acceptance
 - [ ] The Rust end-to-end test against fake devices runs in CI.

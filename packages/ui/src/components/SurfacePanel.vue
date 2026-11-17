@@ -3,17 +3,19 @@ import { computed, ref, watch } from "vue";
 import { api, ApiError } from "../api";
 import { useLiveState } from "../live/useLiveState";
 import { hrefOf, navigate } from "../nav";
+import { useCatalogStore } from "../stores/catalog";
 import { useSurfacesStore } from "../stores/surfaces";
-import { deckControls, missingControls, models, type Surface } from "../surfaces/model";
+import { deckControls, missingControls, models, type ControlDef, type Surface } from "../surfaces/model";
 import VirtualDeck from "./VirtualDeck.vue";
 
 /**
- * One surface: its virtual deck, attached while this is open, the layer it
- * shows, and its settings.
+ * One surface: its virtual deck, attached while this is open, or the
+ * connection that provides it; the layer it shows, and its settings.
  */
 const props = defineProps<{ id: string }>();
 
 const surfaces = useSurfacesStore();
+const catalog = useCatalogStore();
 const stored = computed(() => surfaces.surface(props.id));
 const slug = computed(() => stored.value?.slug ?? "");
 const live = useLiveState(() => (slug.value === "" ? "" : `surface.${slug.value}`));
@@ -24,8 +26,29 @@ const shown = computed(() => {
   const layer = value("current.main");
   return typeof layer === "string" ? surfaces.layerBySlug(layer) : undefined;
 });
-/** The controls the virtual deck attaches with. */
+/** Whether a plugin's device is attached as this surface, from `surface.<slug>.connected`. */
+const attached = computed(() => value("connected") === true);
+
+/** What a plugin's surface last attached with; the server knows only once it has attached. */
+const attachedControls = ref<ControlDef[] | undefined>(undefined);
+watch(
+  [() => props.id, () => stored.value?.provider, attached],
+  async ([id, provider]) => {
+    if (provider === undefined) return;
+    try {
+      const got = await api.surfaceControls(id);
+      if (id === props.id) attachedControls.value = got;
+    } catch {
+      // 404 until it has attached since the server started.
+      if (id === props.id) attachedControls.value = undefined;
+    }
+  },
+  { immediate: true },
+);
+
+/** The controls the surface has: the virtual deck's, or what the plugin's device attached with. */
 const controls = computed(() => {
+  if (stored.value?.provider !== undefined) return attachedControls.value;
   const model = stored.value === undefined ? undefined : models[stored.value.model];
   return model === undefined ? undefined : deckControls(model);
 });
@@ -107,7 +130,36 @@ async function remove() {
     <section class="panel surface">
       <h2>{{ stored.name }}</h2>
       <div class="layout">
-        <VirtualDeck :surface="stored" />
+        <div
+          v-if="stored.provider !== undefined"
+          class="provided"
+        >
+          <p>
+            <span
+              class="badge"
+              :class="attached ? 'good' : ''"
+            >{{ attached ? "Attached" : "Detached" }}</span>
+          </p>
+          <p>
+            Provided by
+            <a :href="hrefOf({ tab: 'connections', conn: catalog.alias(stored.provider) })"><code>{{ catalog.alias(stored.provider) }}</code></a>
+          </p>
+          <p class="muted">
+            <code>{{ stored.model }}</code><template v-if="stored.serial">
+              · serial <code>{{ stored.serial }}</code>
+            </template>
+          </p>
+          <p
+            v-if="controls"
+            class="muted"
+          >
+            {{ controls.length }} controls
+          </p>
+        </div>
+        <VirtualDeck
+          v-else
+          :surface="stored"
+        />
         <div class="side">
           <div class="field">
             <label for="surface-layer">Showing</label>
@@ -129,7 +181,11 @@ async function remove() {
               </option>
             </select>
             <small
-              v-if="fitting.length === 0"
+              v-if="controls === undefined"
+              class="hint"
+            >Its controls are known once it has attached.</small>
+            <small
+              v-else-if="fitting.length === 0"
               class="hint"
             >No layers fit it yet.
               <a :href="hrefOf({ tab: 'surfaces' })">Make one</a> from it.</small>
@@ -145,7 +201,10 @@ async function remove() {
               :href="hrefOf({ tab: 'surfaces', layer: shown.id })"
             >Edit {{ shown.name }}</a>
           </p>
-          <p class="hint">
+          <p
+            v-if="stored.provider === undefined"
+            class="hint"
+          >
             Press keys with the mouse, or focus one and hold Space. Each press is a
             <code>control</code> event a flow can trigger on; the keys show what their layer binds.
           </p>
@@ -221,6 +280,14 @@ async function remove() {
   flex-wrap: wrap;
   gap: 1.5rem;
   align-items: flex-start;
+}
+
+.provided {
+  min-width: 14rem;
+}
+
+.provided p {
+  margin: 0 0 0.5rem;
 }
 
 .side {

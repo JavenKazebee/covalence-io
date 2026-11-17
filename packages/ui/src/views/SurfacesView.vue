@@ -5,12 +5,14 @@ import LayerEditor from "../components/LayerEditor.vue";
 import SurfacePanel from "../components/SurfacePanel.vue";
 import { useLiveState } from "../live/useLiveState";
 import { hrefOf, navigate } from "../nav";
+import { useCatalogStore } from "../stores/catalog";
 import { useSurfacesStore } from "../stores/surfaces";
 import { deckControls, missingControls, models, toLayerControl, VIRTUAL_DECK, virtualDeck, type ControlDef } from "../surfaces/model";
 
 defineProps<{ surface?: string; layer?: string; control?: string }>();
 
 const surfaces = useSurfacesStore();
+const catalog = useCatalogStore();
 const live = useLiveState("surface");
 
 onMounted(() => void surfaces.refresh());
@@ -133,6 +135,7 @@ async function createLayer() {
           <tr>
             <th>Name</th>
             <th>Model</th>
+            <th>Provider</th>
             <th>Attached</th>
             <th>Showing</th>
           </tr>
@@ -151,6 +154,16 @@ async function createLayer() {
             </td>
             <td class="muted">
               {{ models[s.model]?.name ?? s.model }}
+            </td>
+            <td>
+              <a
+                v-if="s.provider !== undefined"
+                :href="hrefOf({ tab: 'connections', conn: catalog.alias(s.provider) })"
+              ><code>{{ catalog.alias(s.provider) }}</code></a>
+              <span
+                v-else
+                class="muted"
+              >This browser</span>
             </td>
             <td>
               <span

@@ -5,6 +5,8 @@ export type Tab = (typeof tabs)[number];
 
 export interface Route {
   tab: Tab;
+  /** `#/connections/<alias>`: the connection whose traffic is open. */
+  conn?: string;
   /** `#/state/vh.outputs`: the state path to show. */
   path?: string;
   /** `#/journal/42`: the journal entry whose `why` chain is open. */
@@ -29,6 +31,7 @@ export function parseHash(hash: string): Route {
   const head = slash === -1 ? body : body.slice(0, slash);
   const rest = slash === -1 ? "" : safeDecode(body.slice(slash + 1));
   const tab = tabs.find((t) => t === head) ?? "connections";
+  if (tab === "connections" && rest !== "") return { tab, conn: rest };
   if (tab === "state" && rest !== "") return { tab, path: rest };
   if (tab === "journal" && /^[1-9]\d*$/.test(rest)) return { tab, seq: Number(rest) };
   if (tab === "flows" && rest !== "") return { tab, flow: rest };
@@ -50,6 +53,7 @@ function safeDecode(text: string): string {
 }
 
 export function hrefOf(route: Route): string {
+  if (route.tab === "connections" && route.conn) return `#/connections/${encodeURIComponent(route.conn)}`;
   if (route.tab === "state" && route.path) return `#/state/${encodeURIComponent(route.path)}`;
   if (route.tab === "journal" && route.seq !== undefined) return `#/journal/${route.seq}`;
   if (route.tab === "flows" && route.flow) return `#/flows/${encodeURIComponent(route.flow)}`;

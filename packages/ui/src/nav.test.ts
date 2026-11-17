@@ -9,6 +9,7 @@ describe("hash routes", () => {
   it("round-trips every route", () => {
     for (const route of [
       { tab: "connections" },
+      { tab: "connections", conn: "vh" },
       { tab: "state" },
       { tab: "state", path: 'vh.outputs["SDI 4"]' },
       { tab: "actions" },

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { api, type DeviceEntry } from "../api";
+import { deviceLabel as label } from "../devices/model";
 
 /**
  * Picks a device for a connection's `format: "device"` field: the devices
@@ -42,11 +43,6 @@ const choices = computed(() => {
   const missing = chosen !== null && !free.some((d) => d.id === chosen);
   return { free, missing: missing ? chosen : null };
 });
-
-function label(d: DeviceEntry): string {
-  const name = d.product ?? d.manufacturer ?? d.kind.toUpperCase();
-  return d.serial ? `${name} (${d.serial})` : `${name} at ${d.path}`;
-}
 </script>
 
 <template>
