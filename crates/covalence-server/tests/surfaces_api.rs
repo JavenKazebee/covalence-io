@@ -330,13 +330,27 @@ async fn surfaces_layers_and_bindings_survive_a_restart() {
             None,
         )
         .unwrap();
+    // What surfaces show is kept: one moved off its start layer, and one with
+    // no start layer, shown something while detached.
+    let (lights, _) = app.save_layer(&deck_layer("Lights"), None).unwrap();
+    let (side, _) = app
+        .save_surface(
+            &json!({ "name": "Side deck", "model": "virtual.deck15" }),
+            None,
+        )
+        .unwrap();
+    let system = covalence_core::journal::Origin::system;
+    app.surfaces()
+        .show(&surface.id, Some(&lights.id), system())
+        .unwrap();
+    app.surfaces()
+        .show(&side.id, Some(&layer.id), system())
+        .unwrap();
     // A key held when the server stops.
-    let attach: covalence_core::surface::Attach = {
-        let mut params = attach("fohDeck")["params"].clone();
-        params.as_object_mut().unwrap().remove("surface");
-        serde_json::from_value(params).unwrap()
-    };
-    let link = app.surfaces().attach(&surface.id, attach).unwrap();
+    let link = app
+        .surfaces()
+        .attach(&surface.id, core_attach("fohDeck"))
+        .unwrap();
     link.input
         .send(covalence_core::surface::Input {
             control: "k0".into(),
@@ -360,7 +374,9 @@ async fn surfaces_layers_and_bindings_survive_a_restart() {
     };
     tokio::time::timeout(WAIT, held).await.unwrap();
     app.shutdown().await;
-    drop(link);
+    // Kept until the end: dropping it detaches, which the stopped app would
+    // still journal, racing the next one's writes to the same database.
+    let _link = link;
 
     let app = start();
     assert_eq!(
@@ -370,12 +386,42 @@ async fn surfaces_layers_and_bindings_survive_a_restart() {
     );
     assert_eq!(
         app.layers(),
-        BTreeMap::from([(layer.id.clone(), layer.clone())])
+        BTreeMap::from([
+            (layer.id.clone(), layer.clone()),
+            (lights.id.clone(), lights.clone())
+        ])
     );
     assert_eq!(
         app.surface_entities(),
-        BTreeMap::from([(surface.id.clone(), surface)])
+        BTreeMap::from([
+            (surface.id.clone(), surface.clone()),
+            (side.id.clone(), side.clone())
+        ])
     );
+    // Each shows what it showed last, not its start layer, and says so in
+    // state before it attaches.
+    assert_eq!(app.surfaces().shown(&surface.id), Some(lights.id.clone()));
+    assert_eq!(app.surfaces().shown(&side.id), Some(layer.id.clone()));
+    let current = |slug: &str| {
+        app.core()
+            .shared()
+            .state
+            .value(&covalence_core::state::StatePath::new(
+                "surface",
+                [slug, "current", "main"]
+                    .into_iter()
+                    .map(|k| covalence_protocol::state::PathSegment::Key(k.into()))
+                    .collect(),
+            ))
+    };
+    assert_eq!(current("sideDeck"), Some("cameras".into()));
+    let side_link = app
+        .surfaces()
+        .attach(&side.id, core_attach("sideDeck"))
+        .unwrap();
+    assert_eq!(app.surfaces().shown(&side.id), Some(layer.id.clone()));
+    assert_eq!(current("sideDeck"), Some("cameras".into()));
+    drop(side_link);
     assert_eq!(
         app.control_bindings(),
         BTreeMap::from([(binding.id.clone(), binding)])
@@ -475,6 +521,13 @@ async fn bindings_preview_with_their_look_and_image() {
 fn png_size(png: &[u8]) -> (u32, u32) {
     let be = |at: usize| u32::from_be_bytes(png[at..at + 4].try_into().unwrap());
     (be(16), be(20))
+}
+
+/// The virtual deck's attach, as the core takes it.
+fn core_attach(slug: &str) -> covalence_core::surface::Attach {
+    let mut params = attach(slug)["params"].clone();
+    params.as_object_mut().unwrap().remove("surface");
+    serde_json::from_value(params).unwrap()
 }
 
 /// The virtual deck's `surface.attach`.

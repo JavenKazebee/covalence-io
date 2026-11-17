@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use covalence_protocol::io::{DeviceInfo, DeviceKind};
 
@@ -49,7 +49,11 @@ struct FakeDevice {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Log {
     pub writes: Vec<Vec<u8>>,
+    /// When each of `writes` reached the device, for timing.
+    pub write_times: Vec<Instant>,
     pub features_sent: Vec<Vec<u8>>,
+    /// When each of `features_sent` reached the device.
+    pub feature_times: Vec<Instant>,
     pub opens: usize,
     pub baud: Option<u32>,
 }
@@ -262,7 +266,9 @@ impl Port for FakePort {
 
     fn write(&mut self, data: &[u8]) -> Result<(), DeviceError> {
         let mut state = self.fake.lock();
-        self.device(&mut state)?.log.writes.push(data.to_vec());
+        let log = &mut self.device(&mut state)?.log;
+        log.writes.push(data.to_vec());
+        log.write_times.push(Instant::now());
         Ok(())
     }
 
@@ -286,10 +292,9 @@ impl Port for FakePort {
             return Err(DeviceError::Unsupported("feature reports on serial".into()));
         }
         let mut state = self.fake.lock();
-        self.device(&mut state)?
-            .log
-            .features_sent
-            .push(data.to_vec());
+        let log = &mut self.device(&mut state)?.log;
+        log.features_sent.push(data.to_vec());
+        log.feature_times.push(Instant::now());
         Ok(())
     }
 }
@@ -406,9 +411,18 @@ impl Mk2 {
 
     /// Every complete image written to each key, oldest first.
     pub fn images(&self) -> BTreeMap<u8, Vec<Vec<u8>>> {
-        let mut done: BTreeMap<u8, Vec<Vec<u8>>> = BTreeMap::new();
+        self.timed_images()
+            .into_iter()
+            .map(|(k, images)| (k, images.into_iter().map(|(_, i)| i).collect()))
+            .collect()
+    }
+
+    /// [`Mk2::images`], each with when its last report was written.
+    pub fn timed_images(&self) -> BTreeMap<u8, Vec<(Instant, Vec<u8>)>> {
+        let mut done: BTreeMap<u8, Vec<(Instant, Vec<u8>)>> = BTreeMap::new();
         let mut partial: BTreeMap<u8, Vec<u8>> = BTreeMap::new();
-        for w in self.fake.log(&self.path).writes {
+        let log = self.fake.log(&self.path);
+        for (w, at) in log.writes.iter().zip(log.write_times) {
             if w.len() < 8 || w[0] != 0x02 || w[1] != 0x07 {
                 continue;
             }
@@ -424,7 +438,7 @@ impl Mk2 {
             if last {
                 done.entry(key)
                     .or_default()
-                    .push(partial.remove(&key).unwrap_or_default());
+                    .push((at, partial.remove(&key).unwrap_or_default()));
             }
         }
         done

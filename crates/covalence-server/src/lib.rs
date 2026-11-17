@@ -91,6 +91,16 @@ const CONNECTION: &str = "connection";
 
 /// Roots that aliases may not take (state spec §1.1).
 /// The reserved roots, and `core`, the core connection's alias (core actions §1).
+/// The layer each surface last showed, by surface ID: kept so a surface
+/// shows it again after a restart, in place of its start layer.
+const SHOWN_ENTITY: &str = "surface_shown";
+
+#[derive(Serialize, Deserialize)]
+struct Shown {
+    surface: SurfaceId,
+    layer: Option<LayerId>,
+}
+
 const RESERVED_ROOTS: &[&str] = &["vars", "sys", "surface", "layer", "flow", "core"];
 
 /// A plugin the server makes available: `io.covalence.videohub@0.1.0=plugins/videohub/mod.ts`.
@@ -318,6 +328,10 @@ impl App {
         for binding in bindings.values() {
             surfaces.set_binding(binding.clone());
         }
+        // What each surface showed last, so it shows it again when it attaches.
+        for shown in load(&store, SHOWN_ENTITY, |s: &Shown| s.surface.clone())?.into_values() {
+            surfaces.restore_shown(&shown.surface, shown.layer)?;
+        }
 
         let evaluator = Arc::new(QuickJs::default());
         let devices = config.devices.start();
@@ -341,6 +355,12 @@ impl App {
             if let Err(e) = runtime.startup("boot") {
                 tracing::error!("cannot journal sys:startup: {e}");
             }
+            let keeping = app.clone();
+            surfaces.on_shown(Arc::new(move |surface, layer| {
+                if let Some(app) = keeping.upgrade() {
+                    app.keep_shown(surface, layer);
+                }
+            }));
             App {
                 core,
                 plugins,
@@ -538,6 +558,17 @@ impl App {
             .unwrap_or_else(|e| e.into_inner())
             .put_entity(kind, id, &body)?;
         Ok(())
+    }
+
+    /// Stores the layer a surface shows, for after a restart.
+    fn keep_shown(&self, surface: &str, layer: Option<&str>) {
+        let shown = Shown {
+            surface: surface.to_owned(),
+            layer: layer.map(str::to_owned),
+        };
+        if let Err(e) = self.put_entity(SHOWN_ENTITY, surface, &shown) {
+            tracing::error!(%surface, "cannot store the layer a surface shows: {e}");
+        }
     }
 
     fn delete_entity(&self, kind: &str, id: &str) -> Result<(), covalence_store::StoreError> {

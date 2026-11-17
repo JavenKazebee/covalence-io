@@ -528,3 +528,92 @@ async fn a_plugin_provides_a_surface() {
     );
     server.app.clone().shutdown().await;
 }
+
+/// M7: a serial device picked in a connection's form is read and written
+/// through `ctx.serial`, with its traffic seen.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_serial_device_picked_for_a_connection_is_read_and_written() {
+    const ESP: &str = "serial:303a:1001:ESP1";
+    let data = tempfile::tempdir().unwrap();
+    let fake = Fake::new();
+    fake.plug(esp32("/dev/ttyACM0", Some("ESP1")));
+    let server = start(data.path(), &fake);
+
+    // The connection form's picker lists it for the plugin that matches it.
+    let picker = eventually("the ESP32 in the picker", || async {
+        let list = server.get(&format!("/devices?plugin={PLUGIN}")).await;
+        list["devices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["id"] == ESP)
+            .cloned()
+    })
+    .await;
+    assert_eq!(picker["kind"], json!("serial"));
+    assert!(picker.get("heldBy").is_none(), "{picker}");
+
+    let (status, conn) = server
+        .post(
+            "/connections",
+            json!({ "plugin": PLUGIN, "alias": "deck", "config": { "device": ESP }, "mode": "live" }),
+        )
+        .await;
+    assert_eq!(status.as_u16(), 201, "{conn}");
+    server
+        .eventually(WAIT, "the port to open", || async {
+            (value(&server, "deck.io").await == Some(json!("open"))).then_some(())
+        })
+        .await;
+    assert_eq!(fake.log("/dev/ttyACM0").baud, Some(9600));
+    assert_eq!(device(&server, ESP).await.unwrap()["heldBy"], conn["id"]);
+
+    // Bytes both ways.
+    fake.input("/dev/ttyACM0", b"hi\n");
+    server
+        .eventually(WAIT, "the line in state", || async {
+            (value(&server, "deck.input").await == Some(json!("68690a"))).then_some(())
+        })
+        .await;
+    act(&server, "send", json!({ "hex": "6f6b0a" })).await;
+    let log = fake.wait_log("/dev/ttyACM0", WAIT, |l| !l.writes.is_empty());
+    assert_eq!(log.writes, [b"ok\n".to_vec()]);
+
+    // A serial port isn't a surface.
+    assert_eq!(server.get("/surfaces").await, json!([]));
+
+    // Its traffic is seen.
+    let traffic = server
+        .get(&format!(
+            "/connections/{}/traffic",
+            conn["id"].as_str().unwrap()
+        ))
+        .await;
+    let port = traffic["handles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|h| h["kind"] == "serial")
+        .unwrap_or_else(|| panic!("no serial handle in {traffic}"));
+    assert_eq!(port["target"], json!(ESP));
+    let entries = port["entries"].to_string();
+    assert!(
+        entries.contains("68690a") && entries.contains("6f6b0a"),
+        "{entries}"
+    );
+
+    // Unplugged and back: the port closes and reopens.
+    fake.unplug("/dev/ttyACM0");
+    server
+        .eventually(WAIT, "the port to close", || async {
+            (value(&server, "deck.io").await == Some(json!("closed:unplugged"))).then_some(())
+        })
+        .await;
+    fake.plug(esp32("/dev/ttyACM1", Some("ESP1")));
+    server
+        .eventually(WAIT, "the port to reopen", || async {
+            (value(&server, "deck.io").await == Some(json!("open"))).then_some(())
+        })
+        .await;
+    server.app.clone().shutdown().await;
+}

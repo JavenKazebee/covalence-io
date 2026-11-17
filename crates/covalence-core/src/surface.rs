@@ -424,12 +424,17 @@ pub struct Surfaces {
     inner: Arc<Inner>,
 }
 
+/// Told the layer a surface shows whenever that changes, so it can be kept
+/// across restarts: the surface's ID, and its layer's or `None`.
+pub type OnShown = Arc<dyn Fn(&str, Option<&str>) + Send + Sync>;
+
 struct Inner {
     shared: Shared,
     timing: Timing,
     book: Mutex<Book>,
     bindings: Bindings,
     sessions: AtomicU64,
+    on_shown: Mutex<Option<OnShown>>,
 }
 
 #[derive(Default)]
@@ -484,8 +489,34 @@ impl Surfaces {
                 timing,
                 book: Mutex::new(Book::default()),
                 sessions: AtomicU64::new(0),
+                on_shown: Mutex::new(None),
             }),
         }
+    }
+
+    /// Calls `f` whenever the layer a surface shows changes, including to
+    /// nothing. It's called with the surfaces locked, so it mustn't call
+    /// back into them.
+    pub fn on_shown(&self, f: OnShown) {
+        *self
+            .inner
+            .on_shown
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(f);
+    }
+
+    /// Sets the layer a surface last showed, as kept from before a restart,
+    /// without telling [`Surfaces::on_shown`]. It shows it when it attaches,
+    /// if it still fits, in place of its start layer.
+    pub fn restore_shown(&self, surface: &str, layer: Option<LayerId>) -> Result<(), JournalError> {
+        let inner = &self.inner;
+        let mut book = inner.book();
+        if !book.surfaces.contains_key(surface) || book.attached.contains_key(surface) {
+            return Ok(());
+        }
+        book.shown.insert(surface.to_owned(), layer);
+        inner.publish_current(&book, surface, Origin::system())?;
+        Ok(())
     }
 
     /// Adds or replaces a surface entity. A new slug moves its state.
@@ -538,7 +569,7 @@ impl Surfaces {
                 .get(&surface)
                 .is_none_or(|a| missing(&layer, &a.attach.controls).is_empty());
             if !fits {
-                book.shown.insert(surface.clone(), None);
+                inner.set_shown(&mut book, &surface, None);
             }
             inner.publish_current(&book, &surface, Origin::system())?;
             inner.show_on(&book, &surface);
@@ -558,7 +589,7 @@ impl Surfaces {
             .map(|(s, _)| s.clone())
             .collect();
         for surface in showing {
-            book.shown.insert(surface.clone(), None);
+            inner.set_shown(&mut book, &surface, None);
             inner.publish_current(&book, &surface, Origin::system())?;
             inner.show_on(&book, &surface);
         }
@@ -677,8 +708,7 @@ impl Surfaces {
                 }
             }
         }
-        book.shown
-            .insert(surface.to_owned(), layer.map(str::to_owned));
+        inner.set_shown(&mut book, surface, layer.map(str::to_owned));
         inner.publish_current(&book, surface, origin)?;
         inner.show_on(&book, surface);
         Ok(())
@@ -710,7 +740,7 @@ impl Surfaces {
                 .get(p)
                 .is_some_and(|p| missing(p, &attach.controls).is_empty())
         });
-        book.shown.insert(surface.to_owned(), layer);
+        inner.set_shown(&mut book, surface, layer);
         book.controls
             .insert(surface.to_owned(), attach.controls.clone());
         book.attached.insert(
@@ -1556,6 +1586,23 @@ impl Inner {
             .and_then(|p| p.as_ref())
             .and_then(|p| book.layers.get(p))
             .map_or(Value::Nil, |p| p.slug.as_str().into())
+    }
+
+    /// Records the layer a surface shows, telling [`Surfaces::on_shown`] if
+    /// it changed.
+    fn set_shown(&self, book: &mut Book, surface: &str, layer: Option<LayerId>) {
+        let old = book.shown.insert(surface.to_owned(), layer.clone());
+        if old.as_ref() == Some(&layer) {
+            return;
+        }
+        let hook = self
+            .on_shown
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some(hook) = hook {
+            hook(surface, layer.as_deref());
+        }
     }
 
     fn publish_current(

@@ -111,6 +111,7 @@ impl App {
     pub fn delete_surface(&self, id: &str) -> Result<Option<Surface>, SaveError> {
         let _saving = self.saving.lock().unwrap_or_else(|e| e.into_inner());
         self.delete_entity(surface::SURFACE_ENTITY, id)?;
+        self.delete_entity(crate::SHOWN_ENTITY, id)?;
         // Forgotten before it's detached, so its socket can tell why it closed.
         let removed = write(&self.surface_entities).remove(id);
         self.surfaces.remove_surface(id)?;

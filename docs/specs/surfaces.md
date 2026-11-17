@@ -129,7 +129,7 @@ type OutputKind = OutputCap["kind"];
 |---|---|---|
 | `surface.<slug>.connected` | `boolean` | The core, on attach and detach |
 | `surface.<slug>.model` | `string` | The core, on attach |
-| `surface.<slug>.current.<group>` | layer slug, or `null` | **(Now)** The core and the API: the current layer of a navigation group (§5.3). `main` replaces M5's `surface.<slug>.page`, and is set on attach as `page` was |
+| `surface.<slug>.current.<group>` | layer slug, or `null` | **(Now)** The core and the API: the current layer of a navigation group (§5.3). `main` replaces M5's `surface.<slug>.page`, and is set on attach as `page` was. **(M7)** `main` is kept across restarts (stored, not replayed): a surface attaches showing the layer it last showed, if that still fits, and its `startLayer` only if it has never shown one |
 | `surface.<slug>.layers` | layer slugs, highest first | **(M8)** The core: the active layers in resolution order (§5.2) |
 | `surface.<slug>.controls.<id>.layer` | layer slug, or `null` | **(M8)** The core: the layer controlling the control (§5.2). With `through` layers (§5.2.1), the layer that has its input |
 | `surface.<slug>.controls.<id>.look` | `{[prop]: layer slug}` | **(M8, proposed)** The core: which layer each bound property comes from (§5.2.1) |

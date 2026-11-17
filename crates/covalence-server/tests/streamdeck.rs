@@ -223,3 +223,406 @@ async fn a_stream_deck_mk2_becomes_a_surface_by_itself() {
     assert_eq!(server.get("/surfaces").await.as_array().unwrap().len(), 1);
     server.app.clone().shutdown().await;
 }
+
+/// The deck's surface, once it's attached.
+async fn attached(server: &Server, id: &str) -> Value {
+    let slug = server.get(&format!("/surfaces/{id}")).await["slug"].clone();
+    let connected = format!("surface.{}.connected", slug.as_str().unwrap());
+    server
+        .eventually(WAIT, "the deck to attach", || async {
+            (server.value(&connected).await == Some(json!(true))).then_some(())
+        })
+        .await;
+    server.get(&format!("/surfaces/{id}")).await
+}
+
+/// The Stream Deck connection, once the core has made it.
+async fn deck_conn(server: &Server) -> Value {
+    server
+        .eventually(WAIT, "a connection for the deck", || async {
+            server
+                .get("/connections")
+                .await
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|c| c["plugin"] == "io.covalence.streamdeck")
+                .cloned()
+        })
+        .await
+}
+
+/// Waits until `deck` has the last image of every key.
+async fn all_drawn(deck: &Mk2, since: usize) -> std::collections::BTreeMap<u8, Vec<u8>> {
+    let deadline = std::time::Instant::now() + WAIT;
+    loop {
+        let images = deck.images();
+        if images.len() == 15 && images.values().all(|i| i.len() > since) {
+            return images
+                .into_iter()
+                .map(|(k, i)| (k, i.last().unwrap().clone()))
+                .collect();
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "not every key was drawn"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+/// The last `brightness` action the journal has, as its `action.requested`.
+async fn brightness_requested(server: &Server) -> Option<Value> {
+    server
+        .get("/journal?limit=1000")
+        .await
+        .as_array()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|e| e["kind"] == "action.requested" && e.to_string().contains("brightness"))
+        .cloned()
+}
+
+/// M7's "done when", against the simulated MK.2: a deck given a start layer
+/// ahead of time shows it; its keys run flows whose `why` goes back to the
+/// key; unplugging releases held keys and replugging shows the same layer;
+/// and a plugin host restart doesn't close the deck or blank its keys.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stream_deck_runs_flows_and_rides_out_unplugs_and_host_restarts() {
+    let data = tempfile::tempdir().unwrap();
+    let fake = Fake::new();
+    let server = start(data.path(), &fake);
+
+    // A surface for the deck, made before it's plugged in, with a start layer.
+    let main = layer(&server).await;
+    let (status, made) = server
+        .post(
+            "/surfaces",
+            json!({
+                "name": "Desk", "model": "elgato.original-mk2",
+                "serial": "CL12K1A00042", "startLayer": main,
+            }),
+        )
+        .await;
+    assert_eq!(status.as_u16(), 201, "{made}");
+    let id = made["surface"]["id"].as_str().unwrap().to_owned();
+
+    // Plugged in: the same surface attaches, showing its start layer.
+    let deck = Mk2::plug(&fake, "/dev/hidraw0", "CL12K1A00042");
+    let conn = deck_conn(&server).await;
+    let conn_id = conn["id"].as_str().unwrap().to_owned();
+    let alias = conn["alias"].as_str().unwrap().to_owned();
+    let surface = attached(&server, &id).await;
+    let slug = surface["slug"].as_str().unwrap().to_owned();
+    assert_eq!(surface["provider"], json!(conn_id));
+    assert_eq!(server.get("/surfaces").await.as_array().unwrap().len(), 1);
+    let current = format!("surface.{slug}.current.main");
+    assert_eq!(server.value(&current).await, Some(json!("main")));
+    all_drawn(&deck, 0).await;
+
+    // `k0` on the layer sets the deck's brightness, through a flow.
+    let (status, flow) = server
+        .post(
+            "/flows",
+            json!({
+                "name": "Bright on k0", "enabled": true, "concurrency": "ignore",
+                "triggers": [{ "kind": "event", "from": { "layer": main, "controls": "k0" }, "event": "press" }],
+                "body": [{
+                    "id": "bright", "kind": "action", "target": { "conn": conn_id },
+                    "action": "brightness", "params": { "percent": 60 },
+                }],
+            }),
+        )
+        .await;
+    assert_eq!(status.as_u16(), 201, "{flow}");
+    deck.press(0);
+    let deadline = std::time::Instant::now() + WAIT;
+    while deck.brightness() != Some(60) {
+        assert!(std::time::Instant::now() < deadline, "no brightness");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    deck.release(0);
+
+    // `why` on the action walks back through the trigger and the key's
+    // event to its press, with the time the core read the deck's report.
+    let requested = brightness_requested(&server).await.expect("the action");
+    let chain = server
+        .get(&format!("/journal/{}/why", requested["seq"]))
+        .await;
+    let chain = chain.as_array().unwrap();
+    let kinds: Vec<&str> = chain.iter().map(|e| e["kind"].as_str().unwrap()).collect();
+    assert_eq!(kinds.first(), Some(&"action.requested"), "{kinds:?}");
+    assert_eq!(
+        &kinds[kinds.len() - 3..],
+        ["trigger.matched", "event", "state.patch"],
+        "{kinds:?}"
+    );
+    let press = chain.last().unwrap();
+    let text = press.to_string();
+    assert!(
+        text.contains(&slug) && text.contains("k0") && text.contains("pressed"),
+        "{press}"
+    );
+    assert!(
+        press.pointer("/data/deviceTs").is_some_and(Value::is_f64),
+        "{press}"
+    );
+
+    // Unplugged with a key held: the surface detaches and releases it.
+    let pressed = format!("surface.{slug}.controls.k3.pressed");
+    let connected = format!("surface.{slug}.connected");
+    deck.press(3);
+    server
+        .eventually(WAIT, "k3 held", || async {
+            (server.value(&pressed).await == Some(json!(true))).then_some(())
+        })
+        .await;
+    deck.unplug();
+    server
+        .eventually(WAIT, "the surface to detach", || async {
+            (server.value(&connected).await == Some(json!(false))).then_some(())
+        })
+        .await;
+    assert_eq!(server.value(&pressed).await, Some(json!(false)), "released");
+
+    // Back in another port: the same surface, the layer it showed, redrawn.
+    let deck = Mk2::plug(&fake, "/dev/hidraw3", "CL12K1A00042");
+    attached(&server, &id).await;
+    assert_eq!(server.get("/surfaces").await.as_array().unwrap().len(), 1);
+    assert_eq!(server.value(&current).await, Some(json!("main")));
+    let before = all_drawn(&deck, 0).await;
+    let drawn_before: std::collections::BTreeMap<u8, usize> =
+        deck.images().iter().map(|(k, i)| (*k, i.len())).collect();
+    let features_before = fake.log(deck.path()).features_sent.len();
+
+    // The plugin host is killed: the deck stays open, the surface detaches
+    // and is back within 3 s, and nothing blanks or resets the keys.
+    let pid = server.get("/health").await["host"]["pid"].as_u64().unwrap();
+    let killed = std::time::Instant::now();
+    std::process::Command::new("kill")
+        .args(["-9", &pid.to_string()])
+        .status()
+        .unwrap();
+    server
+        .eventually(WAIT, "the surface to detach", || async {
+            (server.value(&connected).await == Some(json!(false))).then_some(())
+        })
+        .await;
+    server
+        .eventually(WAIT, "the surface to reattach", || async {
+            (server.value(&connected).await == Some(json!(true))).then_some(())
+        })
+        .await;
+    let back = killed.elapsed();
+    assert!(back < Duration::from_secs(3), "reattached after {back:?}");
+    assert_eq!(fake.log(deck.path()).opens, 1, "the deck was never closed");
+    let resets: Vec<Vec<u8>> = fake.log(deck.path()).features_sent[features_before..]
+        .iter()
+        .filter(|f| f.len() >= 2 && f[0] == 0x03 && f[1] == 0x02)
+        .cloned()
+        .collect();
+    assert!(resets.is_empty(), "reset to the logo: {resets:?}");
+    // Redrawn with what each key had: never anything else.
+    let after = all_drawn(&deck, 1).await;
+    for (key, images) in deck.images() {
+        for image in images.iter().skip(drawn_before[&key]) {
+            assert_eq!(image, &before[&key], "k{key} drew something else");
+        }
+    }
+    assert_eq!(after, before);
+    assert_eq!(server.value(&current).await, Some(json!("main")));
+
+    // And its keys still run the flow.
+    let (status, outcome) = server
+        .post(
+            "/actions",
+            json!({ "action": format!("{alias}.brightness"), "params": { "percent": 20 } }),
+        )
+        .await;
+    assert_eq!(
+        (status.as_u16(), &outcome["ok"]),
+        (200, &json!(true)),
+        "{outcome}"
+    );
+    deck.press(0);
+    let deadline = std::time::Instant::now() + WAIT;
+    while deck.brightness() != Some(60) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no brightness after the restart"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    deck.release(0);
+    server.app.clone().shutdown().await;
+}
+
+/// M7's budgets with the plugin host in the path, against the simulated
+/// MK.2: times are taken where the core's device layer meets the device.
+///
+/// - Key down → the action's feature report at the device: the key report
+///   goes through the plugin to the core, which runs the flow and sends the
+///   action back through the plugin to the device. That's more than "first
+///   action dispatched", so it bounds it.
+/// - State change → every key's image written to the device, 15 keys of 2
+///   `expr` bindings each, rendered as the MK.2's 72 px JPEGs, as M5 timed
+///   them without a plugin.
+///
+/// Run with
+/// `cargo test --release -p covalence-server --test streamdeck bench -- --ignored --nocapture`.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "a benchmark: run it in release"]
+async fn bench_budgets_with_the_plugin_host_in_the_path() {
+    use covalence_core::state::{Meta, Quality, Source, StatePath};
+    use covalence_protocol::state::PathSegment;
+
+    let data = tempfile::tempdir().unwrap();
+    let fake = Fake::new();
+    let deck = Mk2::plug(&fake, "/dev/hidraw0", "CL12K1A00042");
+    let server = start(data.path(), &fake);
+    let conn = deck_conn(&server).await;
+    let conn_id = conn["id"].as_str().unwrap().to_owned();
+    let surface = server
+        .eventually(WAIT, "a surface for the deck", || async {
+            server
+                .get("/surfaces")
+                .await
+                .as_array()
+                .unwrap()
+                .first()
+                .cloned()
+        })
+        .await;
+    let id = surface["id"].as_str().unwrap().to_owned();
+    attached(&server, &id).await;
+
+    // A layer of expr bindings on every key, as M5's bench.
+    let keys: Vec<Value> = (0..15)
+        .map(|k| {
+            json!({
+                "id": format!("k{k}"), "at": { "x": k % 5, "y": k / 5 },
+                "inputs": ["momentary"], "outputs": ["image"],
+            })
+        })
+        .collect();
+    let (_, layer) = server
+        .post("/layers", json!({ "name": "Bench", "controls": keys }))
+        .await;
+    let layer = layer["layer"]["id"].as_str().unwrap().to_owned();
+    for i in 0..15 {
+        let (status, body) = server
+            .post(
+                "/control-bindings",
+                json!({
+                    "layer": layer, "control": format!("k{i}"),
+                    "props": {
+                        "label": { "expr": format!("`Cam {i}: ${{mmss((vars.n ?? 0) + {i})}}`") },
+                        "background": { "expr": format!("(vars.n ?? 0) % 2 ? hsl({i} * 20, 70, 40) : \"#202020\"") },
+                    },
+                }),
+            )
+            .await;
+        assert_eq!(status.as_u16(), 201, "{body}");
+    }
+    let (status, flow) = server
+        .post(
+            "/flows",
+            json!({
+                "name": "Bright on k0", "enabled": true, "concurrency": "parallel",
+                "triggers": [{ "kind": "event", "from": { "layer": layer, "controls": "k0" }, "event": "press" }],
+                "body": [{
+                    "id": "bright", "kind": "action", "target": { "conn": conn_id },
+                    "action": "brightness", "params": { "percent": 60 },
+                }],
+            }),
+        )
+        .await;
+    assert_eq!(status.as_u16(), 201, "{flow}");
+    server
+        .post(
+            &format!("/surfaces/{id}/current"),
+            json!({ "layer": layer }),
+        )
+        .await;
+    all_drawn(&deck, 0).await;
+
+    let n = StatePath::new("vars", vec![PathSegment::Key("n".into())]);
+    let set_n = |v: i64| {
+        let meta = Meta {
+            ts: 0,
+            seq: 1,
+            quality: Quality::Good,
+            source: Source::Conn("bench".into()),
+        };
+        server
+            .app
+            .core()
+            .shared()
+            .state
+            .mutate(|tree| ((), tree.set(&n, &v.into(), &meta)));
+    };
+    // Times come from when the fake was written to, so polling it now and
+    // then is as exact as spinning on it, and doesn't hold its lock.
+    async fn poll_until(what: &str, f: impl Fn() -> bool) {
+        let deadline = std::time::Instant::now() + WAIT;
+        while !f() {
+            assert!(std::time::Instant::now() < deadline, "timed out on {what}");
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    }
+    let stats = |mut times: Vec<Duration>| {
+        times.sort();
+        (times[times.len() / 2], times[times.len() - 1])
+    };
+
+    // State change → every key written.
+    let mut redraws = Vec::new();
+    let mut firsts = Vec::new();
+    for round in 1..=40 {
+        let counts: Vec<usize> = (0..15u8)
+            .map(|k| deck.images().get(&k).map_or(0, Vec::len))
+            .collect();
+        let start = std::time::Instant::now();
+        set_n(round);
+        poll_until("the redraw", || {
+            let images = deck.images();
+            (0..15u8).all(|k| images.get(&k).map_or(0, Vec::len) > counts[k as usize])
+        })
+        .await;
+        let written: Vec<std::time::Instant> = deck
+            .timed_images()
+            .values()
+            .map(|i| i.last().unwrap().0)
+            .collect();
+        redraws.push(*written.iter().max().unwrap() - start);
+        firsts.push(*written.iter().min().unwrap() - start);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let (median, worst) = stats(redraws);
+    println!(
+        "state change → 15 keys written to the MK.2 (72 px JPEG, 2 expr bindings each): median {median:?}, worst {worst:?}"
+    );
+    let (median, worst) = stats(firsts);
+    println!("state change → the first of them written: median {median:?}, worst {worst:?}");
+
+    // Key down → the action at the device.
+    let mut presses = Vec::new();
+    for _ in 0..40 {
+        let before = fake.log(deck.path()).features_sent.len();
+        let start = std::time::Instant::now();
+        deck.press(0);
+        poll_until("the action", || {
+            fake.log(deck.path()).features_sent.len() > before
+        })
+        .await;
+        presses.push(fake.log(deck.path()).feature_times[before] - start);
+        deck.release(0);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let (median, worst) = stats(presses);
+    println!(
+        "key down → its flow's action at the MK.2, through the plugin both ways: median {median:?}, worst {worst:?}"
+    );
+    server.app.clone().shutdown().await;
+}
