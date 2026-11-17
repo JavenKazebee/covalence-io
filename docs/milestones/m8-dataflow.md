@@ -61,11 +61,11 @@ Notes from Phase 2:
 - [ ] `ControlBinding.helpers` and `gestures`. Helper cells under the layer or the surface; helper events at their cell; `{layer, controls}` triggers matching helper event names.
   - [x] `helpers`: a map of reducers on the binding, each with `as` (default its key), `scope`, `to` and `journal`. A layer-scoped helper is a cell at `layer.<slug>.controls.<id>.<name>`, identified by `helper:<binding>/<key>`, kept in step with the binding and its layer's slug by the server. Its `on` defaults to `{from: {layer, controls: <id>}}` with the definition's event names; with no `input`, an input-stepped reducer takes the control's `turn` (detents, counted from 0) and `change` (a value) as its input.
   - [x] Helper events are journaled at the cell with the binding's `layer` and `control`, so event triggers on `{layer, controls}` match them by name (the flow runtime now indexes `{layer}` sources under `layer` as well as `surface`). A cell never steps on its own events.
-  - [ ] `scope: "surface"` (one cell per surface) is `unsupported` for now.
-  - [ ] `gestures`: per-control gesture timing.
+  - [ ] `scope: "surface"`: one cell per surface, from the first time it shows the layer until the binding or the surface is deleted ([ADR 0035](../adr/0035-level-outputs-echoes-and-control-settings.md)).
+  - [ ] `gestures`: per-control timing, as sources read when needed: at `down`, at the next press, when a value arrives (ADR 0035).
 - [x] `follow`, `holdoff` and `pickup`. `follow` applies when what it follows changes, through the definition's `follow` (`absolute` drops its pickup) or by taking the value; it pauses while the control is touched and for `holdoff` (default 250 ms; a number of ms or a duration) after the last input, then catches up. A helper starts where what it follows is. Changes from `follow` send nothing to sinks.
-- [ ] Echoes (surfaces §4.4): `requested.<output>`, echo marking by the host (`echo: true`) and by `echoWindow`, no events from echoes unless a trigger opts in.
-- [ ] The virtual surface gains an optional encoder (`relative` + `momentary`) and fader (`absolute` + `touch`, with a `level` output and a motor mode that echoes) for tests and the UI.
+- [ ] Echoes (surfaces §4.4): `requested.<output>`, echo marking by the host (`echo: true`) and by `echoWindow`, no events from echoes unless a trigger opts in. Per ADR 0035: the `value` property and `surface.level`; an echo is within `echoWindow` and `echoTolerance` of a sent level, never while touched; its `change` is journaled with `echo: true` and skipped unless a trigger or reducer opts in.
+- [ ] The virtual surface gains an optional encoder (`relative` + `momentary`) and fader (`absolute` + `touch`, with a `level` output and a motor mode that echoes) for tests and the UI. Per ADR 0035: configured on the surface entity, `virtual: {encoders, faders, motor}`, up to four of each.
 
 ### Phase 5: Layer resolution (Rust)
 - [ ] `when`, `level`, `rank` and `on` as sources and selectors; the resolution rule of surfaces §5.2; `surface.<slug>.layers` and `.controls.<id>.layer`; `resolutionCycle`.

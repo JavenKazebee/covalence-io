@@ -62,6 +62,7 @@
 | [0032](adr/0032-one-template-primitive.md) | One reuse primitive: templates and instances, for layers, composites, components and flows | Proposed |
 | [0033](adr/0033-execution-model.md) | Execution model: one turn thread writes state; flows, scripts and drawing run beside it | Accepted |
 | [0034](adr/0034-live-edits.md) | Editing a running show: changesets, pinned runs and kept state | Proposed (revised: kept state settled for M8; the rest waits for M9's Phase 0) |
+| [0035](adr/0035-level-outputs-echoes-and-control-settings.md) | Level outputs, echoes, gesture timing and per-surface helpers | Proposed |
 
 Each record covers its context, the decision, its consequences and the alternatives considered. Don't edit an accepted record to change its decision; write a new one that supersedes it.
 
