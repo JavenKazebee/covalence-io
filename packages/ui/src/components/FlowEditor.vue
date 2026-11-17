@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, ref, watch, type Ref } from "vue";
 import { ApiError } from "../api";
 import {
   allSteps,
@@ -17,14 +17,18 @@ import {
   type PathSegment,
   type ShownProblem,
   type StepContext,
+  type Trigger,
+  eventNames,
 } from "../flows/model";
 import type { FlowStatus } from "../flows/status";
 import { hrefOf, navigate } from "../nav";
 import { useCatalogStore } from "../stores/catalog";
 import { useFlowsStore } from "../stores/flows";
 import { useSurfacesStore } from "../stores/surfaces";
-import { eventHelp, eventsFor, type ControlEvent } from "../surfaces/model";
+import { newSource } from "../sources/model";
+import EventSourceInput from "./EventSourceInput.vue";
 import ExprInput from "./ExprInput.vue";
+import SourceInput from "./SourceInput.vue";
 import FlowRuns from "./FlowRuns.vue";
 import StepList from "./StepList.vue";
 
@@ -46,7 +50,8 @@ const schemaOf = paramsSchemaFrom((connId) => {
 
 const isNew = computed(() => props.id === "new");
 const stored = computed(() => (isNew.value ? undefined : flows.get(props.id)));
-const draft = ref<FlowDraft | null>(null);
+// Deeply reactive, but typed without unwrapping: sources nest too deeply for `UnwrapRef`.
+const draft = ref(null) as Ref<FlowDraft | null>;
 const problems = ref<ShownProblem[]>([]);
 const localErrors = ref(new Map<number, Record<string, string>>());
 const saving = ref(false);
@@ -107,23 +112,8 @@ const concurrencyHelp: Record<Concurrency, string> = {
 
 const hasApi = computed(() => draft.value?.triggers.some((t) => t.kind === "api") ?? false);
 
-function eventsOf(connId: string) {
-  const conn = catalog.connections.find((c) => c.id === connId);
-  return conn === undefined ? [] : (catalog.manifest(conn.plugin)?.events ?? []);
-}
-
-function addTrigger(kind: "api" | "event" | "state" | "control") {
+function addTrigger(kind: "api" | "event" | "state") {
   if (draft.value === null) return;
-  if (kind === "control") {
-    const layer = surfaces.layers[0];
-    const control = layer?.controls[0];
-    draft.value.triggers.push({
-      kind: "control",
-      control: { layer: layer?.id ?? "", control: control?.id ?? "" },
-      event: eventsFor(control)[0] ?? "press",
-    });
-    return;
-  }
   if (kind === "api") {
     draft.value.triggers.push({ kind: "api" });
     return;
@@ -132,8 +122,15 @@ function addTrigger(kind: "api" | "event" | "state" | "control") {
     draft.value.triggers.push({ kind: "state", when: "", edge: "rising" });
     return;
   }
-  const conn = catalog.connections[0]?.id ?? "";
-  draft.value.triggers.push({ kind: "event", source: { conn }, event: eventsOf(conn)[0]?.id ?? "" });
+  // A key's press is the usual start; a connection's events otherwise.
+  const layer = surfaces.layers[0];
+  if (layer !== undefined) {
+    draft.value.triggers.push({ kind: "event", from: { layer: layer.id, controls: layer.controls[0]?.id ?? "k0" }, event: "press" });
+    return;
+  }
+  const conn = catalog.connections.find((c) => !c.builtIn);
+  const event = conn === undefined ? "" : (catalog.manifest(conn.plugin)?.events?.[0]?.id ?? "");
+  draft.value.triggers.push({ kind: "event", from: { target: conn?.id ?? "" }, event });
 }
 
 const edgeHelp: Record<Edge, string> = {
@@ -142,27 +139,23 @@ const edgeHelp: Record<Edge, string> = {
   change: "Whenever its value changes",
 };
 
-/** The controls of a trigger's layer, keeping the one it names if the layer has lost it or gone. */
-function controlsOf(layerId: string, current: string): string[] {
-  const ids = surfaces.layer(layerId)?.controls.map((c) => c.id) ?? [];
-  return ids.includes(current) ? ids : [current, ...ids];
-}
-
-/** The events a trigger's control can give, keeping the one it names if the control can't. */
-function eventsOfControl(layerId: string, controlId: string, current: ControlEvent): ControlEvent[] {
-  const events = eventsFor(surfaces.layer(layerId)?.controls.find((c) => c.id === controlId));
-  return events.includes(current) ? events : [current, ...events];
-}
-
 /** A sample event trigger for previewing a filter: the payload isn't known until it fires. */
-const sampleEvent = (conn: string, event: string) => ({ source: { conn }, event, payload: {} });
+const sampleEvent = (event: string | string[]) => ({ path: "", event: eventNames(event)[0] ?? "", payload: {} });
 
-function setEventConn(index: number, conn: string) {
-  const trigger = draft.value?.triggers[index];
-  if (trigger?.kind !== "event") return;
-  trigger.source = { conn };
-  const events = eventsOf(conn);
-  if (!events.some((e) => e.id === trigger.event)) trigger.event = events[0]?.id ?? "";
+/** A state trigger's `when`: an expression's text, or a structured source. */
+type StateTrigger = Extract<Trigger, { kind: "state" }>;
+const whenIsText = (t: StateTrigger) => t.when === undefined || typeof t.when === "string";
+
+function setStateMode(t: StateTrigger, pattern: boolean) {
+  if (pattern) t.match = "surface.*.controls.*.pressed";
+  else {
+    delete t.match;
+    if (t.when === undefined) t.when = "";
+  }
+}
+
+function setWhenMode(t: StateTrigger, structured: boolean) {
+  t.when = structured ? newSource("compare") : "";
 }
 
 // ---- Saving ----
@@ -304,65 +297,59 @@ async function remove() {
           <template v-if="trigger.kind === 'api'">
             <span><strong>API</strong> <span class="muted">· the Run button and <code>POST /flows/{id}/run</code></span></span>
           </template>
-          <template v-else-if="trigger.kind === 'control'">
-            <strong>Control</strong>
-            <select
-              v-model="trigger.control.layer"
-              :aria-label="`Trigger ${i + 1} layer`"
-            >
-              <option
-                v-if="!surfaces.layer(trigger.control.layer)"
-                :value="trigger.control.layer"
-              >
-                {{ trigger.control.layer || "Pick a layer" }}
-              </option>
-              <option
-                v-for="p in surfaces.layers"
-                :key="p.id"
-                :value="p.id"
-              >
-                {{ p.name }}
-              </option>
-            </select>
-            <select
-              v-model="trigger.control.control"
-              :aria-label="`Trigger ${i + 1} control`"
-            >
-              <option
-                v-for="k in controlsOf(trigger.control.layer, trigger.control.control)"
-                :key="k"
-                :value="k"
-              >
-                {{ k }}
-              </option>
-            </select>
-            <select
-              v-model="trigger.event"
-              :aria-label="`Trigger ${i + 1} event`"
-            >
-              <option
-                v-for="e in eventsOfControl(trigger.control.layer, trigger.control.control, trigger.event)"
-                :key="e"
-                :value="e"
-              >
-                {{ eventHelp[e] }}
-              </option>
-            </select>
-            <a
-              v-if="surfaces.layer(trigger.control.layer)"
-              class="muted"
-              :href="hrefOf({ tab: 'surfaces', layer: trigger.control.layer, control: trigger.control.control })"
-            >Open the layer</a>
-          </template>
           <template v-else-if="trigger.kind === 'state'">
             <strong>State</strong>
-            <ExprInput
-              v-model="trigger.when"
-              :label="`Trigger ${i + 1} expression`"
-              placeholder="vh.outputs[1].source == 3"
-              :problems="at('triggers', i, 'when')"
-              :known="noSteps"
-            />
+            <select
+              :value="trigger.match === undefined ? 'value' : 'pattern'"
+              :aria-label="`Trigger ${i + 1} watches`"
+              @change="setStateMode(trigger, ($event.target as HTMLSelectElement).value === 'pattern')"
+            >
+              <option value="value">
+                A value
+              </option>
+              <option value="pattern">
+                Each path matching
+              </option>
+            </select>
+            <input
+              v-if="trigger.match !== undefined"
+              v-model="trigger.match"
+              :aria-label="`Trigger ${i + 1} pattern`"
+              class="mono"
+              placeholder="surface.*.controls.*.pressed"
+              spellcheck="false"
+            >
+            <template v-if="trigger.match === undefined || trigger.when !== undefined">
+              <span
+                v-if="trigger.match !== undefined"
+                class="muted"
+              >where</span>
+              <ExprInput
+                v-if="whenIsText(trigger)"
+                :model-value="(trigger.when as string | undefined) ?? ''"
+                :label="`Trigger ${i + 1} expression`"
+                placeholder="vh.outputs[1].source == 3"
+                :problems="at('triggers', i, 'when')"
+                :known="noSteps"
+                @update:model-value="trigger.when = $event"
+              />
+              <SourceInput
+                v-else
+                v-model="trigger.when!"
+                :label="`Trigger ${i + 1} condition`"
+                expect="boolean"
+                :problems="at('triggers', i, 'when')"
+              />
+              <button
+                type="button"
+                class="secondary icon"
+                :aria-label="`Trigger ${i + 1} ${whenIsText(trigger) ? 'as a condition' : 'as an expression'}`"
+                :title="whenIsText(trigger) ? 'Build it from parts' : 'Write it as an expression'"
+                @click="setWhenMode(trigger, whenIsText(trigger))"
+              >
+                {{ whenIsText(trigger) ? "≡" : "{ }" }}
+              </button>
+            </template>
             <select
               v-model="trigger.edge"
               :aria-label="`Trigger ${i + 1} edge`"
@@ -378,43 +365,11 @@ async function remove() {
           </template>
           <template v-else>
             <strong>Event</strong>
-            <select
-              :value="trigger.source.conn"
-              :aria-label="`Trigger ${i + 1} connection`"
-              @change="setEventConn(i, ($event.target as HTMLSelectElement).value)"
-            >
-              <option
-                v-if="!catalog.connections.some((c) => c.id === trigger.source.conn)"
-                :value="trigger.source.conn"
-              >
-                {{ trigger.source.conn || "Pick a connection" }}
-              </option>
-              <option
-                v-for="c in catalog.connections"
-                :key="c.id"
-                :value="c.id"
-              >
-                {{ c.alias }}
-              </option>
-            </select>
-            <select
-              v-model="trigger.event"
-              :aria-label="`Trigger ${i + 1} event`"
-            >
-              <option
-                v-if="!eventsOf(trigger.source.conn).some((e) => e.id === trigger.event)"
-                :value="trigger.event"
-              >
-                {{ trigger.event || "No events" }}
-              </option>
-              <option
-                v-for="e in eventsOf(trigger.source.conn)"
-                :key="e.id"
-                :value="e.id"
-              >
-                {{ e.name === e.id ? e.id : `${e.name} (${e.id})` }}
-              </option>
-            </select>
+            <EventSourceInput
+              v-model="draft.triggers[i] as Extract<Trigger, { kind: 'event' }>"
+              :index="i"
+              :problems="at('triggers', i)"
+            />
             <button
               v-if="trigger.filter === undefined"
               type="button"
@@ -434,7 +389,7 @@ async function remove() {
                 placeholder="trigger.payload.output == 1"
                 :problems="at('triggers', i, 'filter')"
                 :known="noSteps"
-                :trigger="sampleEvent(trigger.source.conn, trigger.event)"
+                :trigger="sampleEvent(trigger.event)"
               />
               <button
                 type="button"
@@ -488,7 +443,6 @@ async function remove() {
         <button
           type="button"
           class="secondary"
-          :disabled="catalog.connections.length === 0"
           @click="addTrigger('event')"
         >
           Add event trigger
@@ -499,15 +453,6 @@ async function remove() {
           @click="addTrigger('state')"
         >
           Add state trigger
-        </button>
-        <button
-          type="button"
-          class="secondary"
-          :disabled="surfaces.layers.length === 0"
-          :title="surfaces.layers.length === 0 ? 'Make a layer in Surfaces first' : ''"
-          @click="addTrigger('control')"
-        >
-          Add control trigger
         </button>
       </div>
       <ul

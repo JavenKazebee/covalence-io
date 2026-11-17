@@ -1,6 +1,6 @@
 # Milestone 6: Primitives
 
-- **Status:** In progress (Phases 0–4 done)
+- **Status:** In progress (Phases 0–5 done)
 
 The shapes M5 stored get their general form before hardware surfaces start creating entities in real projects ([M7](m7-surfaces-from-plugins.md) creates them on plug-in). Three changes:
 - **One way to give a value and one way to pick things:** `Source<T>` and `Selector` ([ADR 0026](../adr/0026-sources-and-selectors.md)). The binding kinds become stateless transforms.
@@ -35,7 +35,7 @@ Nothing here adds a new kind of thing for users to learn. It makes the existing 
 - [x] `covalence_core::transform`: the stateless transforms `format`, `template`, `rules`, `compare`, `all`, `any`, `not` and `map`, moved from `binding` and keyed by `use`. `tests/bindings.rs`'s native-versus-expression suite runs over every transform, chained ones and nested fallbacks included. `all` and `any` stop at the first item that decides them, as `&&` and `||` do.
 - [x] `ControlBinding.props` become `Source<Value>`. The binding worker evaluates sources. `fixtures/bindings/` migrated, with problem fixtures for each `use`; every migrated M5 fixture evaluates to what it did before.
 - [x] Flow action `params` and `wait.for` become sources, and `target` a `Source<ConnRef>`. A target that follows state is `unsupported` until ADR 0019's dynamic targets; its `constraint` moves to Phase 4, which is the first to need one (`core` targets held in `vars`).
-- [ ] **Left for Phase 5:** the UI's binding model and editor still use M5's shapes, so `bindings/model.test.ts` fails on the migrated fixtures and the binding editor saves shapes the server now rejects.
+- [x] The UI's binding model and editor follow in Phase 5.
 
 ### Phase 2: Selectors (Rust)
 - [x] `covalence_core::select`: `Selector<D>` with the shared forms (ID, list, `expr`, `any`, `all`, `not`) and resolvers for controls (`region`, `near`, `has`), targets (`plugin`, `interface`) and paths (`match`, with captures). Controls and targets resolve within a universe the caller gives, in the domain's order (controls by `at`, row-major, unplaced ones last; targets by connection ID). Paths are a test on one path at a time, so `not` only narrows inside `all`, and `patterns()` gives what an index can key on. `all` of nothing is everything.
@@ -48,7 +48,7 @@ Nothing here adds a new kind of thing for users to learn. It makes the existing 
 - [x] One event matcher in the flow runtime, indexed by the root of the paths each trigger can match, serving `{path}` (text for reserved roots: `"sys"`, `"flow.<slug>"`), `{target}`, `{layer, controls}` and `{surface, controls}` sources, and `event` as a name, a list or `"*"`. The `control` trigger kind is removed and the fixtures migrated. Interface name mapping waits for manifests that declare interfaces (ADR 0019): the server gives none yet, and `{interface}` is tested with one set by hand.
 - [x] Pattern `state` triggers (`match`), with `{path, captures, value, previous, ts}`, and `when` as an expression or any source. With `when`, the edge is judged on its result per path.
 - [x] The trigger payload of dataflow §3.1, and validation: `unknownLayer`, `unknownControl`, `unknownEvent` for names a control or plugin can't give, and `unsupported` for `region`, `near` and `has` in event sources, control groups and component slots.
-- [ ] **Left for Phase 5:** the UI's flow editor still writes `control` triggers and `source`, and the journal view reads `input.event`.
+- [x] The UI's flow editor and journal view follow in Phase 5.
 
 ### Phase 4: The core connection (Rust)
 - [x] `core` reserved as an ID, alias and root. The engine routes `conn: "core"` to an in-process handler (`CoreActions`, set by the server), after the same journal and gate as any action; the `Actions` trait is unchanged. Requests and `action.requested` gain `key`, the item within a connection; a plugin connection with a `key` is refused until ADR 0019's items.
@@ -58,11 +58,11 @@ Nothing here adds a new kind of thing for users to learn. It makes the existing 
 - [x] Targets held in `vars` for `core` surfaces and flows: a step's `target` is a source with `constraint: {interface}` beside it, resolved when the step starts and checked against the constraint (`no_target`). Validation checks a fixed `core` target's `key` (`unknownTarget`) and that the action belongs to its interface. The schema checker lets a required property be `null` where its type allows it (`navigate`'s `layer`).
 
 ### Phase 5: UI
-- [ ] One source editor (`SourceInput`): literal, path, expression, and the transform forms, with the compiled expression shown and "Edit as expression". Used for binding properties and action parameters.
-- [ ] The trigger editor's event-source picker, replacing "Add key trigger", with patterns shown as text paths.
-- [ ] `core` in the action step's target list, with its actions' forms from the manifest. "Navigate to layer" and "Press key" read naturally in the Button view.
-- [ ] TS mirrors of the new shapes; `bindings/model.test.ts` and `flows/model.test.ts` round-trip the migrated fixtures.
-- [ ] Journal summaries for `event` entries by path.
+- [x] One source editor (`SourceInput`): a value, a path, an expression, and every transform form, nested as deep as the source is, with the compiled expression shown at the top and "Edit as expression" at every level (one-way, unless left as it was). `sources/model.ts` ports the core's `to_expr`, tested against its output. Binding properties start from M5's choices (bindings §2); action parameters that follow state, and `wait.for`, use it too.
+- [x] The trigger editor's event-source picker (a key on a layer or a surface, a connection by ID, plugin or interface, or a path with `*` patterns), replacing "Add control trigger", with event names as a list. `state` triggers watch a value or each path matching a pattern, and take `when` as an expression or a condition built from parts.
+- [x] `core` in the action step's target list, with a surface or flow picker (or "the one in a variable", with its constraint set from the action), and forms that read as what they do: "Navigate" to a layer by name, "Press a control" with Press, Release, Turn, Move to or Touch. The Button view itself is still Later (flows spec §5).
+- [x] TS mirrors of the new shapes; `bindings/model.test.ts`, `flows/model.test.ts` and `sources/model.test.ts` round-trip the shared fixtures. `core` is listed as a built-in connection and isn't offered as a plugin.
+- [x] Journal summaries for `event` entries by path: a control's as surface, control and layer; anything else as `<path>:<name>`. `core` requests name their surface or flow.
 
 ### Phase 6: Acceptance
 - [ ] The Rust end-to-end test from M5 (`surfaces_api.rs`) runs on the migrated shapes, plus a flow that navigates the deck and one that injects a press.

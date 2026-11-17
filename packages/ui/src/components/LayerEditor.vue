@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import { api, ApiError } from "../api";
 import type { ControlBinding, RuntimeProblem } from "../bindings/model";
 import { usePreviews } from "../bindings/usePreviews";
+import { controlsNamed } from "../flows/model";
 import { useLiveState } from "../live/useLiveState";
 import { hrefOf, navigate } from "../nav";
 import { useCatalogStore } from "../stores/catalog";
@@ -23,7 +24,8 @@ const flows = useFlowsStore();
 const catalog = useCatalogStore();
 const layer = computed(() => surfaces.layer(props.id));
 
-const bindings = ref<ControlBinding[]>([]);
+// Replaced whole on each load; shallow, as their sources nest deeply.
+const bindings = shallowRef<ControlBinding[]>([]);
 const runtime = ref<RuntimeProblem[]>([]);
 const loadError = ref<string | null>(null);
 /**
@@ -71,11 +73,11 @@ const failing = (control: string) => {
   const id = byControl.value.get(control)?.id;
   return id !== undefined && runtime.value.some((p) => p.binding === id);
 };
-/** Flows with a control trigger on each control, for the grid's corner mark. */
+/** Controls a flow's event trigger names on this layer, for the grid's corner mark. */
 const triggered = computed(() => {
   const out = new Set<string>();
   for (const f of flows.flows) {
-    for (const t of f.triggers) if (t.kind === "control" && t.control.layer === props.id) out.add(t.control.control);
+    for (const t of f.triggers) for (const c of controlsNamed(t, props.id)) out.add(c);
   }
   return out;
 });

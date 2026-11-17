@@ -118,14 +118,22 @@ group("journal summaries", () => {
   });
 
   it("names control events by surface, control and layer", () => {
-    expect(describe(entry("input.event", { surface: SURFACE, layer: LAYER, control: "k3", event: "press" }), ctx)).toBe(
-      "FOH deck k3 press on Cameras",
-    );
-    expect(describe(entry("input.event", { surface: SURFACE, control: "k0", event: "hold", delta: 2 }), ctx)).toBe("FOH deck k0 hold ×2");
-    expect(describe(entry("input.event", { surface: SURFACE, control: "dial", event: "turn", delta: 3 }), ctx)).toBe("FOH deck dial turn +3");
-    expect(describe(entry("input.event", { surface: SURFACE, control: "fader", event: "change", value: 0.5 }), ctx)).toBe(
-      "FOH deck fader change 0.5",
-    );
+    const at = (control: string) => ({ conn: "surface", path: ["fohDeck", "controls", control] });
+    const ev = (control: string, event: string, extra: Record<string, unknown> = {}) =>
+      entry("event", { path: at(control), event, surface: SURFACE, control, ...extra });
+    expect(describe(ev("k3", "press", { layer: LAYER }), ctx)).toBe("FOH deck k3 press on Cameras");
+    expect(describe(ev("k0", "hold", { payload: { delta: 2 } }), ctx)).toBe("FOH deck k0 hold ×2");
+    expect(describe(ev("dial", "turn", { payload: { delta: 3 } }), ctx)).toBe("FOH deck dial turn +3");
+    expect(describe(ev("fader", "change", { payload: { value: 0.5 } }), ctx)).toBe("FOH deck fader change 0.5");
     expect(describeOrigin({ surface: SURFACE }, ctx)).toBe("surface FOH deck");
+  });
+
+  it("writes other events as <path>:<name>", () => {
+    expect(describe(entry("event", { path: { conn: "sys", path: [] }, event: "startup", payload: { reason: "boot" } }), ctx)).toBe(
+      'sys:startup {"reason":"boot"}',
+    );
+    expect(describe(entry("event", { path: { conn: "flow", path: ["preService"] }, event: "finished" }), ctx)).toBe(
+      "flow.preService:finished",
+    );
   });
 });

@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, type Ref } from "vue";
 import { api, ApiError } from "../../api";
 import { provideInvalid } from "../../bindings/editing";
 import { fromDraft, newDraft, props as allProps, toDraft, type ControlBinding, type RuntimeProblem } from "../../bindings/model";
 import { usePreviews } from "../../bindings/usePreviews";
-import { firesOn, newFlowDraft, type ShownProblem } from "../../flows/model";
+import { firesOn, newFlowDraft, pressTrigger, type ShownProblem } from "../../flows/model";
 import { navigate } from "../../nav";
 import { useFlowsStore } from "../../stores/flows";
 import type { Layer } from "../../surfaces/model";
@@ -27,7 +27,8 @@ const flows = useFlowsStore();
 const invalid = provideInvalid();
 
 // Mounted per control (keyed by the layer editor), so the draft starts from what's stored.
-const draft = ref<ControlBinding>(props.stored === undefined ? newDraft(props.layer.id, props.control) : toDraft(props.stored));
+// Deeply reactive, but typed without unwrapping: sources nest too deeply for `UnwrapRef`.
+const draft = ref<unknown>(props.stored === undefined ? newDraft(props.layer.id, props.control) : toDraft(props.stored)) as Ref<ControlBinding>;
 const problems = ref<ShownProblem[]>([]);
 const saving = ref(false);
 const saveError = ref<string | null>(null);
@@ -108,7 +109,7 @@ function whenPressed() {
   const flow = newFlowDraft();
   const label = preview.value?.look.label.trim();
   flow.name = `${props.layer.name} ${props.control}${label ? ` (${label})` : ""}`;
-  flow.triggers = [{ kind: "control", control: { layer: props.layer.id, control: props.control }, event: "press" }];
+  flow.triggers = [pressTrigger(props.layer.id, props.control)];
   flows.prefill = flow;
   navigate({ tab: "flows", flow: "new" });
 }

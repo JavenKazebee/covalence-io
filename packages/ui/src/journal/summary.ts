@@ -1,6 +1,7 @@
 // One-line descriptions of journal entries (state spec §2.2).
 
 import { formatPath, type Segment } from "../live/paths";
+import { coreInterfaceOf } from "../flows/model";
 import type { JournalEntry, Origin } from "../live/protocol";
 
 export interface SummaryContext {
@@ -118,11 +119,33 @@ export function describe(entry: JournalEntry, ctx: SummaryContext): string {
     }
     case "state.quality":
       return `${textPath(d.subtree as IdPath, ctx)} ${String(d.quality)}`;
-    case "event":
-      return `${String(d.event)} ${json(d.payload)}`;
+    // Events by path (dataflow §3): a control's input names its surface,
+    // control and layer; anything else is `<path>:<name>`.
+    case "event": {
+      const payload = (d.payload ?? {}) as Data;
+      if (d.control !== undefined) {
+        const layer = d.layer === undefined ? "" : ` on ${ctx.layerName?.(String(d.layer)) ?? String(d.layer)}`;
+        const delta =
+          typeof payload.delta !== "number"
+            ? ""
+            : d.event === "turn"
+              ? ` ${payload.delta > 0 ? "+" : ""}${payload.delta}`
+              : ` ×${payload.delta}`;
+        const value = payload.value === undefined ? "" : ` ${json(payload.value, 20)}`;
+        return `${surface(d.surface)} ${String(d.control)} ${String(d.event)}${delta}${value}${layer}`;
+      }
+      const at = textPath(d.path as IdPath | undefined, ctx);
+      return `${at}:${String(d.event)}${d.payload === undefined ? "" : ` ${json(d.payload)}`}`;
+    }
     case "action.requested": {
       const name = `${ctx.alias(String(d.conn))}.${String(d.action)}`;
-      return `${name} ${json(d.params)}`;
+      // A `core` item: its surface or flow by name.
+      const key = d.key === undefined ? "" : String(d.key);
+      const item =
+        key === ""
+          ? ""
+          : ` [${(coreInterfaceOf(String(d.action)) === "flow@1" ? ctx.flowName?.(key) : ctx.surfaceName?.(key)) ?? key}]`;
+      return `${name}${item} ${json(d.params)}`;
     }
     case "action.dispatched":
       return `${call()} dispatched`;
@@ -160,14 +183,6 @@ export function describe(entry: JournalEntry, ctx: SummaryContext): string {
     }
     case "run.finished":
       return `${shortRun(d.run)} ${String(d.status)}${d.error === undefined ? "" : `: ${errorText(d.error)}`}`;
-    // Control events (surfaces spec §4.2). Input itself is a `state.patch`.
-    case "input.event": {
-      const layer = d.layer === undefined ? "" : ` on ${ctx.layerName?.(String(d.layer)) ?? String(d.layer)}`;
-      const delta =
-        typeof d.delta !== "number" ? "" : d.event === "turn" ? ` ${d.delta > 0 ? "+" : ""}${d.delta}` : ` ×${d.delta}`;
-      const value = d.value === undefined ? "" : ` ${json(d.value, 20)}`;
-      return `${surface(d.surface)} ${String(d.control)} ${String(d.event)}${delta}${value}${layer}`;
-    }
     default:
       return json(entry.data);
   }

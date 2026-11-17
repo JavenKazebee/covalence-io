@@ -11,6 +11,9 @@ import {
   type Flow,
   type ParamsSchema,
   type Problem,
+  describeTrigger,
+  firesOn,
+  pressTrigger,
 } from "./model";
 import { flowStatuses } from "./status";
 
@@ -75,9 +78,9 @@ describe("flow model", () => {
     const draft = toDraft(flow, schemaOf);
     const branch = draft.body[1]!;
     const high = branch.arms[0]!.steps[0]!;
-    expect(high.exprs).toEqual({ input: "local.input" });
+    expect(high.sources).toEqual({ input: { expr: "local.input" } });
     expect(high.values).toEqual({ output: "1", input: "" });
-    expect(branch.otherwise?.[0]?.forExpr).toBe("vars.pauseMs ?? 100");
+    expect(branch.otherwise?.[0]?.forSource).toEqual({ expr: "vars.pauseMs ?? 100" });
     // A required param given as an expression isn't missing.
     high.values.output = "";
     const result = fromDraft(draft, schemaOf);
@@ -93,10 +96,42 @@ describe("flow model", () => {
   it("leaves out an empty filter and no conditions", () => {
     const draft = newFlowDraft();
     draft.name = "f";
-    draft.triggers = [{ kind: "event", source: { conn: VH[0]! }, event: "routeChanged", filter: " " }];
+    draft.triggers = [{ kind: "event", from: { target: VH[0]! }, event: "routeChanged", filter: " " }];
     const result = fromDraft(draft, schemaOf);
-    expect(result.ok && result.flow.triggers[0]).toEqual({ kind: "event", source: { conn: VH[0] }, event: "routeChanged" });
+    expect(result.ok && result.flow.triggers[0]).toEqual({ kind: "event", from: { target: VH[0] }, event: "routeChanged" });
     expect(result.ok && "conditions" in result.flow).toBe(false);
+  });
+
+  it("reads which controls a trigger fires on, as written", () => {
+    const flow = fixtures["../../../../crates/covalence-core/fixtures/flows/events.json"]!;
+    const layer = "01JBZ7P0D3F5G7H9J1K3L5M7PA";
+    const keys = flow.triggers[4]!;
+    expect(firesOn(keys, layer, "k1", "press")).toBe(false); // `any` with an `expr`: not a plain list
+    expect(firesOn(pressTrigger(layer, "k0"), layer, "k0", "press")).toBe(true);
+    expect(firesOn(pressTrigger(layer, "k0"), layer, "k0", "release")).toBe(false);
+    expect(firesOn({ kind: "event", from: { layer, controls: ["k1", "k2"] }, event: ["press", "long"] }, layer, "k2", "long")).toBe(true);
+    expect(firesOn({ kind: "event", from: { layer }, event: "*" }, layer, "k9", "turn")).toBe(true);
+    expect(describeTrigger(flow.triggers[0]!, (c) => c)).toBe("sys startup");
+    expect(describeTrigger(flow.triggers[2]!, (c) => c)).toBe("surface.*.controls.* press");
+    expect(describeTrigger(flow.triggers[5]!, (c) => c)).toBe("surface.*.controls.*.pressed (rising)");
+  });
+
+  it("keeps a core target, and one held in vars with its constraint", () => {
+    const flow: Flow = {
+      id: "f", name: "f", slug: "f", enabled: true, triggers: [{ kind: "api" }], concurrency: "ignore", failover: "abort",
+      body: [
+        { id: "a", kind: "action", target: { conn: "core", key: "S1" }, action: "navigate", params: { layer: "L" } },
+        {
+          id: "b", kind: "action", target: { ref: { root: "vars", path: ["deck"] } }, constraint: { interface: "surface@1" },
+          action: "inject", params: { control: "k1", input: "down", value: { value: { ref: "not a source" } } },
+        },
+      ],
+    };
+    const draft = toDraft(flow, () => null);
+    expect(draft.body[0]!.targetKey).toBe("S1");
+    expect(draft.body[1]!.targetSource).toEqual({ ref: { root: "vars", path: ["deck"] } });
+    expect(draft.body[1]!.params.value).toEqual({ ref: "not a source" });
+    expect(fromDraft(draft, () => null)).toEqual({ ok: true, flow });
   });
 
   it("checks durations as the server does", () => {

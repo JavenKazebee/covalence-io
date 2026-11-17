@@ -57,6 +57,8 @@ export interface Plugin {
   bundle: string;
   /** Null until the plugin host has loaded the plugin. */
   manifest: Manifest | null;
+  /** `core`, which the server serves itself. */
+  builtIn?: boolean;
 }
 
 export type ConnMode = "live" | "simulate";
@@ -68,7 +70,10 @@ export interface Connection {
   alias: string;
   config: Record<string, unknown>;
   mode: ConnMode;
-  permissions: Record<string, unknown>;
+  /** Absent on `core`, which is built in. */
+  permissions?: Record<string, unknown>;
+  /** `core` (core actions §1): always there, can't be edited or deleted. */
+  builtIn?: boolean;
 }
 
 export interface NewConnection {

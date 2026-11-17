@@ -8,7 +8,7 @@ import { useCatalogStore } from "../stores/catalog";
 
 const catalog = useCatalogStore();
 
-const loadedPlugins = computed(() => catalog.plugins.filter((p) => p.manifest !== null));
+const loadedPlugins = computed(() => (catalog.plugins.filter((p) => p.manifest !== null)).filter((p) => !p.builtIn));
 const pluginId = ref("");
 const alias = ref("");
 const mode = ref<ConnMode>("simulate");
@@ -87,7 +87,11 @@ async function create() {
           :key="conn.id"
         >
           <td>
-            <a :href="hrefOf({ tab: 'state', path: conn.alias })"><code>{{ conn.alias }}</code></a>
+            <code v-if="conn.builtIn">{{ conn.alias }}</code>
+            <a
+              v-else
+              :href="hrefOf({ tab: 'state', path: conn.alias })"
+            ><code>{{ conn.alias }}</code></a>
           </td>
           <td>{{ pluginName(conn.plugin) }} <span class="muted">{{ conn.version }}</span></td>
           <td>
@@ -96,7 +100,13 @@ async function create() {
               :class="conn.mode === 'live' ? 'good' : 'warn'"
             >{{ conn.mode }}</span>
           </td>
-          <td><code>{{ JSON.stringify(conn.config) }}</code></td>
+          <td>
+            <span
+              v-if="conn.builtIn"
+              class="muted"
+            >Built in: navigates surfaces and controls flows</span>
+            <code v-else>{{ JSON.stringify(conn.config) }}</code>
+          </td>
         </tr>
       </tbody>
     </table>

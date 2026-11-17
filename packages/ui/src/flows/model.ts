@@ -4,6 +4,7 @@
 
 import type { JsonSchema, Manifest } from "../api";
 import { fieldsOf, parseValues, type Field } from "../forms/schema";
+import { copyJson, formOf, literal, literalOf, type Json, type Ref, type Source } from "../sources/model";
 import type { ControlEvent } from "../surfaces/model";
 
 export type Concurrency = "parallel" | "queue" | "restart" | "ignore";
@@ -15,22 +16,50 @@ export type Expr = string;
 export type Edge = "rising" | "falling" | "change";
 export const edges: readonly Edge[] = ["rising", "falling", "change"];
 
-export type Trigger =
-  | { kind: "api" }
-  | { kind: "event"; source: { conn: string }; event: string; filter?: Expr }
-  | { kind: "state"; when: Expr; edge: Edge }
-  /** A control on a layer, on any surface where the layer controls it (surfaces spec §7). */
-  | { kind: "control"; control: { layer: string; control: string }; event: ControlEvent };
+/**
+ * A selector (dataflow §2): an ID, a list of IDs, `{expr}`, `{any}`,
+ * `{all}`, `{not}` or a domain form. Kept as stored; the editor builds the
+ * common shapes and shows the rest as text.
+ */
+export type Selector<Id> = Id | Id[] | Record<string, Json>;
 
-/** A value that is an expression: `{expr: "..."}` (flow spec §8.3). */
-export interface ExprValue {
-  expr: Expr;
+/** A path a selector names: text for a reserved root (`"sys"`), or a ref by ID. */
+export type PathId = string | Ref;
+
+/** A connection by ID, or `{conn, key?}`. */
+export type TargetId = string | { conn: string; key?: string };
+
+/** Where an event trigger's events come from (dataflow §3.1). */
+export type EventSource =
+  | { path: Selector<PathId> }
+  | { target: Selector<TargetId> }
+  | { layer: string; controls?: Selector<string> }
+  | { surface: string; controls?: Selector<string> };
+
+export type EventSourceKind = "path" | "target" | "layer" | "surface";
+
+export function eventSourceKind(from: EventSource): EventSourceKind {
+  if ("layer" in from) return "layer";
+  if ("surface" in from) return "surface";
+  if ("target" in from) return "target";
+  return "path";
 }
 
-export function isExprValue(value: unknown): value is ExprValue {
-  if (typeof value !== "object" || value === null) return false;
-  const keys = Object.keys(value);
-  return keys.length === 1 && keys[0] === "expr" && typeof (value as ExprValue).expr === "string";
+export type Trigger =
+  | { kind: "api" }
+  | { kind: "event"; from: EventSource; event: string | string[]; filter?: Expr }
+  /** `when` is an expression's text, or any source; with `match`, it's optional. */
+  | { kind: "state"; when?: Expr | Source; match?: string; edge: Edge };
+
+/** An event trigger's names as a list. */
+export const eventNames = (event: string | string[]): string[] => (Array.isArray(event) ? event : [event]);
+
+/** A selector of IDs as a plain list, or null for anything else. */
+export function idsOf<Id>(selector: Selector<Id> | undefined): Id[] | null {
+  if (selector === undefined) return null;
+  if (Array.isArray(selector)) return selector as Id[];
+  if (typeof selector === "string") return [selector as Id];
+  return null;
 }
 
 interface StepCommon {
@@ -43,17 +72,39 @@ interface StepCommon {
   onError?: "fail" | "continue";
 }
 
+/** The core connection's ID and alias (core actions §1). */
+export const CORE = "core";
+
+/** Which of `core`'s interfaces each of its actions belongs to, and so what `key` names. */
+const coreInterfaces: Record<string, "surface@1" | "flow@1"> = {
+  navigate: "surface@1",
+  inject: "surface@1",
+  cancelRuns: "flow@1",
+  setEnabled: "flow@1",
+};
+
+export const coreInterfaceOf = (action: string): "surface@1" | "flow@1" | null => coreInterfaces[action] ?? null;
+
+/** A fixed target: a connection, or one of `core`'s surfaces or flows by `key`. */
+export interface Target {
+  conn: string;
+  key?: string;
+}
+
 export interface ActionStep extends StepCommon {
   kind: "action";
-  target: { conn: string };
+  /** A fixed target, or a source giving one, with `constraint` beside it. */
+  target: Target | Source;
+  constraint?: { interface: string };
   action: string;
-  /** Literal values, or `{expr}` at the top level. */
-  params: Record<string, unknown>;
+  /** Each a source (dataflow §1). */
+  params: Record<string, Source>;
 }
 
 export interface WaitStep extends StepCommon {
   kind: "wait";
-  for: string | ExprValue;
+  /** A duration, or a source giving one. */
+  for: Source;
 }
 
 export interface WaitUntilStep extends StepCommon {
@@ -192,15 +243,20 @@ export interface StepDraft {
   timeout: string;
   onError: "fail" | "continue";
   conn: string;
+  /** A `core` target's surface or flow. */
+  targetKey: string;
+  /** A target that follows state, with its constraint's interface; null for a fixed one. */
+  targetSource: Source | null;
+  constraint: string;
   action: string;
   values: Record<string, string | boolean>;
-  params: Record<string, unknown>;
-  /** Params given as expressions, by param key. */
-  exprs: Record<string, Expr>;
+  params: Record<string, Json>;
+  /** Params that follow state (a path, an expression or a transform), by param key. */
+  sources: Record<string, Source>;
   /** A literal `wait` duration. */
   for: string;
-  /** A `wait` duration as an expression, or null for a literal one. */
-  forExpr: Expr | null;
+  /** A `wait` duration that follows state, or null for a literal one. */
+  forSource: Source | null;
   until: Expr;
   path: string;
   value: Expr;
@@ -231,18 +287,27 @@ export interface FlowDraft {
 
 let nextKey = 1;
 
-/** A deep copy of plain JSON, which flows are. Unlike `structuredClone`, it takes Vue's reactive proxies. */
-const copyJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
-
-/** Whether a trigger fires on this event of this control. */
+/** Whether a trigger fires on this event of this control, as written (IDs and lists). */
 export function firesOn(trigger: Trigger, layer: string, control: string, event: ControlEvent): boolean {
-  return (
-    trigger.kind === "control" &&
-    trigger.control.layer === layer &&
-    trigger.control.control === control &&
-    trigger.event === event
-  );
+  if (trigger.kind !== "event" || !("layer" in trigger.from) || trigger.from.layer !== layer) return false;
+  const names = eventNames(trigger.event);
+  if (!names.includes(event) && !names.includes("*")) return false;
+  const controls = idsOf(trigger.from.controls);
+  return trigger.from.controls === undefined || (controls !== null && controls.includes(control));
 }
+
+/** The controls of `layer` that an event trigger names by ID. */
+export function controlsNamed(trigger: Trigger, layer: string): string[] {
+  if (trigger.kind !== "event" || !("layer" in trigger.from) || trigger.from.layer !== layer) return [];
+  return idsOf(trigger.from.controls) ?? [];
+}
+
+/** A trigger on a press of a layer's control. */
+export const pressTrigger = (layer: string, control: string): Trigger => ({
+  kind: "event",
+  from: { layer, controls: control },
+  event: "press",
+});
 
 export function newFlowDraft(): FlowDraft {
   return {
@@ -267,12 +332,15 @@ export function newStepDraft(kind: StepKind, id: string): StepDraft {
     timeout: "",
     onError: "fail",
     conn: "",
+    targetKey: "",
+    targetSource: null,
+    constraint: "",
     action: "",
     values: {},
     params: {},
-    exprs: {},
+    sources: {},
     for: kind === "wait" ? "1s" : "",
-    forExpr: null,
+    forSource: null,
     until: "",
     path: kind === "set" ? "local." : "",
     value: "",
@@ -308,11 +376,11 @@ export function paramsSchemaFrom(manifestOf: (conn: string) => Manifest | null):
   return (conn, action) => manifestOf(conn)?.actions.find((a) => a.id === action)?.params ?? null;
 }
 
-/** Stored params as input text: what `initialValues` gives for a fresh form. Expressions are left out. */
-export function valuesOf(fields: Field[], params: Record<string, unknown>): Record<string, string | boolean> {
+/** Stored literal params as input text: what `initialValues` gives for a fresh form. */
+export function valuesOf(fields: Field[], params: Record<string, Json>): Record<string, string | boolean> {
   const out: Record<string, string | boolean> = {};
   for (const field of fields) {
-    const v = isExprValue(params[field.key]) ? undefined : params[field.key];
+    const v = params[field.key];
     if (field.kind === "boolean") out[field.key] = v === true;
     else out[field.key] = v === undefined || v === null ? "" : String(v);
   }
@@ -329,11 +397,10 @@ function stepToDraft(step: Step, schemaOf: ParamsSchema): StepDraft {
   if (step.onError === "fail") draft.explicit.onError = "fail";
   switch (step.kind) {
     case "wait":
-      if (isExprValue(step.for)) {
-        draft.forExpr = step.for.expr;
+      if (formOf(step.for) === "literal") draft.for = String(literalOf(step.for));
+      else {
+        draft.forSource = copyJson(step.for);
         draft.for = "";
-      } else {
-        draft.for = step.for;
       }
       break;
     case "waitUntil":
@@ -352,12 +419,23 @@ function stepToDraft(step: Step, schemaOf: ParamsSchema): StepDraft {
       draft.otherwise = step.else === undefined ? null : step.else.map((s) => stepToDraft(s, schemaOf));
       break;
     case "action": {
-      draft.conn = step.target.conn;
+      if (formOf(step.target as Source) === "literal") {
+        const target = literalOf(step.target as Source) as unknown as Target;
+        draft.conn = target.conn;
+        draft.targetKey = target.key ?? "";
+      } else {
+        draft.conn = "core";
+        draft.targetSource = copyJson(step.target as Source);
+        draft.constraint = step.constraint?.interface ?? "";
+      }
       draft.action = step.action;
-      draft.params = copyJson(step.params);
-      for (const [k, v] of Object.entries(step.params)) if (isExprValue(v)) draft.exprs[k] = v.expr;
-      const schema = schemaOf(step.target.conn, step.action);
-      if (schema !== null) draft.values = valuesOf(fieldsOf(schema), step.params);
+      for (const [k, v] of Object.entries(step.params)) {
+        if (formOf(v) === "literal") draft.params[k] = copyJson(literalOf(v));
+        else draft.sources[k] = copyJson(v);
+      }
+      // `core`'s params have a form of their own, which edits them as they are.
+      const schema = draft.conn === CORE ? null : schemaOf(draft.conn, step.action);
+      if (schema !== null) draft.values = valuesOf(fieldsOf(schema), draft.params);
       break;
     }
   }
@@ -393,7 +471,7 @@ function stepFromDraft(d: StepDraft, schemaOf: ParamsSchema, errors: Map<number,
   const steps = (list: StepDraft[]) => list.map((s) => stepFromDraft(s, schemaOf, errors));
   switch (d.kind) {
     case "wait":
-      return { ...common, kind: "wait", for: d.forExpr === null ? d.for.trim() : { expr: d.forExpr } };
+      return { ...common, kind: "wait", for: d.forSource === null ? d.for.trim() : copyJson(d.forSource) };
     case "waitUntil":
       return { ...common, kind: "waitUntil", until: d.until };
     case "set":
@@ -408,19 +486,27 @@ function stepFromDraft(d: StepDraft, schemaOf: ParamsSchema, errors: Map<number,
       return step;
     }
     case "action": {
-      let params = d.params;
-      const schema = schemaOf(d.conn, d.action);
+      let params: Record<string, Json> = d.params;
+      const schema = d.conn === CORE ? null : schemaOf(d.conn, d.action);
       if (schema !== null) {
-        // Expression params are the server's to check, when the step runs.
-        const literal = fieldsOf(schema).filter((f) => !(f.key in d.exprs));
-        const parsed = parseValues(literal, d.values);
-        if (parsed.ok) params = parsed.value;
+        // Params that follow state are the server's to check, when the step runs.
+        const literals = fieldsOf(schema).filter((f) => !(f.key in d.sources));
+        const parsed = parseValues(literals, d.values);
+        if (parsed.ok) params = parsed.value as Record<string, Json>;
         else errors.set(d.key, parsed.errors);
       } else {
-        params = Object.fromEntries(Object.entries(params).filter(([k]) => !(k in d.exprs)));
+        params = Object.fromEntries(Object.entries(params).filter(([k]) => !(k in d.sources)));
       }
-      const exprs = Object.fromEntries(Object.entries(d.exprs).map(([k, expr]) => [k, { expr }]));
-      return { ...common, kind: "action", target: { conn: d.conn }, action: d.action, params: { ...params, ...exprs } };
+      const out: Record<string, Source> = Object.fromEntries(Object.entries(params).map(([k, v]) => [k, literal(v)]));
+      for (const [k, source] of Object.entries(d.sources)) out[k] = copyJson(source);
+      const step: ActionStep = { ...common, kind: "action", target: { conn: d.conn }, action: d.action, params: out };
+      if (d.targetSource !== null) {
+        step.target = copyJson(d.targetSource);
+        step.constraint = { interface: d.constraint };
+      } else if (d.targetKey.trim() !== "") {
+        step.target = { conn: d.conn, key: d.targetKey.trim() };
+      }
+      return step;
     }
   }
 }
@@ -438,7 +524,7 @@ export function fromDraft(draft: FlowDraft, schemaOf: ParamsSchema): DraftResult
   // An empty filter is no filter.
   const triggers = draft.triggers.map((t): Trigger => {
     if (t.kind !== "event" || t.filter === undefined || t.filter.trim() !== "") return t;
-    return { kind: "event", source: t.source, event: t.event };
+    return { kind: "event", from: t.from, event: t.event };
   });
   const flow: Flow = {
     id: draft.id,
@@ -496,20 +582,45 @@ export interface LastRun {
   error?: RunError;
 }
 
+/** A selector as short text: IDs joined, anything else as JSON. */
+export function selectorText<Id>(selector: Selector<Id> | undefined, name: (id: Id) => string): string {
+  if (selector === undefined) return "any";
+  const ids = idsOf(selector);
+  if (ids !== null) return ids.map(name).join(", ");
+  if (typeof selector === "object" && selector !== null && "match" in selector) return String((selector as { match: Json }).match);
+  return JSON.stringify(selector);
+}
+
+/** Where an event source's events come from, in words. */
+export function describeSource(
+  from: EventSource,
+  alias: (conn: string) => string,
+  layerName: (layer: string) => string = (layer) => layer,
+  surfaceName: (surface: string) => string = (surface) => surface,
+): string {
+  if ("layer" in from) return `${layerName(from.layer)} ${selectorText(from.controls, (c) => c)}`;
+  if ("surface" in from) return `${surfaceName(from.surface)} ${selectorText(from.controls, (c) => c)}`;
+  if ("target" in from) {
+    return selectorText(from.target, (t: TargetId) => (typeof t === "string" ? alias(t) : `${alias(t.conn)}/${t.key ?? ""}`));
+  }
+  return selectorText(from.path, (p: PathId) => (typeof p === "string" ? p : JSON.stringify(p)));
+}
+
 export function describeTrigger(
   trigger: Trigger,
   alias: (conn: string) => string,
   layerName: (layer: string) => string = (layer) => layer,
 ): string {
   switch (trigger.kind) {
-    case "control":
-      return `${layerName(trigger.control.layer)} ${trigger.control.control} ${trigger.event}`;
     case "api":
       return "API / Run button";
     case "event":
-      return `${alias(trigger.source.conn)} ${trigger.event}${trigger.filter ? " (filtered)" : ""}`;
-    case "state":
-      return `${trigger.when} (${trigger.edge})`;
+      return `${describeSource(trigger.from, alias, layerName)} ${eventNames(trigger.event).join(" or ")}${trigger.filter ? " (filtered)" : ""}`;
+    case "state": {
+      const when = trigger.when === undefined ? "" : typeof trigger.when === "string" ? trigger.when : "a condition";
+      const on = trigger.match === undefined ? when : `${trigger.match}${when ? ` where ${when}` : ""}`;
+      return `${on} (${trigger.edge})`;
+    }
   }
 }
 

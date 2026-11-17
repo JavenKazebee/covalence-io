@@ -2,6 +2,8 @@
 import { computed, watch } from "vue";
 import { stepsBefore } from "../flows/expr";
 import {
+  CORE,
+  coreInterfaceOf,
   freshStepId,
   isDuration,
   newArmDraft,
@@ -14,9 +16,13 @@ import {
   type StepDraft,
 } from "../flows/model";
 import { fieldsOf, initialValues } from "../forms/schema";
+import type { Json } from "../sources/model";
 import { useCatalogStore } from "../stores/catalog";
+import { useFlowsStore } from "../stores/flows";
+import { useSurfacesStore } from "../stores/surfaces";
 import ExprInput from "./ExprInput.vue";
 import SchemaForm from "./SchemaForm.vue";
+import SourceInput from "./SourceInput.vue";
 import StepList from "./StepList.vue";
 
 /**
@@ -37,6 +43,8 @@ const step = defineModel<StepDraft>({ required: true });
 const emit = defineEmits<{ move: [by: -1 | 1]; remove: []; reshape: [path: PathSegment[]] }>();
 
 const catalog = useCatalogStore();
+const surfaces = useSurfacesStore();
+const flows = useFlowsStore();
 const conn = computed(() => catalog.connections.find((c) => c.id === step.value.conn) ?? null);
 const manifest = computed(() => (conn.value === null ? null : catalog.manifest(conn.value.plugin)));
 const actions = computed(() => manifest.value?.actions ?? []);
@@ -88,10 +96,17 @@ function retarget(connId: string, actionId: string) {
   s.conn = connId;
   s.action = actionId;
   s.params = {};
-  s.exprs = {};
+  s.sources = {};
+  if (connId !== CORE) {
+    s.targetKey = "";
+    s.targetSource = null;
+  } else if (s.targetSource !== null) {
+    s.constraint = coreInterfaceOf(actionId) ?? "";
+  }
   const schema = catalog.connections.find((c) => c.id === connId);
   const def = schema === undefined ? undefined : catalog.manifest(schema.plugin)?.actions.find((a) => a.id === actionId);
-  s.values = def === undefined ? {} : initialValues(fieldsOf(def.params));
+  s.values = def === undefined || connId === CORE ? {} : initialValues(fieldsOf(def.params));
+  if (connId === CORE) s.params = coreDefaults(actionId);
   if (generated && actionId !== "") s.id = freshStepId(actionId, [...props.ctx.all].filter((id) => id !== s.id));
 }
 
@@ -101,14 +116,64 @@ function pickConn(connId: string) {
   retarget(connId, list.some((a) => a.id === step.value.action) ? step.value.action : (list[0]?.id ?? ""));
 }
 
+// ---- core: a surface or a flow, and its action's own form ----
+
+const isCore = computed(() => step.value.conn === CORE);
+const coreInterface = computed(() => coreInterfaceOf(step.value.action));
+/** The surfaces or flows the action can act on. */
+const coreItems = computed<{ id: string; name: string }[]>(() =>
+  coreInterface.value === "flow@1"
+    ? flows.flows.map((f) => ({ id: f.id, name: f.name }))
+    : surfaces.surfaces.map((x) => ({ id: x.id, name: x.name })),
+);
+const STATE = "\u0000state";
+
+function setCoreTarget(value: string) {
+  const s = step.value;
+  if (value === STATE) {
+    s.targetSource = { ref: { root: "vars", path: [coreInterface.value === "flow@1" ? "flow" : "deck"] } };
+    s.constraint = coreInterface.value ?? "";
+    s.targetKey = "";
+  } else {
+    s.targetSource = null;
+    s.constraint = "";
+    s.targetKey = value;
+  }
+}
+
+/** A fresh `core` action's params: show nothing, press the first key, enable. */
+function coreDefaults(action: string): Record<string, Json> {
+  switch (action) {
+    case "navigate":
+      return { layer: surfaces.layers[0]?.id ?? null };
+    case "inject":
+      return { control: "k0", input: "down" };
+    case "setEnabled":
+      return { enabled: true };
+    default:
+      return {};
+  }
+}
+
+/** The controls the target surface's layers list, to pick from. */
+const controlIds = computed(() => [...new Set(surfaces.layers.flatMap((l) => l.controls.map((c) => c.id)))]);
+
+const pressInputs: Record<string, string> = {
+  down: "Press",
+  up: "Release",
+  turn: "Turn",
+  value: "Move to",
+  touch: "Touch",
+};
+
 // ---- wait ----
 
 function toggleWaitExpr() {
   const s = step.value;
-  if (s.forExpr === null) {
-    s.forExpr = s.for.trim() === "" ? "" : JSON.stringify(s.for.trim());
+  if (s.forSource === null) {
+    s.forSource = { expr: s.for.trim() === "" ? "" : JSON.stringify(s.for.trim()) };
   } else {
-    s.forExpr = null;
+    s.forSource = null;
     if (!isDuration(s.for.trim())) s.for = "1s";
   }
 }
@@ -240,10 +305,137 @@ function toggleElse() {
           </select>
         </div>
       </div>
+      <div
+        v-if="isCore && coreInterface !== null"
+        class="row core"
+      >
+        <div class="field">
+          <label :for="`${prefix}-key`">{{ coreInterface === "flow@1" ? "Flow" : "Surface" }}</label>
+          <select
+            :id="`${prefix}-key`"
+            :value="step.targetSource !== null ? STATE : step.targetKey"
+            @change="setCoreTarget(($event.target as HTMLSelectElement).value)"
+          >
+            <option
+              v-if="step.targetSource === null && !coreItems.some((i) => i.id === step.targetKey)"
+              :value="step.targetKey"
+            >
+              {{ step.targetKey || `Pick a ${coreInterface === "flow@1" ? "flow" : "surface"}` }}
+            </option>
+            <option
+              v-for="item in coreItems"
+              :key="item.id"
+              :value="item.id"
+            >
+              {{ item.name }}
+            </option>
+            <option :value="STATE">
+              The one in a variable…
+            </option>
+          </select>
+        </div>
+        <div
+          v-if="step.targetSource !== null"
+          class="field"
+        >
+          <label>Held in</label>
+          <SourceInput
+            v-model="step.targetSource"
+            label="Target"
+            :forms="['ref', 'expr']"
+            :problems="at('target')"
+            :known="known"
+            :all="ctx.all"
+          />
+          <small class="hint">A {{ coreInterface === "flow@1" ? "flow" : "surface" }}: <code>{conn: "core", key}</code>.</small>
+        </div>
+
+        <template v-if="step.action === 'navigate'">
+          <div class="field">
+            <label :for="`${prefix}-layer`">To layer</label>
+            <select
+              :id="`${prefix}-layer`"
+              :value="step.params.layer ?? ''"
+              @change="step.params.layer = ($event.target as HTMLSelectElement).value || null"
+            >
+              <option value="">
+                Nothing
+              </option>
+              <option
+                v-for="l in surfaces.layers"
+                :key="l.id"
+                :value="l.id"
+              >
+                {{ l.name }}
+              </option>
+            </select>
+          </div>
+        </template>
+        <template v-else-if="step.action === 'inject'">
+          <div class="field">
+            <label :for="`${prefix}-input`">Do</label>
+            <select
+              :id="`${prefix}-input`"
+              :value="step.params.input"
+              @change="step.params.input = ($event.target as HTMLSelectElement).value"
+            >
+              <option
+                v-for="(name, input) in pressInputs"
+                :key="input"
+                :value="input"
+              >
+                {{ name }}
+              </option>
+            </select>
+          </div>
+          <div class="field">
+            <label :for="`${prefix}-control`">Control</label>
+            <input
+              :id="`${prefix}-control`"
+              :value="step.params.control"
+              :list="`${prefix}-controls`"
+              spellcheck="false"
+              @input="step.params.control = ($event.target as HTMLInputElement).value"
+            >
+            <datalist :id="`${prefix}-controls`">
+              <option
+                v-for="c in controlIds"
+                :key="c"
+                :value="c"
+              />
+            </datalist>
+          </div>
+          <div
+            v-if="step.params.input === 'turn' || step.params.input === 'value'"
+            class="field"
+          >
+            <label :for="`${prefix}-value`">{{ step.params.input === "turn" ? "Detents" : "Value" }}</label>
+            <input
+              :id="`${prefix}-value`"
+              type="number"
+              step="any"
+              :value="step.params.value ?? ''"
+              @change="step.params.value = Number(($event.target as HTMLInputElement).value)"
+            >
+          </div>
+        </template>
+        <template v-else-if="step.action === 'setEnabled'">
+          <label class="check"><input
+            type="checkbox"
+            :checked="step.params.enabled === true"
+            @change="step.params.enabled = ($event.target as HTMLInputElement).checked"
+          > Enabled</label>
+        </template>
+        <small
+          v-for="(p, j) in [...at('target'), ...at('params')]"
+          :key="j"
+          :class="p.warning ? 'warn' : 'error'"
+        >{{ p.message }}</small>
+      </div>
       <SchemaForm
-        v-if="action !== null"
+        v-if="action !== null && !isCore"
         v-model="step.values"
-        v-model:exprs="step.exprs"
+        v-model:sources="step.sources"
         :fields="fields"
         :errors="paramErrors"
         :alias="conn?.alias"
@@ -270,16 +462,16 @@ function toggleElse() {
         <button
           type="button"
           class="secondary mode"
-          :class="{ on: step.forExpr !== null }"
-          :aria-pressed="step.forExpr !== null"
+          :class="{ on: step.forSource !== null }"
+          :aria-pressed="step.forSource !== null"
           aria-label="Duration as an expression"
-          :title="step.forExpr === null ? 'Use an expression' : 'Use a duration'"
+          :title="step.forSource === null ? 'Follow state' : 'Use a duration'"
           @click="toggleWaitExpr"
         >
           ƒx
         </button>
       </div>
-      <template v-if="step.forExpr === null">
+      <template v-if="step.forSource === null">
         <input
           :id="`${prefix}-for`"
           v-model="step.for"
@@ -297,13 +489,14 @@ function toggleElse() {
         >Like 500ms, 2s or 1m30s.</small>
       </template>
       <template v-else>
-        <ExprInput
-          v-model="step.forExpr"
-          label="Duration expression"
-          placeholder="vars.pauseMs"
+        <SourceInput
+          v-model="step.forSource"
+          label="Duration"
+          :forms="['expr', 'ref', 'rules', 'map']"
           :problems="at('for')"
           :known="known"
           :all="ctx.all"
+          fallback
         />
         <small class="hint">A duration like "2s", or milliseconds.</small>
       </template>

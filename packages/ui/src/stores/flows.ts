@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { computed, ref } from "vue";
+import { computed, ref, shallowRef } from "vue";
 import { api } from "../api";
 import type { Flow, FlowDraft, Saved } from "../flows/model";
 
@@ -8,11 +8,12 @@ import type { Flow, FlowDraft, Saved } from "../flows/model";
  * own saves; run status is live state under `flow` (flow spec §9).
  */
 export const useFlowsStore = defineStore("flows", () => {
-  const flows = ref<Flow[]>([]);
+  // Replaced whole on each refresh; shallow, as their sources nest deeply.
+  const flows = shallowRef<Flow[]>([]);
   const loaded = ref(false);
   const error = ref<string | null>(null);
   /** A draft for the next new flow to start from, e.g. a key's "When pressed". Taken once. */
-  const prefill = ref<FlowDraft | null>(null);
+  const prefill = shallowRef<FlowDraft | null>(null);
 
   async function refresh() {
     try {

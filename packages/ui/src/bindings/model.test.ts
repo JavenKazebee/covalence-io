@@ -1,18 +1,16 @@
 import { describe, expect, it } from "vitest";
+import { formOf, newSource, refsOf, type Source } from "../sources/model";
 import {
   fromDraft,
+  isSimpleTemplate,
   literalText,
-  newBinding,
-  kinds,
   parseLiteral,
   parseRef,
   parseTemplate,
   props,
   refText,
-  refsOf,
   templateText,
   toDraft,
-  toExpr,
   type Aliases,
   type ControlBinding,
 } from "./model";
@@ -46,11 +44,9 @@ describe("binding model", () => {
   it.each(Object.entries(fixtures))("reads back every ref and template in %s as text", (_, binding) => {
     for (const b of Object.values(binding.props)) {
       for (const ref of refsOf(b)) expect(parseRef(refText(ref, aliases), aliases)).toEqual({ ok: true, value: ref });
-      if (b.kind === "template") {
-        expect(parseTemplate(templateText(b.parts, aliases), aliases)).toEqual({ ok: true, value: b.parts });
-      }
-      if (b.kind === "rules") {
-        for (const rule of b.rules) expect(parseLiteral(literalText(rule.when.value))).toEqual(rule.when.value);
+      if (formOf(b) === "template") {
+        const parts = (b as { parts: Source[] }).parts;
+        if (isSimpleTemplate(parts)) expect(parseTemplate(templateText(parts, aliases), aliases)).toEqual({ ok: true, value: parts });
       }
     }
   });
@@ -79,10 +75,16 @@ describe("binding model", () => {
   it("reads templates with formats and escaped braces", () => {
     expect(parseTemplate("{{Cam}} {vars.cam|upper}: {vh.level}%", aliases)).toEqual({
       ok: true,
-      value: ["{Cam} ", { path: { root: "vars", path: ["cam"] }, format: "upper" }, ": ", { path: { conn: VH, path: ["level"] } }, "%"],
+      value: [
+        "{Cam} ",
+        { use: "format", input: { ref: { root: "vars", path: ["cam"] } }, format: "upper" },
+        ": ",
+        { ref: { conn: VH, path: ["level"] } },
+        "%",
+      ],
     });
     expect(templateText(["{x}"], aliases)).toBe("{{x}}");
-    expect(parseTemplate('{vh.outputs["a}b"]}', aliases)).toEqual({ ok: true, value: [{ path: { conn: VH, path: ["outputs", "a}b"] } }] });
+    expect(parseTemplate('{vh.outputs["a}b"]}', aliases)).toEqual({ ok: true, value: [{ ref: { conn: VH, path: ["outputs", "a}b"] } }] });
     expect(parseTemplate("", aliases)).toEqual({ ok: true, value: [] });
   });
 
@@ -102,15 +104,8 @@ describe("binding model", () => {
     expect(parseLiteral(" ")).toBeUndefined();
   });
 
-  it("converts to an expression keeping the fallback", () => {
-    const value = { kind: "value" as const, path: { conn: VH, path: ["name"] }, fallback: "?" };
-    expect(toExpr(value, "vh.name")).toEqual({ kind: "expr", source: "vh.name", fallback: "?" });
-    expect(toExpr(newBinding("rules", "background"), "x")).toEqual({ kind: "expr", source: "x" });
-  });
-
   it("leaves out properties left unbound, in the editor's order", () => {
-    const draft: ControlBinding = { id: "", layer: "p", control: "k0", props: { background: newBinding("expr", "background"), label: undefined } };
+    const draft: ControlBinding = { id: "", layer: "p", control: "k0", props: { background: newSource("expr"), label: undefined } };
     expect(Object.keys(fromDraft(draft).props)).toEqual(["background"]);
-    for (const kind of kinds) for (const prop of props) expect(newBinding(kind, prop).kind).toBe(kind);
   });
 });

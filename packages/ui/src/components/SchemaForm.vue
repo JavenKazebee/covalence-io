@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import type { Manifest } from "../api";
 import type { Field } from "../forms/schema";
+import type { Source } from "../sources/model";
 import ChoiceSelect from "./ChoiceSelect.vue";
-import ExprInput from "./ExprInput.vue";
+import SourceInput from "./SourceInput.vue";
 
 /**
  * Inputs for a flat JSON Schema object (`forms/schema.ts`). Values stay as
- * input text until `parseValues` turns them into JSON. With `exprs`, each
- * field can be given as an expression instead (flow spec §8.3).
+ * input text until `parseValues` turns them into JSON. With `sources`, each
+ * field can follow state instead (dataflow §1): an expression to start
+ * with, or a path or a transform.
  */
 const props = defineProps<{
   fields: Field[];
@@ -22,8 +24,8 @@ const props = defineProps<{
   all?: ReadonlySet<string>;
 }>();
 const values = defineModel<Record<string, string | boolean>>({ required: true });
-/** Fields given as expressions, by key; absent when the form doesn't offer them. */
-const exprs = defineModel<Record<string, string> | undefined>("exprs", { default: undefined });
+/** Fields that follow state, by key; absent when the form doesn't offer them. */
+const sources = defineModel<Record<string, Source> | undefined>("sources", { default: undefined });
 
 function labelField(from: string): string | undefined {
   const entry = props.manifest?.state[from];
@@ -31,19 +33,23 @@ function labelField(from: string): string | undefined {
 }
 
 const inputId = (field: Field) => `${props.idPrefix}-${field.key}`;
-const isExpr = (field: Field) => exprs.value !== undefined && field.key in exprs.value;
+const isExpr = (field: Field) => sources.value !== undefined && field.key in sources.value;
+
+/** The forms a field that follows state is offered: anything but a plain value, which the input is. */
+const stateForms = ["expr", "ref", "format", "template", "rules", "map", "compare", "all", "any", "not"] as const;
 
 /** Switches a field between its input and an expression, carrying the value across. */
 function toggle(field: Field) {
-  const map = exprs.value;
+  const map = sources.value;
   if (map === undefined) return;
   if (field.key in map) {
     delete map[field.key];
     return;
   }
   const v = values.value[field.key];
-  map[field.key] =
-    v === undefined || v === "" ? "" : field.kind === "text" || field.kind === "enum" ? JSON.stringify(v) : String(v);
+  map[field.key] = {
+    expr: v === undefined || v === "" ? "" : field.kind === "text" || field.kind === "enum" ? JSON.stringify(v) : String(v),
+  };
 }
 </script>
 
@@ -62,7 +68,7 @@ function toggle(field: Field) {
         >*</span>
       </label>
       <button
-        v-if="exprs !== undefined"
+        v-if="sources !== undefined"
         type="button"
         class="secondary mode"
         :class="{ on: isExpr(field) }"
@@ -74,13 +80,14 @@ function toggle(field: Field) {
         ƒx
       </button>
     </div>
-    <ExprInput
+    <SourceInput
       v-if="isExpr(field)"
-      v-model="exprs![field.key]!"
-      :label="`${field.label} expression`"
-      placeholder="vars.nextSource"
+      v-model="sources![field.key]!"
+      :label="field.label"
+      :forms="stateForms"
       :known="known ?? null"
       :all="all"
+      fallback
     />
     <input
       v-else-if="field.kind === 'boolean'"

@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
 import { useAliases, useValidity } from "../../bindings/editing";
-import { parseTemplate, templateText, type TemplatePart } from "../../bindings/model";
+import { parseTemplate, templateText } from "../../bindings/model";
+import type { Source } from "../../sources/model";
 
 /** A template's text: `Out 1: {vh.outputs[1].source}`, `{path|mmss}` for a format. */
 defineProps<{ label: string }>();
-const model = defineModel<TemplatePart[]>({ required: true });
+const model = defineModel<Source[]>({ required: true });
 
 const aliases = useAliases();
 const setValid = useValidity();
