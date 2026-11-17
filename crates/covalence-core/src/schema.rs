@@ -1,6 +1,7 @@
 //! Checks values against the subset of JSON Schema that the SDK's builders
 //! produce (`packages/sdk/schema.ts`): `type`, `properties`, `required`,
-//! `additionalProperties: false`, `enum`, `minLength`, `minimum` and `maximum`.
+//! `additionalProperties: false`, `enum`, `minLength`, `minimum` and `maximum`,
+//! and a `null` that a required property's `type` list allows.
 //! Anything else in a schema is ignored, as the SDK's `validate` ignores it.
 
 use covalence_protocol::state::{Path, PathSegment};
@@ -35,8 +36,22 @@ fn check_at(schema: &Value, value: &Value, at: &mut Path, out: &mut Vec<Mismatch
             };
             let props = schema.get("properties").and_then(Value::as_object);
             let required = schema.get("required").and_then(Value::as_array);
+            // `null` is missing, unless the property's type allows it
+            // (`"type": ["string", "null"]`, as `core`'s `navigate` has).
+            let nullable = |key: &str| {
+                props
+                    .and_then(|p| p.get(key))
+                    .and_then(|sub| sub.get("type"))
+                    .and_then(Value::as_array)
+                    .is_some_and(|types| types.iter().any(|t| t == "null"))
+            };
             for key in required.into_iter().flatten().filter_map(Value::as_str) {
-                if obj.get(key).is_none_or(Value::is_null) {
+                let missing = match obj.get(key) {
+                    None => true,
+                    Some(Value::Null) => !nullable(key),
+                    Some(_) => false,
+                };
+                if missing {
                     at.push(PathSegment::Key(key.to_owned()));
                     out.push(Mismatch {
                         path: at.clone(),

@@ -306,6 +306,7 @@ fn manifest(id: &str, version: &str) -> Manifest {
             cancellable: None,
             duration_hint: None,
             learn: None,
+            effect: None,
         }],
         events: vec![],
         state: Default::default(),

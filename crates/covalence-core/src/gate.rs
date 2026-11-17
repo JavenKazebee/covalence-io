@@ -13,6 +13,7 @@
 use std::sync::Arc;
 
 use covalence_protocol::connection::ConnMode;
+use covalence_protocol::plugin::Effect;
 
 use crate::journal::{
     ActionDispatchedRecord, ActionSuppressedRecord, Entry, Journal, JournalError, NewEntry, Origin,
@@ -35,6 +36,9 @@ pub struct GateInput<'a> {
     /// The target connection's mode. A simulated connection has no real side
     /// effects, so simulate mode lets actions through to it.
     pub conn_mode: ConnMode,
+    /// What the action changes; simulate mode suppresses only `device`
+    /// effects (core actions §4).
+    pub effect: Effect,
     /// The term the action was requested under.
     pub term: u32,
 }
@@ -67,7 +71,7 @@ impl OutputGate {
         if let Some(reason) = self.check_role() {
             return Verdict::Suppress(reason);
         }
-        if self.simulate && input.conn_mode == ConnMode::Live {
+        if self.simulate && input.conn_mode == ConnMode::Live && input.effect == Effect::Device {
             return Verdict::Suppress(SuppressReason::Simulate);
         }
         if let Some(reason) = self.check_show_lock(input) {
@@ -124,8 +128,22 @@ mod tests {
             requested: 1,
             run: None,
             conn_mode,
+            effect: Effect::Device,
             term,
         }
+    }
+
+    #[test]
+    fn simulate_mode_lets_internal_actions_through() {
+        let gate = OutputGate {
+            simulate: true,
+            ..OutputGate::default()
+        };
+        let internal = GateInput {
+            effect: Effect::Internal,
+            ..input(ConnMode::Live, 1)
+        };
+        assert_eq!(gate.check(&internal, 1), Verdict::Dispatch);
     }
 
     #[test]

@@ -97,6 +97,7 @@ fn check(json: &Value) -> (Value, Value) {
         taken_slugs: &taken,
         layers: &layers,
         surfaces: &BTreeSet::new(),
+        flows: &BTreeSet::new(),
         evaluator: &evaluator,
     };
     match Flow::parse(json) {
@@ -160,6 +161,7 @@ fn problems_say_what_is_wrong() {
             taken_slugs: &BTreeSet::new(),
             layers: &BTreeMap::new(),
             surfaces: &BTreeSet::new(),
+            flows: &BTreeSet::new(),
             evaluator: &QuickJs::default(),
         },
     );

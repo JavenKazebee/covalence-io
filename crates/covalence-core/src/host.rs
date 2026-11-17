@@ -31,6 +31,7 @@ use covalence_protocol::action::{ActionInvoke, ActionResult};
 use covalence_protocol::connection::{ConnCreate, ConnDestroy, ConnMode, ConnStatusKind};
 use covalence_protocol::framing::{self, Format, FrameDecoder, FrameError};
 use covalence_protocol::methods::{Method, MethodError, core_to_host, host_to_core};
+use covalence_protocol::plugin::{ActionDef, Effect};
 use covalence_protocol::plugin::{Manifest, PluginLoad};
 use covalence_protocol::session::HostWelcome;
 use covalence_protocol::state::{LogLevel, PatchOp, PathValue};
@@ -268,6 +269,18 @@ impl Host {
         )
         .await?;
         Ok(())
+    }
+
+    /// What an action of a connection's plugin changes, by its manifest;
+    /// `device` when it isn't known.
+    pub async fn action_effect(&self, conn: &str, action: &str) -> Effect {
+        let registry = self.inner.registry.lock().await;
+        registry
+            .conns
+            .get(conn)
+            .and_then(|c| registry.manifests.get(&c.plugin))
+            .and_then(|m| m.actions.iter().find(|a| a.id == action))
+            .map_or(Effect::Device, ActionDef::effect)
     }
 
     pub fn conn_mode(&self, id: &str) -> Option<ConnMode> {

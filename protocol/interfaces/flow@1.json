@@ -1,0 +1,34 @@
+{
+  "id": "flow@1",
+  "name": "Flow",
+  "description": "A flow: its items are flows, keyed by flow ID (core actions §3.2).",
+  "actions": [
+    {
+      "id": "cancelRuns",
+      "name": "Cancel runs",
+      "description": "Cancels every active and queued run of the flow.",
+      "params": { "type": "object", "additionalProperties": false },
+      "result": {
+        "type": "object",
+        "properties": { "cancelled": { "type": "integer" } }
+      },
+      "idempotent": true,
+      "durationHint": "instant",
+      "effect": "internal"
+    },
+    {
+      "id": "setEnabled",
+      "name": "Enable or disable",
+      "description": "Enables or disables the flow, as a project change.",
+      "params": {
+        "type": "object",
+        "properties": { "enabled": { "type": "boolean" } },
+        "required": ["enabled"],
+        "additionalProperties": false
+      },
+      "idempotent": true,
+      "durationHint": "instant",
+      "effect": "internal"
+    }
+  ]
+}

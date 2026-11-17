@@ -1,0 +1,45 @@
+{
+  "id": "surface@1",
+  "name": "Surface",
+  "description": "A control surface: its items are surfaces, keyed by surface ID (core actions §3.1).",
+  "actions": [
+    {
+      "id": "navigate",
+      "name": "Navigate",
+      "description": "Shows a layer on the surface, or nothing, and answers once the surface has been sent its outputs.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "group": { "type": "string", "default": "main" },
+          "layer": { "type": ["string", "null"] }
+        },
+        "required": ["layer"],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": { "layer": { "type": ["string", "null"] } }
+      },
+      "idempotent": true,
+      "durationHint": "instant",
+      "effect": "internal"
+    },
+    {
+      "id": "inject",
+      "name": "Press a control",
+      "description": "Applies an input as if the surface had sent it.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "control": { "type": "string" },
+          "input": { "enum": ["down", "up", "turn", "value", "touch"] },
+          "value": {}
+        },
+        "required": ["control", "input"],
+        "additionalProperties": false
+      },
+      "durationHint": "instant",
+      "effect": "internal"
+    }
+  ]
+}

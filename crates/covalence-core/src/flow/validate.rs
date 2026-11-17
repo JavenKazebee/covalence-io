@@ -11,11 +11,11 @@ use serde_json::Value;
 use super::{Cond, EventSource, Flow, Names, Step, StepKind, Trigger};
 use crate::expr::{At, Evaluator};
 use crate::journal::ControlEvent;
-use crate::schema;
 use crate::select::{Controls, Issue, Pattern, Selector, Targets};
 use crate::source::{Part, Ref, Source};
 use crate::state::ConnId;
 use crate::surface::{self, Layer, LayerId};
+use crate::{core_conn, schema};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -31,6 +31,8 @@ pub enum Code {
     DuplicateSlug,
     UnknownConnection,
     UnknownAction,
+    /// A `core` target whose `key` isn't a surface or flow, or has none.
+    UnknownTarget,
     UnknownEvent,
     BadParams,
     /// An expression that doesn't compile (spec §8.7).
@@ -106,6 +108,8 @@ pub struct Context<'a> {
     pub layers: &'a BTreeMap<LayerId, Layer>,
     /// Every surface's ID.
     pub surfaces: &'a BTreeSet<String>,
+    /// Every flow's ID, this one's included.
+    pub flows: &'a BTreeSet<String>,
     /// Compiles expressions.
     pub evaluator: &'a dyn Evaluator,
 }
@@ -246,11 +250,25 @@ fn unsupported_steps(
             }
             Some("action") => {
                 let target = step.get("target");
+                let core_interface = step
+                    .get("constraint")
+                    .and_then(|c| c.get("interface"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|i| core_conn::interfaces().iter().any(|x| x.id == i));
+                let on_core = target
+                    .and_then(|t| t.get("conn"))
+                    .is_some_and(|c| c == core_conn::CORE);
                 if target.is_some_and(|t| ["expr", "ref", "use"].iter().any(|k| t.get(k).is_some()))
                 {
-                    not_yet(at("target"), "dynamic targets");
-                } else if target.is_some_and(|t| t.get("key").is_some()) {
-                    not_yet(at("target"), "targets narrowed with a key");
+                    // Only `core`'s items can be followed yet.
+                    if !core_interface {
+                        not_yet(
+                            at("target"),
+                            "dynamic targets other than core's surfaces and flows",
+                        );
+                    }
+                } else if target.is_some_and(|t| t.get("key").is_some()) && !on_core {
+                    not_yet(at("target"), "items within a plugin's connection");
                 }
             }
             Some("branch") => {
@@ -418,6 +436,29 @@ impl<'a> Validation<'a> {
     }
 
     /// Reports an expression that doesn't compile.
+    /// A fixed `core` target's key: a surface for `surface@1`, a flow for `flow@1`.
+    fn core_key(&mut self, interface: &str, key: Option<&str>, at: Path) {
+        let Some(key) = key else {
+            self.error(
+                at,
+                Code::UnknownTarget,
+                format!("a {interface} action needs `key`: which one"),
+            );
+            return;
+        };
+        let (known, what) = match interface {
+            "surface@1" => (self.ctx.surfaces.contains(key), "surface"),
+            _ => (self.ctx.flows.contains(key), "flow"),
+        };
+        if !known {
+            self.error(
+                join(&at, &[PathSegment::Key("key".into())]),
+                Code::UnknownTarget,
+                format!("no {what} {key:?}"),
+            );
+        }
+    }
+
     /// Checks an event trigger's source and the event names it listens for.
     fn event_source(&mut self, from: &EventSource, names: &Names, at: &Path, at_event: &Path) {
         let mut problems: Vec<(Path, Issue, Code)> = Vec::new();
@@ -670,19 +711,48 @@ impl<'a> Validation<'a> {
         match &step.kind {
             StepKind::Action {
                 target,
+                constraint,
                 action,
                 params,
             } => {
                 for (name, param) in params {
                     self.source(join(here, &[key("params"), key(name)]), param);
                 }
-                // `find_unsupported` has turned away targets that follow state.
-                let Some(target) = target.literal() else {
-                    return;
-                };
-                self.acted_on.insert(target.conn.clone());
-                let Some(manifest) = self.manifest_of(&target.conn, at("target")) else {
-                    return;
+                let manifest: &Manifest = match (target.literal(), constraint) {
+                    (Some(t), _) if t.conn == core_conn::CORE => {
+                        let Some(interface) = core_conn::interface_of(action) else {
+                            let message = format!("core has no action {action:?}");
+                            self.error(at("action"), Code::UnknownAction, message);
+                            return;
+                        };
+                        self.core_key(interface.id.as_str(), t.key.as_deref(), at("target"));
+                        core_conn::manifest()
+                    }
+                    (Some(t), _) => {
+                        self.acted_on.insert(t.conn.clone());
+                        let Some(manifest) = self.manifest_of(&t.conn, at("target")) else {
+                            return;
+                        };
+                        manifest
+                    }
+                    // `find_unsupported` lets only `core`'s interfaces through.
+                    (None, Some(c)) => {
+                        self.source(at("target"), target);
+                        if core_conn::interface_of(action).is_none_or(|i| i.id != c.interface) {
+                            let message = format!("{} has no action {action:?}", c.interface);
+                            self.error(at("action"), Code::UnknownAction, message);
+                            return;
+                        }
+                        core_conn::manifest()
+                    }
+                    (None, None) => {
+                        self.error(
+                            at("constraint"),
+                            Code::Invalid,
+                            "a target that follows state needs a constraint: {interface}".into(),
+                        );
+                        return;
+                    }
                 };
                 let Some(def) = manifest.actions.iter().find(|a| &a.id == action) else {
                     let message = format!("plugin {} has no action {action:?}", manifest.id);

@@ -74,7 +74,7 @@
               "id": "route", "name": "Set route", "description": "Route an input to an output",
               "params": { "type": "object", "properties": { "output": { "type": "integer" }, "input": { "type": "integer" } } },
               "result": { "type": "object" },
-              "idempotent": true, "cancellable": false, "durationHint": "instant", "learn": true
+              "idempotent": true, "cancellable": false, "durationHint": "instant", "learn": true, "effect": "device"
             }
           ],
           "events": [

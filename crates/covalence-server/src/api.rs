@@ -8,6 +8,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use covalence_core::core_conn;
 use covalence_core::gate::Verdict;
 use covalence_core::host::{HostPhase, HostStatus};
 use covalence_core::journal::{Entry, Origin, Seq};
@@ -117,11 +118,33 @@ async fn plugins(State(app): State<Arc<App>>) -> Json<JsonValue> {
             "manifest": manifest,
         }));
     }
+    // The core connection's manifest, served like a plugin's (core actions §1).
+    out.push(json!({
+        "id": core_conn::CORE,
+        "version": env!("CARGO_PKG_VERSION"),
+        "builtIn": true,
+        "manifest": core_conn::manifest(),
+    }));
     Json(JsonValue::Array(out))
 }
 
-async fn connections(State(app): State<Arc<App>>) -> Json<Vec<Connection>> {
-    Json(app.conns().values().cloned().collect())
+/// The project's connections, and `core`, which always exists.
+async fn connections(State(app): State<Arc<App>>) -> Json<JsonValue> {
+    let mut out: Vec<JsonValue> = app
+        .conns()
+        .values()
+        .map(|c| serde_json::to_value(c).expect("a connection encodes as JSON"))
+        .collect();
+    out.push(json!({
+        "id": core_conn::CORE,
+        "alias": core_conn::CORE,
+        "plugin": core_conn::CORE,
+        "version": env!("CARGO_PKG_VERSION"),
+        "config": {},
+        "mode": "live",
+        "builtIn": true,
+    }));
+    Json(JsonValue::Array(out))
 }
 
 #[derive(Deserialize)]
@@ -289,6 +312,9 @@ struct RequestAction {
     action: String,
     #[serde(default)]
     params: JsonValue,
+    /// The item within the connection: a surface or flow of `core`.
+    #[serde(default)]
+    key: Option<String>,
     /// Milliseconds.
     deadline: Option<u32>,
 }
@@ -307,16 +333,23 @@ async fn request_action(
     let [PathSegment::Key(action)] = path.as_slice() else {
         return Err(bad());
     };
-    let conn = app
-        .conn_by_alias(&alias)
-        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, format!("no connection {alias:?}")))?;
+    let conn_id = if alias == core_conn::CORE {
+        core_conn::CORE.to_owned()
+    } else {
+        app.conn_by_alias(&alias)
+            .ok_or_else(|| {
+                ApiError::new(StatusCode::NOT_FOUND, format!("no connection {alias:?}"))
+            })?
+            .id
+    };
 
     let origin = Origin::User {
         user: "api".into(),
         client: "http".into(),
     };
     let mut request =
-        ActionRequest::new(origin, conn.id, action.clone(), json_to_value(&req.params));
+        ActionRequest::new(origin, conn_id, action.clone(), json_to_value(&req.params));
+    request.key = req.key;
     request.deadline = req.deadline;
     let outcome = app
         .core

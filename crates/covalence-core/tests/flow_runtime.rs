@@ -56,6 +56,7 @@ impl Actions for FakeCore {
                         Record::ActionRequested(ActionRequestedRecord {
                             call: call.clone(),
                             conn: req.conn.clone(),
+                            key: req.key.clone(),
                             action: req.action.clone(),
                             params: req.params,
                             deadline: req.deadline,
@@ -1398,4 +1399,45 @@ async fn a_pattern_state_trigger_fires_per_path() {
         "a falling edge doesn't fire"
     );
     assert_eq!(world.var("last").unwrap()[1], json!(["mixer", "b2"]));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_target_held_in_vars_is_checked_against_its_constraint() {
+    let world = World::new();
+    let step = |id: &str| {
+        json!({
+            "id": id, "kind": "action",
+            "target": { "ref": { "root": "vars", "path": ["deck"] } },
+            "constraint": { "interface": "surface@1" },
+            "action": "navigate", "params": { "layer": null },
+        })
+    };
+    world.add(api_flow("nav", "parallel", json!([step("nav")])));
+
+    // A plugin's connection isn't a surface.
+    world.set_state(
+        "vars",
+        &["deck"],
+        Value::Map(vec![("conn".into(), VH.into())]),
+    );
+    let run = world.start("nav");
+    let info = world.finished(&run).await;
+    assert_eq!(info.error.unwrap().code, "no_target");
+
+    // A surface of `core` is, and its key goes with the request.
+    world.set_state(
+        "vars",
+        &["deck"],
+        Value::Map(vec![
+            ("conn".into(), "core".into()),
+            ("key".into(), "S1".into()),
+        ]),
+    );
+    let run = world.start("nav");
+    assert_eq!(world.finished(&run).await.status, RunPhase::Ok);
+    let requested = world.last_of(|e| matches!(e.record, Record::ActionRequested(_)));
+    let Record::ActionRequested(r) = &requested.record else {
+        unreachable!()
+    };
+    assert_eq!((r.conn.as_str(), r.key.as_deref()), ("core", Some("S1")));
 }

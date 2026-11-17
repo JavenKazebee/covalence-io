@@ -838,3 +838,202 @@ async fn a_web_surface_must_attach_as_itself() {
 
     server.stop().await;
 }
+
+/// Starts a flow through its `api` trigger and waits for the run to end.
+async fn run_flow(server: &Server, flow: &Value) -> Value {
+    let (status, body) = server
+        .post(&format!("/flows/{}/run", id(flow)), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let run = body["run"].as_str().unwrap().to_owned();
+    server
+        .eventually(WAIT, &format!("run {run} to finish"), || async {
+            let info = server.get(&format!("/runs/{run}")).await;
+            info.get("finished").is_some().then_some(info)
+        })
+        .await
+}
+
+/// M6 Phase 4: flows navigate the deck and press its keys with `core`
+/// actions, on a fixed target and on one held in `vars`, in simulate mode;
+/// and cancel and disable another flow.
+#[tokio::test(flavor = "multi_thread")]
+async fn flows_drive_the_deck_and_other_flows_through_core() {
+    let server = Server::start();
+    let addr = server.listen().await;
+    // Rehearsal: device actions would be suppressed; core's are internal.
+    server.app.core().set_simulate(true);
+
+    let cams = create(&server, "/layers", "layer", deck_layer("Cameras")).await;
+    let audio = create(&server, "/layers", "layer", deck_layer("Audio")).await;
+    let deck = create(
+        &server,
+        "/surfaces",
+        "surface",
+        json!({ "name": "FOH deck", "model": "virtual.deck15", "startLayer": id(&cams) }),
+    )
+    .await;
+    let mut ws = connect(&addr, id(&deck)).await;
+    send(&mut ws, attach("fohDeck")).await;
+    server
+        .eventually(WAIT, "the deck to attach", || async {
+            (server.value("surface.fohDeck.current.main").await == Some(json!("cameras")))
+                .then_some(())
+        })
+        .await;
+
+    // A press on the audio layer's k3 notes itself.
+    create(
+        &server,
+        "/flows",
+        "flow",
+        json!({
+            "name": "Note audio press", "enabled": true, "concurrency": "parallel",
+            "triggers": [{ "kind": "event", "from": { "layer": id(&audio), "controls": "k3" }, "event": "press" }],
+            "body": [{ "id": "note", "kind": "set", "path": "vars.audioPressed", "value": "trigger.control" }],
+        }),
+    )
+    .await;
+    let go = create(
+        &server,
+        "/flows",
+        "flow",
+        json!({
+            "name": "Go to audio", "enabled": true, "concurrency": "ignore",
+            "triggers": [{ "kind": "api" }],
+            "body": [
+                { "id": "pick", "kind": "set", "path": "vars.deck", "value": format!("({{conn: 'core', key: '{}'}})", id(&deck)) },
+                {
+                    "id": "nav", "kind": "action",
+                    "target": { "ref": { "root": "vars", "path": ["deck"] } },
+                    "constraint": { "interface": "surface@1" },
+                    "action": "navigate", "params": { "layer": id(&audio) },
+                },
+                {
+                    "id": "down", "kind": "action", "target": { "conn": "core", "key": id(&deck) },
+                    "action": "inject", "params": { "control": "k3", "input": "down" },
+                },
+                {
+                    "id": "up", "kind": "action", "target": { "conn": "core", "key": id(&deck) },
+                    "action": "inject", "params": { "control": "k3", "input": "up" },
+                },
+            ],
+        }),
+    )
+    .await;
+    let info = run_flow(&server, &go).await;
+    assert_eq!(info["status"], "ok", "{info}");
+    assert_eq!(
+        server.value("surface.fohDeck.current.main").await,
+        Some(json!("audio"))
+    );
+    server
+        .eventually(WAIT, "the injected press to run its flow", || async {
+            (server.value("vars.audioPressed").await == Some(json!("k3"))).then_some(())
+        })
+        .await;
+
+    // Each core action is journaled requested → dispatched → result, even
+    // in simulate mode.
+    let journal = server.get("/journal?from=1&limit=2000").await;
+    let entries = journal.as_array().unwrap();
+    let kinds_of = |call: &str| -> Vec<&str> {
+        entries
+            .iter()
+            .filter(|e| e["data"]["call"] == call)
+            .map(|e| e["kind"].as_str().unwrap())
+            .collect()
+    };
+    let requested: Vec<&Value> = entries
+        .iter()
+        .filter(|e| e["kind"] == "action.requested" && e["data"]["conn"] == "core")
+        .collect();
+    assert_eq!(requested.len(), 3);
+    for r in &requested {
+        assert_eq!(r["data"]["key"], id(&deck));
+        assert_eq!(
+            kinds_of(r["data"]["call"].as_str().unwrap()),
+            ["action.requested", "action.dispatched", "action.result"]
+        );
+    }
+    // The injected press is the run's: its patch is caused by the request.
+    let press = entries
+        .iter()
+        .rfind(|e| {
+            e["kind"] == "event" && e["data"]["control"] == "k3" && e["data"]["event"] == "press"
+        })
+        .unwrap();
+    assert_eq!(press["origin"]["step"], "down", "{press}");
+    let chain = server
+        .get(&format!("/journal/{}/why", press["seq"].as_u64().unwrap()))
+        .await;
+    let kinds: Vec<&str> = chain
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        kinds[..3],
+        ["event", "state.patch", "action.requested"],
+        "{kinds:?}"
+    );
+
+    // A flow cancels another's runs and disables it.
+    let victim = create(
+        &server,
+        "/flows",
+        "flow",
+        json!({
+            "name": "Long", "enabled": true, "concurrency": "parallel",
+            "triggers": [{ "kind": "api" }],
+            "body": [{ "id": "pause", "kind": "wait", "for": "1h" }],
+        }),
+    )
+    .await;
+    let (_, started) = server
+        .post(&format!("/flows/{}/run", id(&victim)), json!({}))
+        .await;
+    let victim_run = started["run"].as_str().unwrap().to_owned();
+    let stopper = create(
+        &server,
+        "/flows",
+        "flow",
+        json!({
+            "name": "Stop it", "enabled": true, "concurrency": "ignore",
+            "triggers": [{ "kind": "api" }],
+            "body": [
+                { "id": "cancel", "kind": "action", "target": { "conn": "core", "key": id(&victim) }, "action": "cancelRuns", "params": {} },
+                { "id": "off", "kind": "action", "target": { "conn": "core", "key": id(&victim) }, "action": "setEnabled", "params": { "enabled": false } },
+            ],
+        }),
+    )
+    .await;
+    let info = run_flow(&server, &stopper).await;
+    assert_eq!(info["status"], "ok", "{info}");
+    let victim_info = server.get(&format!("/runs/{victim_run}")).await;
+    assert_eq!(victim_info["status"], "cancelled", "{victim_info}");
+    let stored = server.get(&format!("/flows/{}", id(&victim))).await;
+    assert_eq!(stored["enabled"], false, "{stored}");
+
+    // A core target that names nothing is caught on save.
+    let (status, body) = server
+        .post(
+            "/flows",
+            json!({
+                "name": "Bad", "enabled": true, "concurrency": "ignore",
+                "triggers": [{ "kind": "api" }],
+                "body": [{ "id": "nav", "kind": "action", "target": { "conn": "core", "key": "nope" }, "action": "navigate", "params": { "layer": null } }],
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(
+        codes(&body),
+        [(
+            json!(["body", 0, "target", "key"]),
+            "unknownTarget".to_owned()
+        )]
+    );
+    server.stop().await;
+}

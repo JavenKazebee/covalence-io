@@ -1,6 +1,6 @@
 # Milestone 6: Primitives
 
-- **Status:** In progress (Phases 0–3 done)
+- **Status:** In progress (Phases 0–4 done)
 
 The shapes M5 stored get their general form before hardware surfaces start creating entities in real projects ([M7](m7-surfaces-from-plugins.md) creates them on plug-in). Three changes:
 - **One way to give a value and one way to pick things:** `Source<T>` and `Selector` ([ADR 0026](../adr/0026-sources-and-selectors.md)). The binding kinds become stateless transforms.
@@ -51,11 +51,11 @@ Nothing here adds a new kind of thing for users to learn. It makes the existing 
 - [ ] **Left for Phase 5:** the UI's flow editor still writes `control` triggers and `source`, and the journal view reads `input.event`.
 
 ### Phase 4: The core connection (Rust)
-- [ ] `core` reserved as an ID, alias and root. The engine routes `conn: "core"` to an in-process handler; the `Actions` trait is unchanged.
-- [ ] The `core` manifest in `GET /plugins`, with `surface@1` and `flow@1` as interfaces in `protocol/`.
-- [ ] `navigate` (sharing `POST /surfaces/{id}/current`'s code), `inject` (through the surface's input path, origin the run), `cancelRuns` and `setEnabled`.
-- [ ] `ActionDef.effect`, and the gate suppressing only `device` effects in simulate mode.
-- [ ] Targets held in `vars` (`kind: target`) for `core` surfaces, resolved and checked against the constraint at run time (`no_target`).
+- [x] `core` reserved as an ID, alias and root. The engine routes `conn: "core"` to an in-process handler (`CoreActions`, set by the server), after the same journal and gate as any action; the `Actions` trait is unchanged. Requests and `action.requested` gain `key`, the item within a connection; a plugin connection with a `key` is refused until ADR 0019's items.
+- [x] The `core` manifest in `GET /plugins` (`builtIn: true`), and `core` in `GET /connections`, built from `surface@1` and `flow@1` in `protocol/interfaces/`. `POST /actions` takes `core.<action>` with `key`.
+- [x] `navigate` (the same `Surfaces::show` as `POST /surfaces/{id}/current`), `inject` (through the surface's own input task, so it's ordered with the device's input, journaled with the run as origin and `cause` → the request), `cancelRuns` and `setEnabled`. Errors carry the spec's name (`unknownLayer`, `doesNotFit`, `unknownControl`, `no_target`) in `data.code`, which a run's error takes as its code. `setEnabled` stores the flow; journaling it as a project change waits for one (ADR 0034).
+- [x] `ActionDef.effect` (TypeSpec, Rust, fixtures both sides), and the gate suppressing only `device` effects in simulate mode. Every `core` action is `internal`.
+- [x] Targets held in `vars` for `core` surfaces and flows: a step's `target` is a source with `constraint: {interface}` beside it, resolved when the step starts and checked against the constraint (`no_target`). Validation checks a fixed `core` target's `key` (`unknownTarget`) and that the action belongs to its interface. The schema checker lets a required property be `null` where its type allows it (`navigate`'s `layer`).
 
 ### Phase 5: UI
 - [ ] One source editor (`SourceInput`): literal, path, expression, and the transform forms, with the compiled expression shown and "Edit as expression". Used for binding properties and action parameters.

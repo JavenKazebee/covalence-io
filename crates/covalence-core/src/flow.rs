@@ -201,11 +201,31 @@ pub enum Edge {
     Change,
 }
 
-/// A fixed target: one connection (spec §2.1 `TargetSpec`, without `key`).
+/// A target: a connection, or an item within one (ADR 0019). M6 has items
+/// only on `core`: its surfaces and flows.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConnRef {
     pub conn: ConnId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+}
+
+impl ConnRef {
+    pub fn conn(conn: impl Into<ConnId>) -> Self {
+        ConnRef {
+            conn: conn.into(),
+            key: None,
+        }
+    }
+}
+
+/// What a target that follows state must be (ADR 0019): M6 checks the
+/// interface, and only `core`'s (`surface@1`, `flow@1`) run.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TargetConstraint {
+    pub interface: String,
 }
 
 /// One step of a flow's body. On the wire the common fields and the
@@ -231,8 +251,10 @@ impl Step {
 #[derive(Clone, Debug, PartialEq)]
 pub enum StepKind {
     Action {
-        /// Only a literal target runs until dynamic targets (ADR 0019).
+        /// A literal target, or one that follows state with a `constraint`;
+        /// M6 runs those on `core` only.
         target: Source<ConnRef>,
+        constraint: Option<TargetConstraint>,
         /// The action's ID in the plugin manifest, e.g. `route`.
         action: String,
         /// Each a source (dataflow §1), evaluated once when the step starts.
@@ -306,6 +328,8 @@ enum WireStep {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         on_error: Option<OnError>,
         target: Source<ConnRef>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        constraint: Option<TargetConstraint>,
         action: String,
         #[serde(default)]
         params: BTreeMap<String, Source<serde_json::Value>>,
@@ -401,7 +425,7 @@ macro_rules! wire_variants {
 }
 
 wire_variants! {
-    Action { target, action, params },
+    Action { target, constraint, action, params },
     Wait { duration },
     WaitUntil { until },
     Set { path, value },

@@ -444,8 +444,31 @@ struct Attached {
     session: u64,
     attach: Attach,
     draws: mpsc::Sender<Draw>,
+    /// Input applied as if the device sent it (surfaces spec §4.5).
+    inject: mpsc::Sender<Injection>,
     /// Dropped to stop the task when the attach is replaced or deleted.
     _stop: oneshot::Sender<()>,
+}
+
+/// One injected input: whose it is, and where to say how it went.
+struct Injection {
+    input: Input,
+    origin: Origin,
+    cause: Option<Seq>,
+    done: oneshot::Sender<Result<(), InjectError>>,
+}
+
+/// Why an injected input wasn't applied.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum InjectError {
+    #[error("no surface {0}")]
+    UnknownSurface(String),
+    #[error("surface {0} isn't attached")]
+    NotAttached(String),
+    #[error("the surface has no control {0:?}")]
+    UnknownControl(String),
+    #[error("{0}")]
+    Unsupported(String),
 }
 
 impl Surfaces {
@@ -579,6 +602,45 @@ impl Surfaces {
         self.inner.bindings.flush().await;
     }
 
+    /// Applies an input as if the surface had sent it (surfaces spec §4.5),
+    /// in order with its own input, journaled with `origin` and `cause`.
+    /// Answers once it's applied and its events are journaled.
+    pub async fn inject(
+        &self,
+        surface: &str,
+        control: &str,
+        kind: SentKind,
+        value: Option<InputValue>,
+        origin: Origin,
+        cause: Option<Seq>,
+    ) -> Result<(), InjectError> {
+        let sender = {
+            let book = self.inner.book();
+            if !book.surfaces.contains_key(surface) {
+                return Err(InjectError::UnknownSurface(surface.to_owned()));
+            }
+            book.attached
+                .get(surface)
+                .map(|a| a.inject.clone())
+                .ok_or_else(|| InjectError::NotAttached(surface.to_owned()))?
+        };
+        let (done, answer) = oneshot::channel();
+        let injection = Injection {
+            input: Input {
+                control: control.to_owned(),
+                kind,
+                value,
+                ts: crate::clock::epoch_ms() as f64,
+            },
+            origin,
+            cause,
+            done,
+        };
+        let gone = || InjectError::NotAttached(surface.to_owned());
+        sender.send(injection).await.map_err(|_| gone())?;
+        answer.await.map_err(|_| gone())?
+    }
+
     pub fn is_attached(&self, surface: &str) -> bool {
         self.inner.book().attached.contains_key(surface)
     }
@@ -627,6 +689,7 @@ impl Surfaces {
         let (input_tx, input_rx) = mpsc::channel(INPUT_BACKLOG);
         let (draws_tx, draws_rx) = mpsc::channel(DRAW_BACKLOG);
         let (stop_tx, stop_rx) = oneshot::channel();
+        let (inject_tx, inject_rx) = mpsc::channel(INPUT_BACKLOG);
 
         let mut book = inner.book();
         let entity = book
@@ -652,6 +715,7 @@ impl Surfaces {
                 session,
                 attach,
                 draws: draws_tx,
+                inject: inject_tx,
                 _stop: stop_tx,
             },
         );
@@ -666,6 +730,7 @@ impl Surfaces {
             surface.to_owned(),
             session,
             input_rx,
+            inject_rx,
             stop_rx,
         ));
         Ok(Link {
@@ -908,6 +973,7 @@ async fn run(
     surface: SurfaceId,
     session: u64,
     mut input: mpsc::Receiver<Input>,
+    mut injected: mpsc::Receiver<Injection>,
     mut stop: oneshot::Receiver<()>,
 ) {
     let mut task = Task {
@@ -918,6 +984,7 @@ async fn run(
         controls: BTreeMap::new(),
         downs: BTreeMap::new(),
         drops: Drops::default(),
+        acting: None,
     };
     loop {
         let deadline = task.recogniser.deadline();
@@ -928,8 +995,16 @@ async fn run(
                 task.journal_events(None, released, None);
                 return;
             }
+            Some(injection) = injected.recv() => {
+                task.acting = Some((injection.origin, injection.cause));
+                let result = task.input(injection.input).await;
+                task.acting = None;
+                let _ = injection.done.send(result);
+            }
             next = input.recv() => match next {
-                Some(i) => task.input(i).await,
+                Some(i) => {
+                    let _ = task.input(i).await;
+                }
                 None => {
                     task.detach();
                     return;
@@ -957,6 +1032,8 @@ struct Task {
     /// the cause and layer of its `long`, `hold` and `release`.
     downs: BTreeMap<String, (Seq, Option<LayerId>)>,
     drops: Drops,
+    /// While an injected input is applied: its origin and cause.
+    acting: Option<(Origin, Option<Seq>)>,
 }
 
 #[derive(Default)]
@@ -998,7 +1075,7 @@ struct Write {
 impl Task {
     /// Applies one input to its control's input state, a turn at a time,
     /// and journals the events each change gives.
-    async fn input(&mut self, input: Input) {
+    async fn input(&mut self, input: Input) -> Result<(), InjectError> {
         let control = {
             let book = self.inner.book();
             let Some(attached) = book
@@ -1006,7 +1083,7 @@ impl Task {
                 .get(&self.surface)
                 .filter(|a| a.session == self.session)
             else {
-                return;
+                return Err(InjectError::NotAttached(self.surface.clone()));
             };
             match attached
                 .attach
@@ -1016,21 +1093,25 @@ impl Task {
             {
                 Some(control) => control.clone(),
                 None => {
-                    self.drops.drop(&self.surface, &input, "no such control");
-                    return;
+                    if self.acting.is_none() {
+                        self.drops.drop(&self.surface, &input, "no such control");
+                    }
+                    return Err(InjectError::UnknownControl(input.control.clone()));
                 }
             }
         };
         let writes = match self.writes(&control, &input) {
             Ok(writes) => writes,
             Err(why) => {
-                self.drops.drop(&self.surface, &input, &why);
-                return;
+                if self.acting.is_none() {
+                    self.drops.drop(&self.surface, &input, &why);
+                }
+                return Err(InjectError::Unsupported(why));
             }
         };
         for write in writes {
             let Some(turn) = self.write(&input, write) else {
-                return;
+                return Err(InjectError::NotAttached(self.surface.clone()));
             };
             if let Some(turn) = turn
                 && !self.inner.shared.state.seen(turn, TURN_LIMIT).await
@@ -1038,6 +1119,14 @@ impl Task {
                 tracing::debug!(surface = %self.surface, "input went ahead of a slow state consumer");
             }
         }
+        Ok(())
+    }
+
+    /// Whose input this is: the device's, or an injection's.
+    fn origin_and_cause(&self) -> (Origin, Option<Seq>) {
+        self.acting
+            .clone()
+            .unwrap_or_else(|| (surface_origin(&self.surface), None))
     }
 
     /// What an input changes, or why it doesn't fit the control (plugin
@@ -1147,6 +1236,7 @@ impl Task {
     /// Writes one change and journals its events. `None` if the surface is
     /// no longer this task's, else the turn to wait for, if it's an edge.
     fn write(&mut self, input: &Input, write: Write) -> Option<Option<u64>> {
+        let (origin, cause) = self.origin_and_cause();
         let (slug, layer) = {
             let book = self.inner.book();
             book.attached
@@ -1167,17 +1257,16 @@ impl Task {
                 )
             })
             .collect();
-        let (seq, turn) =
-            match self
-                .inner
-                .patch_turn(surface_origin(&self.surface), None, ops, Some(input.ts))
-            {
-                Ok(written) => written,
-                Err(e) => {
-                    tracing::error!(surface = %self.surface, "cannot journal input: {e}");
-                    return None;
-                }
-            };
+        let (seq, turn) = match self
+            .inner
+            .patch_turn(origin.clone(), cause, ops, Some(input.ts))
+        {
+            Ok(written) => written,
+            Err(e) => {
+                tracing::error!(surface = %self.surface, "cannot journal input: {e}");
+                return None;
+            }
+        };
         let state = self.controls.entry(input.control.clone()).or_default();
         // The layer of a release is its press's; of anything else, the layer
         // shown now.
@@ -1241,7 +1330,7 @@ impl Task {
                 (None, None) => None,
             };
             let entry = NewEntry::new(
-                surface_origin(&self.surface),
+                self.origin_and_cause().0,
                 Record::Event(EventRecord {
                     surface: Some(self.surface.clone()),
                     layer: layer.map(str::to_owned),

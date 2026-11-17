@@ -72,6 +72,7 @@ use covalence_store::Store;
 use serde::{Deserialize, Serialize};
 
 mod api;
+mod core_actions;
 mod flows;
 mod surfaces;
 mod ui;
@@ -85,7 +86,8 @@ pub use ui::{DEFAULT_UI_DIR, with_ui};
 const CONNECTION: &str = "connection";
 
 /// Roots that aliases may not take (state spec §1.1).
-const RESERVED_ROOTS: &[&str] = &["vars", "sys", "surface", "layer", "flow"];
+/// The reserved roots, and `core`, the core connection's alias (core actions §1).
+const RESERVED_ROOTS: &[&str] = &["vars", "sys", "surface", "layer", "flow", "core"];
 
 /// A plugin the server makes available: `io.covalence.videohub@0.1.0=plugins/videohub/mod.ts`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -274,6 +276,7 @@ impl App {
 
         let evaluator = Arc::new(QuickJs::default());
         let app = Arc::new_cyclic(|app: &Weak<App>| {
+            core.set_core_actions(Arc::new(core_actions::AppCore(app.clone())));
             let runtime = Runtime::start(
                 core.shared().clone(),
                 Arc::new(AppActions(app.clone())),
@@ -423,6 +426,8 @@ impl App {
             .keys()
             .cloned()
             .collect();
+        let mut flow_ids: BTreeSet<String> = self.flows().keys().cloned().collect();
+        flow_ids.insert(flow.id.clone());
         let report = flow::validate(
             &flow,
             &flow::Context {
@@ -430,6 +435,7 @@ impl App {
                 taken_slugs: &taken,
                 layers: &layers,
                 surfaces: &surfaces,
+                flows: &flow_ids,
                 evaluator: self.evaluator.as_ref(),
             },
         );

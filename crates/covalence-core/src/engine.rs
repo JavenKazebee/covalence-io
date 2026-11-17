@@ -7,13 +7,16 @@
 
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{RwLock, RwLockReadGuard};
+use std::sync::{Arc, RwLock, RwLockReadGuard};
 use std::time::Instant;
 
 use covalence_protocol::action::ActionInvoke;
-use covalence_protocol::{ProtocolError, Value};
+use covalence_protocol::connection::ConnMode;
+use covalence_protocol::plugin::Effect;
+use covalence_protocol::{ErrorCode, ProtocolError, Value};
 
 use crate::Shared;
+use crate::core_conn::{self, CORE, CoreActions, CoreCall};
 use crate::gate::{GateInput, OutputGate, Verdict};
 use crate::host::{Host, HostConfig};
 use crate::journal::{
@@ -36,6 +39,8 @@ pub struct ActionRequest {
     pub cause: Option<Seq>,
     pub run: Option<String>,
     pub conn: ConnId,
+    /// The item within the connection: a surface or flow of `core`.
+    pub key: Option<String>,
     pub action: String,
     pub params: Value,
     /// Milliseconds.
@@ -56,6 +61,7 @@ impl ActionRequest {
             cause: None,
             run: None,
             conn: conn.into(),
+            key: None,
             action: action.into(),
             params,
             deadline: None,
@@ -109,6 +115,8 @@ pub struct Core {
     shared: Shared,
     gate: RwLock<OutputGate>,
     host: Host,
+    /// Carries out `core` actions, once the server has set it.
+    core_actions: RwLock<Option<Arc<dyn CoreActions>>>,
 }
 
 impl Core {
@@ -119,6 +127,7 @@ impl Core {
             shared,
             gate: RwLock::new(OutputGate::default()),
             host,
+            core_actions: RwLock::new(None),
         }
     }
 
@@ -134,6 +143,11 @@ impl Core {
         self.gate.read().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// Sets what carries out `core` actions (core actions §1).
+    pub fn set_core_actions(&self, actions: Arc<dyn CoreActions>) {
+        *self.core_actions.write().unwrap_or_else(|e| e.into_inner()) = Some(actions);
+    }
+
     pub fn set_simulate(&self, simulate: bool) {
         self.gate
             .write()
@@ -145,10 +159,24 @@ impl Core {
     /// dispatched, invokes it and journals the result.
     pub async fn request_action(&self, req: ActionRequest) -> Result<ActionOutcome, CoreError> {
         let journal = &self.shared.journal;
-        let conn_mode = self
-            .host
-            .conn_mode(&req.conn)
-            .ok_or_else(|| CoreError::UnknownConnection(req.conn.clone()))?;
+        // `core` always exists and is always connected; its actions say
+        // what they change in its manifest.
+        let is_core = req.conn == CORE;
+        let (conn_mode, effect) = if is_core {
+            let effect = core_conn::manifest()
+                .actions
+                .iter()
+                .find(|a| a.id == req.action)
+                .map_or(Effect::Internal, |a| a.effect());
+            (ConnMode::Live, effect)
+        } else {
+            let mode = self
+                .host
+                .conn_mode(&req.conn)
+                .ok_or_else(|| CoreError::UnknownConnection(req.conn.clone()))?;
+            (mode, self.host.action_effect(&req.conn, &req.action).await)
+        };
+        let origin = req.origin.clone();
         let term = req.term.unwrap_or_else(|| journal.term());
         let call = ulid::Ulid::generate().to_string();
         let requested = journal
@@ -158,6 +186,7 @@ impl Core {
                     Record::ActionRequested(ActionRequestedRecord {
                         call: call.clone(),
                         conn: req.conn.clone(),
+                        key: req.key.clone(),
                         action: req.action.clone(),
                         params: req.params.clone(),
                         deadline: req.deadline,
@@ -172,6 +201,7 @@ impl Core {
             requested,
             run: req.run.as_deref(),
             conn_mode,
+            effect,
             term,
         };
         let verdict = self.gate().pass(journal, &input)?.0;
@@ -195,11 +225,41 @@ impl Core {
             deadline: req.deadline,
         };
         let started = Instant::now();
-        let result = self
-            .host
-            .invoke(&req.conn, &invoke, Some(requested))
-            .await
-            .map(|r| r.result);
+        let result = if is_core {
+            let handler = self
+                .core_actions
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
+            match handler {
+                Some(handler) => {
+                    handler
+                        .invoke(CoreCall {
+                            origin,
+                            run: req.run.clone(),
+                            requested,
+                            key: req.key.clone(),
+                            action: invoke.action,
+                            params: invoke.params,
+                        })
+                        .await
+                }
+                None => Err(ProtocolError::new(
+                    ErrorCode::NotConnected,
+                    "core actions aren't available yet",
+                )),
+            }
+        } else if req.key.is_some() {
+            Err(ProtocolError::new(
+                ErrorCode::InvalidParams,
+                "items within a plugin's connection aren't supported yet",
+            ))
+        } else {
+            self.host
+                .invoke(&req.conn, &invoke, Some(requested))
+                .await
+                .map(|r| r.result)
+        };
         let duration_ms = started.elapsed().as_millis() as u64;
         let (ok, value, error) = match &result {
             Ok(value) => (true, value.clone(), None),

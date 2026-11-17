@@ -689,6 +689,19 @@
                 "learn": {
                     "type": "boolean",
                     "description": "Supports \"learn current values\" for its params."
+                },
+                "effect": {
+                    "anyOf": [
+                        {
+                            "type": "string",
+                            "const": "internal"
+                        },
+                        {
+                            "type": "string",
+                            "const": "device"
+                        }
+                    ],
+                    "description": "`device` (the default) changes the world outside Covalence; simulate mode suppresses it. `internal` only changes Covalence itself."
                 }
             },
             "required": [

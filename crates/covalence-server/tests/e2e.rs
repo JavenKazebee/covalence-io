@@ -256,8 +256,15 @@ async fn connections_survive_a_server_restart() {
     let app = App::start(config).unwrap();
     let second = Server::with_app(app);
     let conns = second.get("/connections").await;
-    assert_eq!(conns.as_array().unwrap().len(), 1);
-    assert_eq!(conns[0]["alias"], "vh");
+    // The stored one, and `core`, which is built in.
+    let aliases: Vec<&str> = conns
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["alias"].as_str().unwrap())
+        .collect();
+    assert_eq!(aliases, ["vh", "core"]);
+    assert_eq!(conns[1]["builtIn"], true);
     // The stored connection is created again, and the journal carries on.
     second
         .eventually(Duration::from_secs(10), "vh state after restart", || {

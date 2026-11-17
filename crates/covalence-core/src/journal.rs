@@ -218,6 +218,9 @@ pub struct ActionRequestedRecord {
     /// ULID; the idempotency key.
     pub call: String,
     pub conn: ConnId,
+    /// The item within the connection (ADR 0019): a surface or flow of `core`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
     pub action: String,
     pub params: Value,
     /// Milliseconds.
@@ -674,6 +677,7 @@ mod tests {
         Record::ActionRequested(ActionRequestedRecord {
             call: call.into(),
             conn: "c1".into(),
+            key: None,
             action: "route".into(),
             params: Value::Map(vec![
                 ("output".into(), 1.into()),

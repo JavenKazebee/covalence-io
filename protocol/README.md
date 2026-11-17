@@ -7,6 +7,7 @@ The single source of truth for the plugin protocol ([ADR 0002](../docs/adr/0002-
 | `main.tsp`, `src/*.tsp` | TypeSpec source |
 | `json-schema/` | Emitted JSON Schema. Generated, but committed, so other-language SDKs don't need TypeSpec |
 | `scripts/gen-ts.mjs` | Generates `packages/protocol/types.gen.ts` from the JSON Schema |
+| `interfaces/*.json` | Interfaces (ADR 0019): `surface@1` and `flow@1`, which the core connection implements (core actions spec) |
 | `fixtures/messages.json` | Golden messages: every message type, with every optional field filled |
 | `fixtures/invalid.json` | Messages both sides must reject |
 | `fixtures/encoded/` | MessagePack frames produced by each side; each side's tests decode the other's |

@@ -24,6 +24,7 @@ use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
 use super::{Cond, Edge, EventSource, Flow, FlowId, OnError, SetTarget, Step, StepKind, Trigger};
+use crate::core_conn;
 use crate::engine::{ActionRequest, Actions, CoreError};
 use crate::expr::{Evaluation, Evaluator, ExprError, Reads, Scope, truthy};
 use crate::gate::Verdict;
@@ -368,6 +369,19 @@ impl Runtime {
 
     /// Cancels a run. A queued run is dropped at once; a running one stops at
     /// its next step boundary or wait, and the returned phase is `running`.
+    /// Cancels every active and queued run of a flow; how many there were.
+    pub fn cancel_flow(&self, flow: &str) -> usize {
+        let runs: Vec<RunId> = self
+            .inner
+            .book()
+            .live
+            .iter()
+            .filter(|(_, l)| l.info.flow == flow)
+            .map(|(id, _)| id.clone())
+            .collect();
+        runs.iter().filter(|run| self.cancel(run).is_ok()).count()
+    }
+
     pub fn cancel(&self, run: &str) -> Result<RunPhase, CancelError> {
         let inner = &self.inner;
         let mut book = inner.book();
@@ -533,6 +547,17 @@ fn source_roots(from: &EventSource) -> Option<Vec<String>> {
             Some(vec![crate::surface::STATE_ROOT.to_owned()])
         }
     }
+}
+
+/// The name an action error gives in `data.code` (core actions).
+fn named_code(e: &covalence_protocol::ProtocolError) -> Option<String> {
+    let Some(Value::Map(fields)) = &e.data else {
+        return None;
+    };
+    fields
+        .iter()
+        .find(|(k, _)| k.as_str() == Some("code"))
+        .and_then(|(_, v)| v.as_str().map(str::to_owned))
 }
 
 /// Whether a value crossed a `state` trigger's edge.
@@ -1886,16 +1911,14 @@ impl RunTask {
             match &step.kind {
                 StepKind::Action {
                     target,
+                    constraint,
                     action,
                     params,
-                } => match target.literal() {
-                    Some(target) => Ok(self
-                        .action(id, &target.conn, action, params, step_started, timeout)
+                } => match self.resolve_target(target, constraint.as_ref(), action) {
+                    Ok(target) => Ok(self
+                        .action(id, &target, action, params, step_started, timeout)
                         .await),
-                    None => Ok(Err(RunError::new(
-                        "unsupported",
-                        "targets that follow state aren't supported yet",
-                    ))),
+                    Err(e) => Ok(Err(e)),
                 },
                 StepKind::Wait { duration } => Ok(self.wait(duration).await),
                 StepKind::WaitUntil { until } => Ok(self.wait_until(until).await),
@@ -1920,12 +1943,13 @@ impl RunTask {
     async fn action(
         &mut self,
         step: &str,
-        conn: &ConnId,
+        target: &super::ConnRef,
         action: &str,
         params: &BTreeMap<String, Source<serde_json::Value>>,
         step_started: Seq,
         timeout: Option<StdDuration>,
     ) -> Result<Done, RunError> {
+        let conn = &target.conn;
         // Parameters that follow state are evaluated now; an `undefined` one
         // is left out.
         let mut computed = serde_json::Map::new();
@@ -1960,6 +1984,7 @@ impl RunTask {
             action.to_owned(),
             covalence_protocol::to_value(&computed).expect("JSON encodes as MessagePack"),
         );
+        req.key = target.key.clone();
         req.cause = Some(step_started);
         req.run = Some(self.run.clone());
         req.deadline = timeout.map(|t| t.as_millis().min(u32::MAX as u128) as u32);
@@ -1993,17 +2018,54 @@ impl RunTask {
                             .unwrap_or_default()
                     ),
                 )),
+                // The spec's name for it, where the action gives one
+                // (`unknownLayer`), else the protocol code.
                 (_, Some(Err(e))) => Err(RunError::new(
-                    serde_json::to_value(e.code)
-                        .ok()
-                        .and_then(|v| v.as_str().map(str::to_owned))
-                        .unwrap_or_else(|| "action_failed".into()),
+                    named_code(&e).unwrap_or_else(|| {
+                        serde_json::to_value(e.code)
+                            .ok()
+                            .and_then(|v| v.as_str().map(str::to_owned))
+                            .unwrap_or_else(|| "action_failed".into())
+                    }),
                     e.message,
                 )),
                 (_, Some(Ok(result))) => Ok(Done { result, arm: None }),
                 (_, None) => Ok(Done::default()),
             },
         }
+    }
+
+    /// An action step's target: its literal, or what its source gives now,
+    /// checked against the constraint (`no_target`). M6 follows only `core`'s
+    /// surfaces and flows.
+    fn resolve_target(
+        &self,
+        target: &Source<super::ConnRef>,
+        constraint: Option<&super::TargetConstraint>,
+        action: &str,
+    ) -> Result<super::ConnRef, RunError> {
+        if let Source::Literal(t) = target {
+            return Ok(t.clone());
+        }
+        let no_target = |why: String| RunError::new("no_target", why);
+        let value = match (self.eval_raw(target), target.fallback()) {
+            (Ok(Some(v)), _) => v,
+            (Err(e), _) if e.code == "cancelled" => return Err(e),
+            (_, Some(f)) => serde_json::to_value(f).expect("a target encodes as JSON"),
+            (Ok(None), None) => return Err(no_target("the target is undefined".into())),
+            (Err(e), None) => return Err(e),
+        };
+        let resolved: super::ConnRef = serde_json::from_value(value.clone())
+            .map_err(|_| no_target(format!("{value} isn't a target: {{conn, key}}")))?;
+        let wanted = constraint.map(|c| c.interface.as_str());
+        let has = core_conn::interface_of(action).map(|i| i.id.as_str());
+        if resolved.conn != core_conn::CORE || resolved.key.is_none() || wanted != has {
+            return Err(no_target(format!(
+                "{value} isn't a {} target",
+                wanted.unwrap_or("core")
+            )));
+        }
+        Ok(resolved)
     }
 
     /// Sleeps, or returns `cancelled` when the run is cancelled.

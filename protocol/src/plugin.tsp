@@ -108,6 +108,9 @@ model ActionDef {
 
   /** Supports "learn current values" for its params. */
   learn?: boolean;
+
+  /** `device` (the default) changes the world outside Covalence; simulate mode suppresses it. `internal` only changes Covalence itself. */
+  effect?: "internal" | "device";
 }
 
 model EventDef {

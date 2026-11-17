@@ -119,6 +119,24 @@ pub struct ActionDef {
     pub duration_hint: Option<DurationHint>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub learn: Option<bool>,
+    /// Absent is `device`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect: Option<Effect>,
+}
+
+impl ActionDef {
+    pub fn effect(&self) -> Effect {
+        self.effect.unwrap_or(Effect::Device)
+    }
+}
+
+/// What an action changes (core actions §4): the world outside Covalence,
+/// which simulate mode suppresses, or only Covalence itself.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Effect {
+    Internal,
+    Device,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
