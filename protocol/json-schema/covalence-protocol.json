@@ -520,6 +520,17 @@
                 },
                 "simulator": {
                     "$ref": "SimulatorSupport.json"
+                },
+                "devices": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "DeviceMatch.json"
+                    },
+                    "description": "Devices the plugin drives through the core (§7.1)."
+                },
+                "directNetwork": {
+                    "type": "boolean",
+                    "description": "Opens network sockets itself: its traffic isn't in the inspector (§7)."
                 }
             },
             "required": [
@@ -746,6 +757,400 @@
                 "stateLevel",
                 "protocolLevel"
             ]
+        },
+        "DeviceMatch": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "DeviceMatch.json",
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "$ref": "DeviceKind.json"
+                },
+                "vendorId": {
+                    "type": "integer"
+                },
+                "productId": {
+                    "anyOf": [
+                        {
+                            "type": "integer"
+                        },
+                        {
+                            "type": "array",
+                            "items": {
+                                "type": "integer"
+                            }
+                        }
+                    ]
+                },
+                "usagePage": {
+                    "type": "integer",
+                    "description": "`hid` only."
+                },
+                "name": {
+                    "type": "string",
+                    "description": "A glob over the product or MIDI port name."
+                },
+                "autoCreate": {
+                    "type": "boolean",
+                    "description": "Create a connection without asking (surfaces)."
+                }
+            },
+            "required": [
+                "kind"
+            ],
+            "description": "A manifest's `devices` entry: which devices the plugin drives."
+        },
+        "DeviceKind": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "DeviceKind.json",
+            "anyOf": [
+                {
+                    "type": "string",
+                    "const": "hid"
+                },
+                {
+                    "type": "string",
+                    "const": "serial"
+                },
+                {
+                    "type": "string",
+                    "const": "midi"
+                }
+            ]
+        },
+        "Bytes": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "Bytes.json",
+            "type": "array",
+            "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 255
+            },
+            "description": "Raw bytes: `bin` in MessagePack, an array of byte values in JSON."
+        },
+        "Backoff": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "Backoff.json",
+            "type": "object",
+            "properties": {
+                "initialMs": {
+                    "type": "integer"
+                },
+                "maxMs": {
+                    "type": "integer"
+                }
+            }
+        },
+        "IoOptions": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "IoOptions.json",
+            "type": "object",
+            "properties": {
+                "reconnect": {
+                    "type": "boolean",
+                    "description": "Reopen after the far end closes or the device returns."
+                },
+                "backoff": {
+                    "$ref": "Backoff.json"
+                },
+                "framing": {
+                    "$ref": "Framing.json"
+                },
+                "baud": {
+                    "type": "integer",
+                    "description": "`serial` only."
+                }
+            }
+        },
+        "Framing": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "Framing.json",
+            "anyOf": [
+                {
+                    "type": "string",
+                    "const": "raw"
+                },
+                {
+                    "type": "string",
+                    "const": "line"
+                },
+                {
+                    "type": "string",
+                    "const": "length"
+                }
+            ]
+        },
+        "IoOpen": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "IoOpen.json",
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "$ref": "IoKind.json"
+                },
+                "target": {
+                    "type": "string",
+                    "description": "`host:port` for `tcp`; a device ID (§7.1) for `serial`, `hid` and `midi`."
+                },
+                "options": {
+                    "$ref": "IoOptions.json"
+                }
+            },
+            "required": [
+                "kind",
+                "target"
+            ],
+            "description": "`io.open` params (host → core, req). Result: `IoOpened`."
+        },
+        "IoKind": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "IoKind.json",
+            "anyOf": [
+                {
+                    "type": "string",
+                    "const": "tcp"
+                },
+                {
+                    "type": "string",
+                    "const": "udp"
+                },
+                {
+                    "type": "string",
+                    "const": "ws"
+                },
+                {
+                    "type": "string",
+                    "const": "serial"
+                },
+                {
+                    "type": "string",
+                    "const": "hid"
+                },
+                {
+                    "type": "string",
+                    "const": "midi"
+                }
+            ]
+        },
+        "IoOpened": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "IoOpened.json",
+            "type": "object",
+            "properties": {
+                "handle": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "handle"
+            ]
+        },
+        "IoWrite": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "IoWrite.json",
+            "type": "object",
+            "properties": {
+                "handle": {
+                    "type": "string"
+                },
+                "data": {
+                    "$ref": "Bytes.json"
+                }
+            },
+            "required": [
+                "handle",
+                "data"
+            ],
+            "description": "`io.write` params (host → core, ntf). For `hid`, an output report whose first byte is the report ID."
+        },
+        "IoData": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "IoData.json",
+            "type": "object",
+            "properties": {
+                "handle": {
+                    "type": "string"
+                },
+                "data": {
+                    "$ref": "Bytes.json"
+                }
+            },
+            "required": [
+                "handle",
+                "data"
+            ],
+            "description": "`io.data` params (core → host, ntf). For `hid`, an input report."
+        },
+        "IoFeature": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "IoFeature.json",
+            "type": "object",
+            "properties": {
+                "handle": {
+                    "type": "string"
+                },
+                "op": {
+                    "anyOf": [
+                        {
+                            "type": "string",
+                            "const": "get"
+                        },
+                        {
+                            "type": "string",
+                            "const": "send"
+                        }
+                    ]
+                },
+                "reportId": {
+                    "type": "integer",
+                    "description": "`get`: which report, and how many bytes to read."
+                },
+                "length": {
+                    "type": "integer"
+                },
+                "data": {
+                    "$ref": "Bytes.json",
+                    "description": "`send`: the report, its ID first."
+                }
+            },
+            "required": [
+                "handle",
+                "op"
+            ],
+            "description": "`io.feature` params (host → core, req), `hid` only. Result: `IoFeatureResult`."
+        },
+        "IoFeatureResult": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "IoFeatureResult.json",
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "Bytes.json"
+                }
+            },
+            "description": "`get` gives `data`; `send` gives nothing."
+        },
+        "IoState": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "IoState.json",
+            "type": "object",
+            "properties": {
+                "handle": {
+                    "type": "string"
+                },
+                "state": {
+                    "$ref": "IoStateKind.json"
+                },
+                "error": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "handle",
+                "state"
+            ],
+            "description": "`io.state` params (core → host, ntf). A device handle closes with\n`error: \"unplugged\"`, and opens again when the same device returns."
+        },
+        "IoStateKind": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "IoStateKind.json",
+            "anyOf": [
+                {
+                    "type": "string",
+                    "const": "open"
+                },
+                {
+                    "type": "string",
+                    "const": "closed"
+                },
+                {
+                    "type": "string",
+                    "const": "reconnecting"
+                },
+                {
+                    "type": "string",
+                    "const": "error"
+                }
+            ]
+        },
+        "IoClose": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "IoClose.json",
+            "type": "object",
+            "properties": {
+                "handle": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "handle"
+            ],
+            "description": "`io.close` params (host → core, ntf)."
+        },
+        "DeviceInfo": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "DeviceInfo.json",
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "Stable: from kind, vendor, product and serial number where there is one, else the port path."
+                },
+                "kind": {
+                    "$ref": "DeviceKind.json"
+                },
+                "vendorId": {
+                    "type": "integer"
+                },
+                "productId": {
+                    "type": "integer"
+                },
+                "serial": {
+                    "type": "string"
+                },
+                "manufacturer": {
+                    "type": "string"
+                },
+                "product": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string",
+                    "description": "OS path or port name, for display."
+                },
+                "usagePage": {
+                    "type": "integer"
+                },
+                "usage": {
+                    "type": "integer"
+                }
+            },
+            "required": [
+                "id",
+                "kind",
+                "path"
+            ],
+            "description": "A device the core found."
+        },
+        "DeviceList": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "DeviceList.json",
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "$ref": "DeviceKind.json"
+                }
+            },
+            "description": "`device.list` params (host → core, req): devices this plugin's `devices` match. Result: `DeviceInfoList`."
+        },
+        "DeviceInfoList": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "DeviceInfoList.json",
+            "type": "array",
+            "items": {
+                "$ref": "DeviceInfo.json"
+            }
         },
         "ConnCreate": {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1118,6 +1523,450 @@
                 "result": {}
             },
             "description": "`action.invoke` result."
+        },
+        "Placement": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "Placement.json",
+            "type": "object",
+            "properties": {
+                "x": {
+                    "type": "integer"
+                },
+                "y": {
+                    "type": "integer"
+                },
+                "w": {
+                    "type": "integer"
+                },
+                "h": {
+                    "type": "integer"
+                }
+            },
+            "required": [
+                "x",
+                "y"
+            ],
+            "description": "Where a control is, in grid cells."
+        },
+        "MomentaryInput": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "MomentaryInput.json",
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "const": "momentary"
+                },
+                "velocity": {
+                    "type": "boolean"
+                }
+            },
+            "required": [
+                "kind"
+            ]
+        },
+        "RelativeInput": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "RelativeInput.json",
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "const": "relative"
+                }
+            },
+            "required": [
+                "kind"
+            ]
+        },
+        "AbsoluteInput": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "AbsoluteInput.json",
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "const": "absolute"
+                },
+                "axes": {
+                    "anyOf": [
+                        {
+                            "type": "number",
+                            "const": 1
+                        },
+                        {
+                            "type": "number",
+                            "const": 2
+                        }
+                    ]
+                }
+            },
+            "required": [
+                "kind"
+            ]
+        },
+        "TouchInput": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "TouchInput.json",
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "const": "touch"
+                }
+            },
+            "required": [
+                "kind"
+            ]
+        },
+        "ImageOutput": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "ImageOutput.json",
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "const": "image"
+                },
+                "w": {
+                    "type": "integer"
+                },
+                "h": {
+                    "type": "integer"
+                },
+                "format": {
+                    "type": "string"
+                },
+                "rotation": {
+                    "anyOf": [
+                        {
+                            "type": "number",
+                            "const": 0
+                        },
+                        {
+                            "type": "number",
+                            "const": 90
+                        },
+                        {
+                            "type": "number",
+                            "const": 180
+                        },
+                        {
+                            "type": "number",
+                            "const": 270
+                        }
+                    ]
+                }
+            },
+            "required": [
+                "kind",
+                "w",
+                "h",
+                "format"
+            ]
+        },
+        "LedOutput": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "LedOutput.json",
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "const": "led"
+                },
+                "rgb": {
+                    "type": "boolean"
+                }
+            },
+            "required": [
+                "kind"
+            ]
+        },
+        "LevelOutput": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "LevelOutput.json",
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "const": "level"
+                },
+                "motor": {
+                    "type": "boolean"
+                }
+            },
+            "required": [
+                "kind"
+            ]
+        },
+        "TextOutput": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "TextOutput.json",
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "const": "text"
+                },
+                "chars": {
+                    "type": "integer"
+                },
+                "lines": {
+                    "type": "integer"
+                }
+            },
+            "required": [
+                "kind"
+            ]
+        },
+        "ControlDef": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "ControlDef.json",
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "Unique on the surface: `k0`, `dial1`, `pad.36`."
+                },
+                "label": {
+                    "type": "string"
+                },
+                "at": {
+                    "$ref": "Placement.json"
+                },
+                "inputs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "InputCap.json"
+                    }
+                },
+                "outputs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "OutputCap.json"
+                    }
+                }
+            },
+            "required": [
+                "id",
+                "at"
+            ],
+            "description": "One control on a surface."
+        },
+        "InputCap": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "InputCap.json",
+            "anyOf": [
+                {
+                    "$ref": "MomentaryInput.json"
+                },
+                {
+                    "$ref": "RelativeInput.json"
+                },
+                {
+                    "$ref": "AbsoluteInput.json"
+                },
+                {
+                    "$ref": "TouchInput.json"
+                }
+            ],
+            "description": "What a control can send."
+        },
+        "OutputCap": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "OutputCap.json",
+            "anyOf": [
+                {
+                    "$ref": "ImageOutput.json"
+                },
+                {
+                    "$ref": "LedOutput.json"
+                },
+                {
+                    "$ref": "LevelOutput.json"
+                },
+                {
+                    "$ref": "TextOutput.json"
+                }
+            ],
+            "description": "What a control can show."
+        },
+        "SurfaceOutputs": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "SurfaceOutputs.json",
+            "type": "object",
+            "properties": {
+                "brightness": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "SurfaceAttach": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "SurfaceAttach.json",
+            "type": "object",
+            "properties": {
+                "surface": {
+                    "type": "string"
+                },
+                "model": {
+                    "type": "string"
+                },
+                "serial": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "controls": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "ControlDef.json"
+                    }
+                },
+                "outputs": {
+                    "$ref": "SurfaceOutputs.json"
+                }
+            },
+            "required": [
+                "surface",
+                "model",
+                "name",
+                "controls"
+            ],
+            "description": "`surface.attach` params (host → core, ntf)."
+        },
+        "SurfaceDetach": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "SurfaceDetach.json",
+            "type": "object",
+            "properties": {
+                "surface": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "surface"
+            ],
+            "description": "`surface.detach` params (host → core, ntf)."
+        },
+        "SurfaceInput": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "SurfaceInput.json",
+            "type": "object",
+            "properties": {
+                "surface": {
+                    "type": "string"
+                },
+                "control": {
+                    "type": "string"
+                },
+                "kind": {
+                    "$ref": "InputKind.json"
+                },
+                "value": {
+                    "anyOf": [
+                        {
+                            "type": "number"
+                        },
+                        {
+                            "type": "array",
+                            "items": {
+                                "type": "number"
+                            }
+                        }
+                    ],
+                    "description": "Velocity for `down`, detents for `turn`, 0 to 1 (or `[x, y]`) for `value`, 1 or 0 for `touch`."
+                },
+                "ts": {
+                    "type": "number",
+                    "description": "The host's timestamp, in milliseconds on its own clock."
+                },
+                "echo": {
+                    "type": "boolean"
+                }
+            },
+            "required": [
+                "surface",
+                "control",
+                "kind",
+                "ts"
+            ],
+            "description": "`surface.input` params (host → core, ntf)."
+        },
+        "InputKind": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "InputKind.json",
+            "anyOf": [
+                {
+                    "type": "string",
+                    "const": "down"
+                },
+                {
+                    "type": "string",
+                    "const": "up"
+                },
+                {
+                    "type": "string",
+                    "const": "turn"
+                },
+                {
+                    "type": "string",
+                    "const": "touch"
+                },
+                {
+                    "type": "string",
+                    "const": "value"
+                }
+            ]
+        },
+        "SurfaceDraw": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "SurfaceDraw.json",
+            "type": "object",
+            "properties": {
+                "surface": {
+                    "type": "string"
+                },
+                "control": {
+                    "type": "string"
+                },
+                "image": {
+                    "$ref": "Bytes.json"
+                },
+                "format": {
+                    "$ref": "ImageFormat.json"
+                }
+            },
+            "required": [
+                "surface",
+                "control",
+                "image",
+                "format"
+            ],
+            "description": "`surface.draw` params (core → host, ntf), for `image` outputs."
+        },
+        "ImageFormat": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "ImageFormat.json",
+            "anyOf": [
+                {
+                    "type": "string",
+                    "const": "jpeg"
+                },
+                {
+                    "type": "string",
+                    "const": "bmp"
+                },
+                {
+                    "type": "string",
+                    "const": "png"
+                },
+                {
+                    "type": "string",
+                    "const": "rgb565"
+                }
+            ]
         },
         "Message": {
             "$schema": "https://json-schema.org/draft/2020-12/schema",

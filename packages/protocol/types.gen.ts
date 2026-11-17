@@ -26,6 +26,25 @@ export type CovalenceProtocol =
   | ActionDef
   | EventDef
   | SimulatorSupport
+  | DeviceMatch
+  | DeviceKind
+  | Bytes
+  | Backoff
+  | IoOptions
+  | Framing
+  | IoOpen
+  | IoKind
+  | IoOpened
+  | IoWrite
+  | IoData
+  | IoFeature
+  | IoFeatureResult
+  | IoState
+  | IoStateKind
+  | IoClose
+  | DeviceInfo
+  | DeviceList
+  | DeviceInfoList
   | ConnCreate
   | ConnMode
   | ConnDestroy
@@ -42,6 +61,25 @@ export type CovalenceProtocol =
   | LogLevel
   | ActionInvoke
   | ActionResult
+  | Placement
+  | MomentaryInput
+  | RelativeInput
+  | AbsoluteInput
+  | TouchInput
+  | ImageOutput
+  | LedOutput
+  | LevelOutput
+  | TextOutput
+  | ControlDef
+  | InputCap
+  | OutputCap
+  | SurfaceOutputs
+  | SurfaceAttach
+  | SurfaceDetach
+  | SurfaceInput
+  | InputKind
+  | SurfaceDraw
+  | ImageFormat
   | Message;
 /**
  * Spec §9.
@@ -67,6 +105,15 @@ export type Capability = "workers" | "permissions" | "surfaces" | "transports" |
  * Policy for standby nodes (ADR 0008).
  */
 export type ConnectionPolicy = "multiple" | "single";
+export type DeviceKind = "hid" | "serial" | "midi";
+/**
+ * Raw bytes: `bin` in MessagePack, an array of byte values in JSON.
+ */
+export type Bytes = Uint8Array | number[];
+export type Framing = "raw" | "line" | "length";
+export type IoKind = "tcp" | "udp" | "ws" | "serial" | "hid" | "midi";
+export type IoStateKind = "open" | "closed" | "reconnecting" | "error";
+export type DeviceInfoList = DeviceInfo[];
 export type ConnMode = "live" | "simulate";
 export type ConnStatusKind = "connecting" | "ok" | "warning" | "error" | "disconnected";
 /**
@@ -75,6 +122,16 @@ export type ConnStatusKind = "connecting" | "ok" | "warning" | "error" | "discon
 export type PathSegment = string | number;
 export type PatchOp = PathValue | PathDelete;
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error";
+/**
+ * What a control can send.
+ */
+export type InputCap = MomentaryInput | RelativeInput | AbsoluteInput | TouchInput;
+/**
+ * What a control can show.
+ */
+export type OutputCap = ImageOutput | LedOutput | LevelOutput | TextOutput;
+export type InputKind = "down" | "up" | "turn" | "touch" | "value";
+export type ImageFormat = "jpeg" | "bmp" | "png" | "rgb565";
 export type Message = Request | ResponseOk | ResponseErr | Notification;
 
 /**
@@ -256,6 +313,14 @@ export interface Manifest {
     [k: string]: unknown | undefined;
   };
   simulator?: SimulatorSupport;
+  /**
+   * Devices the plugin drives through the core (§7.1).
+   */
+  devices?: DeviceMatch[];
+  /**
+   * Opens network sockets itself: its traffic isn't in the inspector (§7).
+   */
+  directNetwork?: boolean;
 }
 export interface ConfigDef {
   schema: JsonSchemaDoc;
@@ -312,6 +377,131 @@ export interface EventDef {
 export interface SimulatorSupport {
   stateLevel: boolean;
   protocolLevel: boolean;
+}
+/**
+ * A manifest's `devices` entry: which devices the plugin drives.
+ */
+export interface DeviceMatch {
+  kind: DeviceKind;
+  vendorId?: number;
+  productId?: number | number[];
+  /**
+   * `hid` only.
+   */
+  usagePage?: number;
+  /**
+   * A glob over the product or MIDI port name.
+   */
+  name?: string;
+  /**
+   * Create a connection without asking (surfaces).
+   */
+  autoCreate?: boolean;
+}
+export interface Backoff {
+  initialMs?: number;
+  maxMs?: number;
+}
+export interface IoOptions {
+  /**
+   * Reopen after the far end closes or the device returns.
+   */
+  reconnect?: boolean;
+  backoff?: Backoff;
+  framing?: Framing;
+  /**
+   * `serial` only.
+   */
+  baud?: number;
+}
+/**
+ * `io.open` params (host → core, req). Result: `IoOpened`.
+ */
+export interface IoOpen {
+  kind: IoKind;
+  /**
+   * `host:port` for `tcp`; a device ID (§7.1) for `serial`, `hid` and `midi`.
+   */
+  target: string;
+  options?: IoOptions;
+}
+export interface IoOpened {
+  handle: string;
+}
+/**
+ * `io.write` params (host → core, ntf). For `hid`, an output report whose first byte is the report ID.
+ */
+export interface IoWrite {
+  handle: string;
+  data: Bytes;
+}
+/**
+ * `io.data` params (core → host, ntf). For `hid`, an input report.
+ */
+export interface IoData {
+  handle: string;
+  data: Bytes;
+}
+/**
+ * `io.feature` params (host → core, req), `hid` only. Result: `IoFeatureResult`.
+ */
+export interface IoFeature {
+  handle: string;
+  op: "get" | "send";
+  /**
+   * `get`: which report, and how many bytes to read.
+   */
+  reportId?: number;
+  length?: number;
+  data?: Bytes;
+}
+/**
+ * `get` gives `data`; `send` gives nothing.
+ */
+export interface IoFeatureResult {
+  data?: Bytes;
+}
+/**
+ * `io.state` params (core → host, ntf). A device handle closes with
+ * `error: "unplugged"`, and opens again when the same device returns.
+ */
+export interface IoState {
+  handle: string;
+  state: IoStateKind;
+  error?: string;
+}
+/**
+ * `io.close` params (host → core, ntf).
+ */
+export interface IoClose {
+  handle: string;
+}
+/**
+ * A device the core found.
+ */
+export interface DeviceInfo {
+  /**
+   * Stable: from kind, vendor, product and serial number where there is one, else the port path.
+   */
+  id: string;
+  kind: DeviceKind;
+  vendorId?: number;
+  productId?: number;
+  serial?: string;
+  manufacturer?: string;
+  product?: string;
+  /**
+   * OS path or port name, for display.
+   */
+  path: string;
+  usagePage?: number;
+  usage?: number;
+}
+/**
+ * `device.list` params (host → core, req): devices this plugin's `devices` match. Result: `DeviceInfoList`.
+ */
+export interface DeviceList {
+  kind?: DeviceKind;
 }
 /**
  * `conn.create` params (core → host, req). Result: `Empty`.
@@ -434,4 +624,106 @@ export interface ActionInvoke {
  */
 export interface ActionResult {
   result?: unknown;
+}
+/**
+ * Where a control is, in grid cells.
+ */
+export interface Placement {
+  x: number;
+  y: number;
+  w?: number;
+  h?: number;
+}
+export interface MomentaryInput {
+  kind: "momentary";
+  velocity?: boolean;
+}
+export interface RelativeInput {
+  kind: "relative";
+}
+export interface AbsoluteInput {
+  kind: "absolute";
+  axes?: 1 | 2;
+}
+export interface TouchInput {
+  kind: "touch";
+}
+export interface ImageOutput {
+  kind: "image";
+  w: number;
+  h: number;
+  format: string;
+  rotation?: 0 | 90 | 180 | 270;
+}
+export interface LedOutput {
+  kind: "led";
+  rgb?: boolean;
+}
+export interface LevelOutput {
+  kind: "level";
+  motor?: boolean;
+}
+export interface TextOutput {
+  kind: "text";
+  chars?: number;
+  lines?: number;
+}
+/**
+ * One control on a surface.
+ */
+export interface ControlDef {
+  /**
+   * Unique on the surface: `k0`, `dial1`, `pad.36`.
+   */
+  id: string;
+  label?: string;
+  at: Placement;
+  inputs?: InputCap[];
+  outputs?: OutputCap[];
+}
+export interface SurfaceOutputs {
+  brightness?: boolean;
+}
+/**
+ * `surface.attach` params (host → core, ntf).
+ */
+export interface SurfaceAttach {
+  surface: string;
+  model: string;
+  serial?: string;
+  name: string;
+  controls: ControlDef[];
+  outputs?: SurfaceOutputs;
+}
+/**
+ * `surface.detach` params (host → core, ntf).
+ */
+export interface SurfaceDetach {
+  surface: string;
+}
+/**
+ * `surface.input` params (host → core, ntf).
+ */
+export interface SurfaceInput {
+  surface: string;
+  control: string;
+  kind: InputKind;
+  /**
+   * Velocity for `down`, detents for `turn`, 0 to 1 (or `[x, y]`) for `value`, 1 or 0 for `touch`.
+   */
+  value?: number | number[];
+  /**
+   * The host's timestamp, in milliseconds on its own clock.
+   */
+  ts: number;
+  echo?: boolean;
+}
+/**
+ * `surface.draw` params (core → host, ntf), for `image` outputs.
+ */
+export interface SurfaceDraw {
+  surface: string;
+  control: string;
+  image: Bytes;
+  format: ImageFormat;
 }

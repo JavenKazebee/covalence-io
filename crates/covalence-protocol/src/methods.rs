@@ -112,13 +112,16 @@ macro_rules! dispatch {
 /// Messages the host sends to the core.
 pub mod host_to_core {
     use super::*;
-    use crate::{connection, session, state};
+    use crate::{connection, io, session, state, surface};
 
     requests! {
         /// A request from a host, decoded.
         Request {
             "host.hello" => HostHello(session::HostHello) -> session::HostWelcome,
             "ping" => Ping(Empty) -> Empty,
+            "io.open" => IoOpen(io::IoOpen) -> io::IoOpened,
+            "io.feature" => IoFeature(io::IoFeature) -> io::IoFeatureResult,
+            "device.list" => DeviceList(io::DeviceList) -> Vec<io::DeviceInfo>,
         }
     }
 
@@ -130,6 +133,11 @@ pub mod host_to_core {
             "state.patch" => StatePatch(state::StatePatch),
             "event.emit" => EventEmit(state::EventEmit),
             "log" => Log(state::Log),
+            "io.write" => IoWrite(io::IoWrite),
+            "io.close" => IoClose(io::IoClose),
+            "surface.attach" => SurfaceAttach(surface::SurfaceAttach),
+            "surface.detach" => SurfaceDetach(surface::SurfaceDetach),
+            "surface.input" => SurfaceInput(surface::SurfaceInput),
         }
     }
 }
@@ -137,7 +145,7 @@ pub mod host_to_core {
 /// Messages the core sends to a host.
 pub mod core_to_host {
     use super::*;
-    use crate::{action, connection, plugin};
+    use crate::{action, connection, io, plugin, surface};
 
     requests! {
         /// A request from the core, decoded.
@@ -148,6 +156,15 @@ pub mod core_to_host {
             "conn.resync" => ConnResync(Empty) -> Empty,
             "action.invoke" => ActionInvoke(action::ActionInvoke) -> action::ActionResult,
             "ping" => Ping(Empty) -> Empty,
+        }
+    }
+
+    notifications! {
+        /// A notification from the core, decoded.
+        Notification {
+            "io.data" => IoData(io::IoData),
+            "io.state" => IoState(io::IoState),
+            "surface.draw" => SurfaceDraw(surface::SurfaceDraw),
         }
     }
 }

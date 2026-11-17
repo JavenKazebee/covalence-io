@@ -54,6 +54,12 @@ pub struct Manifest {
     pub surfaces: Option<Object>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub simulator: Option<SimulatorSupport>,
+    /// Devices the plugin drives through the core (§7.1).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub devices: Vec<crate::io::DeviceMatch>,
+    /// Opens network sockets itself, so its traffic isn't in the inspector (§7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direct_network: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

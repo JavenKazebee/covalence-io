@@ -46,6 +46,10 @@ const schema = {
   anyOf: Object.keys(bundle.$defs).map((name) => ({ $ref: `#/$defs/${name}` })),
 };
 
+// Bytes arrive as a Uint8Array from MessagePack, and as an array of byte
+// values from JSON (spec §7).
+if (schema.$defs.Bytes) schema.$defs.Bytes.tsType = "Uint8Array | number[]";
+
 const ts = await compile(schema, "CovalenceProtocol", {
   bannerComment: "// Generated from protocol/*.tsp by protocol/scripts/gen-ts.mjs. Do not edit.",
   additionalProperties: false,

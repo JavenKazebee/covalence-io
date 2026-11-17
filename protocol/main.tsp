@@ -7,3 +7,5 @@ import "./src/plugin.tsp";
 import "./src/connection.tsp";
 import "./src/state.tsp";
 import "./src/action.tsp";
+import "./src/io.tsp";
+import "./src/surface.tsp";

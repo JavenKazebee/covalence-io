@@ -64,6 +64,10 @@ fn roundtrip_params(dir: &str, message: &Message) -> Result<Value, String> {
             .map_err(err)?
             .params()
             .map_err(enc),
+        ("coreToHost", Message::Notification(n)) => core_to_host::Notification::decode(&n.m, &n.p)
+            .map_err(err)?
+            .params()
+            .map_err(enc),
         other => panic!("no method table for {:?}", other.0),
     }
 }
@@ -77,6 +81,9 @@ fn roundtrip_result(dir: &str, method: &str, r: &Value) -> Result<Value, String>
     match (dir, method) {
         ("hostToCore", "host.hello") => roundtrip_as::<host_to_core::HostHello>(r),
         ("hostToCore", "ping") => roundtrip_as::<host_to_core::Ping>(r),
+        ("hostToCore", "io.open") => roundtrip_as::<host_to_core::IoOpen>(r),
+        ("hostToCore", "io.feature") => roundtrip_as::<host_to_core::IoFeature>(r),
+        ("hostToCore", "device.list") => roundtrip_as::<host_to_core::DeviceList>(r),
         ("coreToHost", "plugin.load") => roundtrip_as::<core_to_host::PluginLoad>(r),
         ("coreToHost", "conn.create") => roundtrip_as::<core_to_host::ConnCreate>(r),
         ("coreToHost", "conn.destroy") => roundtrip_as::<core_to_host::ConnDestroy>(r),

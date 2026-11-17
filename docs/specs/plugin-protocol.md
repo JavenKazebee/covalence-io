@@ -258,7 +258,7 @@ The SDK exposes these as `ctx.tcp`, `ctx.udp`, `ctx.ws`, `ctx.http`, `ctx.serial
 
 | Method | Direction | Params / result |
 |---|---|---|
-| `io.open` | host → core, req | `{conn, kind: "tcp" \| "udp" \| "ws" \| "serial" \| "hid" \| "midi", target, options: {reconnect?, backoff?, framing?: "raw" \| "line" \| "length", baud?}}` → `{handle}`. **(M7)** For `serial`, `hid` and `midi`, `target` is a device ID (§7.1) |
+| `io.open` | host → core, req | `{kind: "tcp" \| "udp" \| "ws" \| "serial" \| "hid" \| "midi", target, options: {reconnect?, backoff?, framing?: "raw" \| "line" \| "length", baud?}}` → `{handle}`. **(M7)** For `serial`, `hid` and `midi`, `target` is a device ID (§7.1) |
 | `io.write` | host → core, ntf | `{handle, data: bytes}`. For `hid`, an output report whose first byte is the report ID; for `midi`, one or more MIDI messages |
 | `io.data` | core → host, ntf | `{handle, data: bytes}`. For `hid`, an input report; for `midi`, one message |
 | `io.feature` | host → core, req | **(M7)** `hid` only: `{handle, op: "get", reportId, length}` → `{data}`, or `{handle, op: "send", data}` → `{}` |
@@ -266,6 +266,7 @@ The SDK exposes these as `ctx.tcp`, `ctx.udp`, `ctx.ws`, `ctx.http`, `ctx.serial
 | `io.close` | host → core, ntf | `{handle}` |
 | `http.request` | host → core, req | `{conn, method, url, headers, body?, timeoutMs}` → `{status, headers, body}` |
 
+- **The connection is the envelope's `conn`,** as for every other method from a connection. **Bytes** (`data`, `image`) are MessagePack `bin`, and arrays of byte values in the JSON debug format.
 - **Hardware goes through the core.** Deno has no HID, MIDI or serial of its own, and plugins don't use native add-ons for them. `usb` (interfaces, bulk, interrupt and control transfers) comes later.
 - **One connection holds a device at a time.** A second `io.open` of the same device is refused with `busy`.
 - **(M7) Device handles outlive a plugin host restart.** The core keeps the device open, drops its data while no host is there, and gives the restarted connection the same device on its next `io.open`.
@@ -301,7 +302,7 @@ interface DeviceInfo {
 
 | Method | Direction | Params / result |
 |---|---|---|
-| `device.list` | host → core, req | `{conn, kind?}` → `DeviceInfo[]`: devices this plugin's `devices` match, for a picker |
+| `device.list` | host → core, req | `{kind?}` → `DeviceInfo[]`: devices this plugin's `devices` match, for a picker |
 
 - **A connection names its device in its config,** as a string field with `format: "device"`. The connection form offers matching devices that no connection holds.
 - **When a matching device appears that no connection holds,** the core offers to create a connection for it in the UI, with the device in its config, or creates one when the match says `autoCreate`. A device several plugins match is offered once, with a choice.

@@ -650,6 +650,15 @@ fn handle_request(link: &Link, req: Request, hello_done: bool) {
         Ok(_) if !hello_done => Err(invalid_request("send host.hello first")),
         Ok(host_to_core::Request::Ping(_)) => Ok(Value::Map(Vec::new())),
         Ok(host_to_core::Request::HostHello(_)) => Err(invalid_request("duplicate host.hello")),
+        // Transports and devices are M7's device layer, still to come.
+        Ok(
+            r @ (host_to_core::Request::IoOpen(_)
+            | host_to_core::Request::IoFeature(_)
+            | host_to_core::Request::DeviceList(_)),
+        ) => Err(ProtocolError::new(
+            ErrorCode::UnknownMethod,
+            format!("`{}` isn't supported yet", r.method()),
+        )),
     };
     link.respond(req.id, outcome);
 }
@@ -875,6 +884,18 @@ fn route(inner: &Inner, ntf: Notification) {
                 }),
             ));
         }
+        // Transports and surfaces from plugins are M7's, still to come.
+        other @ (N::IoWrite(_)
+        | N::IoClose(_)
+        | N::SurfaceAttach(_)
+        | N::SurfaceDetach(_)
+        | N::SurfaceInput(_)) => inner.log(
+            LogLevel::Warn,
+            format!(
+                "dropped `{}` from {conn}: not supported yet",
+                other.method()
+            ),
+        ),
     }
 }
 

@@ -1,4 +1,5 @@
 import "@typespec/json-schema";
+import "./io.tsp";
 
 using TypeSpec.JsonSchema;
 
@@ -60,6 +61,12 @@ model Manifest {
   presets?: unknown[];
   surfaces?: Record<unknown>;
   simulator?: SimulatorSupport;
+
+  /** Devices the plugin drives through the core (§7.1). */
+  devices?: DeviceMatch[];
+
+  /** Opens network sockets itself: its traffic isn't in the inspector (§7). */
+  directNetwork?: boolean;
 }
 
 model ConfigDef {

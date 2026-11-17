@@ -85,7 +85,7 @@
           },
           "presets": [{ "name": "Route button" }],
           "surfaces": {},
-          "simulator": { "stateLevel": true, "protocolLevel": true }
+          "simulator": { "stateLevel": true, "protocolLevel": true }, "devices": [{ "kind": "hid", "vendorId": 4057, "productId": [128, 165], "usagePage": 12, "name": "Stream Deck*", "autoCreate": true }], "directNetwork": false
         }
       }
     }
@@ -197,5 +197,19 @@
       "t": "ntf", "m": "log",
       "p": { "level": "warn", "msg": "worker restarted", "fields": { "conn": "01JAB3ZB0000000000000000V1", "restarts": 2 } }
     }
-  }
+  },
+  {"name": "io.open request", "dir": "hostToCore", "params": "IoOpen", "message": {"t": "req", "id": 20, "m": "io.open", "conn": "01JAB3ZB0000000000000000V1", "p": {"kind": "hid", "target": "hid:0fd9:0080:CL12K1A00042", "options": {"reconnect": true, "backoff": {"initialMs": 250, "maxMs": 5000}, "framing": "raw", "baud": 115200}}}},
+  {"name": "io.open response", "dir": "hostToCore", "method": "io.open", "result": "IoOpened", "message": {"t": "res", "id": 20, "ok": true, "r": {"handle": "h1"}}},
+  {"name": "io.feature request", "dir": "hostToCore", "params": "IoFeature", "message": {"t": "req", "id": 21, "m": "io.feature", "conn": "01JAB3ZB0000000000000000V1", "p": {"handle": "h1", "op": "get", "reportId": 6, "length": 32, "data": [3, 2]}}},
+  {"name": "io.feature response", "dir": "hostToCore", "method": "io.feature", "result": "IoFeatureResult", "message": {"t": "res", "id": 21, "ok": true, "r": {"data": [6, 12, 0, 0, 0, 0, 67, 76]}}},
+  {"name": "device.list request", "dir": "hostToCore", "params": "DeviceList", "message": {"t": "req", "id": 22, "m": "device.list", "conn": "01JAB3ZB0000000000000000V1", "p": {"kind": "hid"}}},
+  {"name": "device.list response", "dir": "hostToCore", "method": "device.list", "result": "DeviceInfoList", "message": {"t": "res", "id": 22, "ok": true, "r": [{"id": "hid:0fd9:0080:CL12K1A00042", "kind": "hid", "vendorId": 4057, "productId": 128, "serial": "CL12K1A00042", "manufacturer": "Elgato", "product": "Stream Deck MK.2", "path": "/dev/hidraw3", "usagePage": 12, "usage": 1}]}},
+  {"name": "io.write notification", "dir": "hostToCore", "params": "IoWrite", "message": {"t": "ntf", "m": "io.write", "conn": "01JAB3ZB0000000000000000V1", "p": {"handle": "h1", "data": [2, 7, 0, 0, 248, 3, 0, 0]}}},
+  {"name": "io.close notification", "dir": "hostToCore", "params": "IoClose", "message": {"t": "ntf", "m": "io.close", "conn": "01JAB3ZB0000000000000000V1", "p": {"handle": "h1"}}},
+  {"name": "io.data notification", "dir": "coreToHost", "params": "IoData", "message": {"t": "ntf", "m": "io.data", "conn": "01JAB3ZB0000000000000000V1", "p": {"handle": "h1", "data": [1, 0, 0, 0, 1, 0]}}},
+  {"name": "io.state notification", "dir": "coreToHost", "params": "IoState", "message": {"t": "ntf", "m": "io.state", "conn": "01JAB3ZB0000000000000000V1", "p": {"handle": "h1", "state": "closed", "error": "unplugged"}}},
+  {"name": "surface.attach notification", "dir": "hostToCore", "params": "SurfaceAttach", "message": {"t": "ntf", "m": "surface.attach", "conn": "01JAB3ZB0000000000000000V1", "p": {"surface": "CL12K1A00042", "model": "elgato.streamdeck.mk2", "serial": "CL12K1A00042", "name": "Stream Deck MK.2", "controls": [{"id": "k0", "label": "Key 1", "at": {"x": 0, "y": 0, "w": 1, "h": 1}, "inputs": [{"kind": "momentary", "velocity": false}], "outputs": [{"kind": "image", "w": 72, "h": 72, "format": "jpeg", "rotation": 180}]}, {"id": "dial", "at": {"x": 0, "y": 1}, "inputs": [{"kind": "relative"}, {"kind": "absolute", "axes": 2}, {"kind": "touch"}], "outputs": [{"kind": "led", "rgb": true}, {"kind": "level", "motor": true}, {"kind": "text", "chars": 8, "lines": 2}]}], "outputs": {"brightness": true}}}},
+  {"name": "surface.detach notification", "dir": "hostToCore", "params": "SurfaceDetach", "message": {"t": "ntf", "m": "surface.detach", "conn": "01JAB3ZB0000000000000000V1", "p": {"surface": "CL12K1A00042"}}},
+  {"name": "surface.input notification", "dir": "hostToCore", "params": "SurfaceInput", "message": {"t": "ntf", "m": "surface.input", "conn": "01JAB3ZB0000000000000000V1", "p": {"surface": "CL12K1A00042", "control": "k0", "kind": "down", "value": 0.5, "ts": 1760781600123.5, "echo": false}}},
+  {"name": "surface.draw notification", "dir": "coreToHost", "params": "SurfaceDraw", "message": {"t": "ntf", "m": "surface.draw", "conn": "01JAB3ZB0000000000000000V1", "p": {"surface": "CL12K1A00042", "control": "k0", "image": [255, 216, 255, 224, 0, 16], "format": "jpeg"}}}
 ]

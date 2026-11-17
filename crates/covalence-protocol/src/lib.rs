@@ -8,14 +8,16 @@ pub mod action;
 pub mod connection;
 pub mod envelope;
 pub mod framing;
+pub mod io;
 pub mod methods;
 pub mod plugin;
 pub mod session;
 pub mod state;
+pub mod surface;
 mod value;
 
 pub use envelope::{ErrorCode, Message, Notification, ProtocolError, Request, Response};
-pub use value::{Empty, Object, True, Value, ValueError, from_value, to_value};
+pub use value::{Bytes, Empty, Object, True, Value, ValueError, from_value, to_value};
 
 /// Protocol version this build speaks.
 pub const PROTOCOL_VERSION: &str = "0.1.0";

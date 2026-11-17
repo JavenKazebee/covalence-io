@@ -1,6 +1,6 @@
 # Milestone 7: Surfaces from plugins
 
-- **Status:** In progress (Phase 0)
+- **Status:** In progress (Phase 0 done)
 
 A real Stream Deck drives Covalence, through a plugin. The core gets a device layer: it enumerates HID and serial devices, watches hotplug, matches them to plugins' manifests and performs their I/O, so a plugin of plain TypeScript can drive hardware with no native add-ons ([ADR 0025](../adr/0025-device-drivers-are-plugins.md)). The plugin host carries the surface protocol ([plugin protocol §8](../specs/plugin-protocol.md)), and `io.covalence.streamdeck` translates between the deck's reports and M5's surface model. Network transports arrive too, and the Videohub plugin moves onto them. MIDI, Orbitals and controls beyond keys stay out.
 
@@ -27,7 +27,7 @@ A real Stream Deck drives Covalence, through a plugin. The core gets a device la
   - Serial: `serialport`, without default features.
   - Hotplug: `nusb::watch_devices()` for USB arrivals and departures on all three platforms, each one re-enumerating HID and serial; plus a once-a-second enumeration, for what isn't USB and in case a notification is missed.
   - JPEG: `jpeg-encoder`, for the renderer.
-- [ ] **Protocol schema:** the §7 additions, §7.1 and the §8 `conn` in TypeSpec, with fixtures.
+- [x] **Protocol schema:** `protocol/src/io.tsp` (`io.open`, `io.write`, `io.data`, `io.feature`, `io.state`, `io.close`, `device.list`, `DeviceMatch`, `DeviceInfo`) and `protocol/src/surface.tsp` (§8's messages and `ControlDef`), the manifest's `devices` and `directNetwork`, the Rust types in `covalence-protocol` (`io`, `surface`) with a `core_to_host` notification table, the TS method tables, and a fixture for each message, both sides' frames regenerated. `conn` is the envelope's, as for every connection's method. Bytes are a `Bytes` type: `bin` in MessagePack, an array of byte values in JSON, as both sides already wrote binary in the debug format. The core answers the new requests `unknown_method` and drops the new notifications, with a log line, until Phases 1–3. Phase 3 moves `covalence_core::surface`'s attach, input and control types onto the protocol's.
 - [x] ADR 0025 accepted: the spike passed. (ADR 0024 was accepted in [M6](m6-primitives.md).)
 
 ### Phase 1: The core's device layer

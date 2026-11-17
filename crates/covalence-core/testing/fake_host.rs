@@ -313,5 +313,7 @@ fn manifest(id: &str, version: &str) -> Manifest {
         presets: None,
         surfaces: None,
         simulator: None,
+        devices: Vec::new(),
+        direct_network: None,
     }
 }
