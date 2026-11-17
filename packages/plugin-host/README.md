@@ -20,13 +20,13 @@ deno run --no-prompt \
   <root>/packages/plugin-host/main.ts
 ```
 
-| Flag                                          | Why                                                                                                                   |
-| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `--no-prompt`                                 | A missing permission fails instead of blocking on a TTY prompt.                                                       |
-| `--config`                                    | Resolves the workspace packages (`@covalence-io/*`) wherever the core's working directory is.                         |
-| `--allow-read=<root>/packages,<root>/plugins` | The host imports `worker.ts` and the plugin bundles. Add any other plugin directory the core passes to `plugin.load`. |
-| `--allow-net`                                 | Plugins open device sockets directly until host transports land. Not narrowed per connection yet.                     |
-| `--allow-env=COVALENCE_PROTOCOL_DEBUG`        | Set it to `json` for newline-delimited JSON instead of MessagePack.                                                   |
+| Flag                                          | Why                                                                                                                    |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `--no-prompt`                                 | A missing permission fails instead of blocking on a TTY prompt.                                                        |
+| `--config`                                    | Resolves the workspace packages (`@covalence-io/*`) wherever the core's working directory is.                          |
+| `--allow-read=<root>/packages,<root>/plugins` | The host imports `worker.ts` and the plugin bundles. Add any other plugin directory the core passes to `plugin.load`.  |
+| `--allow-net`                                 | For plugins that open sockets themselves (`directNetwork`), and the Videohub until it moves to `ctx.tcp` (M7 Phase 5). |
+| `--allow-env=COVALENCE_PROTOCOL_DEBUG`        | Set it to `json` for newline-delimited JSON instead of MessagePack.                                                    |
 
 Not granted: `--allow-write`, `--allow-run`, `--allow-ffi`, `--allow-sys`, and
 other environment variables. Workers inherit these permissions; `conn.create`'s
@@ -46,9 +46,12 @@ plugin `console.*` output becomes `log` notifications.
 - Pings the core every 2 s; after three unanswered pings it exits with code 1.
   It exits with 0 on stdin EOF or `host.shutdown`.
 - Routes requests to workers by the envelope's `conn` and passes params through.
-  The main thread reads only `action.invoke`'s `term` (host-wide fencing: lower
-  than the highest seen → `stale_term`) and `deadline` (→ `timeout`, and the
-  call's `signal` is aborted).
+- Sends workers' requests to the core with their `conn` (`io.open`,
+  `io.feature`, `device.list`) and passes the core's `io.data` and `io.state` to
+  the worker of the connection they name (M7, spec §7). The main thread reads
+  only `action.invoke`'s `term` (host-wide fencing: lower than the highest seen
+  → `stale_term`) and `deadline` (→ `timeout`, and the call's `signal` is
+  aborted).
 - A request for a connection whose `conn.create` (or whose plugin's
   `plugin.load`) is still in progress waits for it.
 - A worker that crashes is terminated: its connection reports `conn.status`

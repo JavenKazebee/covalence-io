@@ -5,7 +5,8 @@ import type { JsonSchema } from "../api";
 import { splitPath, type Segment } from "../live/paths";
 import type { Leaf } from "../live/protocol";
 
-export type FieldKind = "text" | "integer" | "number" | "boolean" | "enum" | "choices";
+/** `device`: a device ID, picked from the devices the plugin matches (plugin protocol §7.1). */
+export type FieldKind = "text" | "integer" | "number" | "boolean" | "enum" | "choices" | "device";
 
 export interface Field {
   key: string;
@@ -43,6 +44,7 @@ export function fieldsOf(schema: JsonSchema): Field[] {
 function kindOf(prop: JsonSchema): FieldKind {
   if (prop["x-choices"] !== undefined) return "choices";
   if (prop.enum !== undefined) return "enum";
+  if (prop.type === "string" && prop.format === "device") return "device";
   switch (prop.type) {
     case "integer":
       return "integer";
@@ -104,7 +106,7 @@ function parseOne(field: Field, text: string): { value: unknown } | string {
     const match = s.enum?.find((option) => String(option) === text);
     return match === undefined ? "Not one of the options" : { value: match };
   }
-  if (field.kind === "text") {
+  if (field.kind === "text" || field.kind === "device") {
     if (s.minLength !== undefined && text.length < s.minLength) return `At least ${s.minLength} characters`;
     return { value: text };
   }

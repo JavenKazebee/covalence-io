@@ -33,6 +33,21 @@ describe("schema forms", () => {
     ]);
   });
 
+  it("picks devices for `format: device` fields and keeps their IDs as text", () => {
+    const schema = {
+      type: "object" as const,
+      required: ["device"],
+      properties: { device: { type: "string" as const, format: "device", title: "Device" } },
+    };
+    const fields = fieldsOf(schema);
+    expect(fields.map((f) => f.kind)).toEqual(["device"]);
+    expect(parseValues(fields, { device: " hid:0fd9:0080:AL12 " })).toEqual({
+      ok: true,
+      value: { device: "hid:0fd9:0080:AL12" },
+    });
+    expect(parseValues(fields, { device: "" })).toEqual({ ok: false, errors: { device: "Required" } });
+  });
+
   it("puts required fields first, in `required` order", () => {
     const sorted: JsonSchema = { ...route, properties: { input: route.properties!.input!, output: route.properties!.output! } };
     expect(fieldsOf(sorted).map((f) => f.key)).toEqual(["output", "input"]);

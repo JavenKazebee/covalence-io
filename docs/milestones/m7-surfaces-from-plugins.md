@@ -1,6 +1,6 @@
 # Milestone 7: Surfaces from plugins
 
-- **Status:** In progress (Phases 0 and 1 done)
+- **Status:** In progress (Phases 0–2 done)
 
 A real Stream Deck drives Covalence, through a plugin. The core gets a device layer: it enumerates HID and serial devices, watches hotplug, matches them to plugins' manifests and performs their I/O, so a plugin of plain TypeScript can drive hardware with no native add-ons ([ADR 0025](../adr/0025-device-drivers-are-plugins.md)). The plugin host carries the surface protocol ([plugin protocol §8](../specs/plugin-protocol.md)), and `io.covalence.streamdeck` translates between the deck's reports and M5's surface model. Network transports arrive too, and the Videohub plugin moves onto them. MIDI, Orbitals and controls beyond keys stay out.
 
@@ -38,9 +38,9 @@ A real Stream Deck drives Covalence, through a plugin. The core gets a device la
 - [x] OS errors that the UI can explain (§7.1): `permission_denied`, `exclusive_access`, `no_driver` and `unplugged`, each with a hint for the platform (udev rules, Input Monitoring, another app holding the device, WinUSB).
 
 ### Phase 2: Transports in the protocol and the SDK
-- [ ] `io.open`, `io.write`, `io.data`, `io.feature`, `io.state` and `io.close` for `hid`, `serial` and `tcp`, and `device.list`.
-- [ ] SDK: `ctx.hid`, `ctx.serial` and `ctx.tcp`, with `ctx.tcp` shaped like `Deno.Conn` and `ctx.net.socket()` like a `node:net` `Socket`. The `device` config format and its picker.
-- [ ] A connection's traffic is kept in a ring buffer per handle and served at `GET /connections/{id}/traffic`.
+- [x] `io.open`, `io.write`, `io.data`, `io.feature`, `io.state` and `io.close` for `hid`, `serial` and `tcp`, and `device.list`. They're `covalence_core::io`'s, which the host supervisor owns: it sends a host's `io.data` and `io.state` while the host is up, keeps device handles open (input dropped) when it goes, and closes sockets. `io.open` of `tcp` answers after the first attempt to connect, failing with `not_connected` unless `reconnect` is set; `line` framing keeps each line's `\n`, and `length` reads a 4-byte big-endian length before each message. Requests run off the session loop, and a connection can use only its own handles. `busy` joins the protocol's error codes (it was in §9 but not in the schema).
+- [x] SDK: `ctx.hid`, `ctx.serial` and `ctx.tcp`, with `ctx.tcp` shaped like `Deno.Conn` and `ctx.net.socket()` like a `node:net` `Socket`. The device config format and its picker. Also `ctx.devices.list()`. Workers send requests to the core through the host, and the host passes `io.data` and `io.state` to the connection's worker. A destroyed connection closes its handles. The connection form offers a `format: "device"` field's matching, unheld devices (`GET /devices?plugin=`).
+- [x] A connection's traffic is kept in a ring buffer per handle and served at `GET /connections/{id}/traffic`: the last 500 messages of each handle, up to 512 bytes of each in hex, with state changes, and the last 8 closed handles per connection. It says whether the connection is `inspectable` (not `directNetwork`).
 
 ### Phase 3: Surfaces over the plugin host
 - [ ] The core accepts §8 notifications from the plugin host, with `conn` as the provider, through the transport-independent surface module M5 built. Images go as binary frames.

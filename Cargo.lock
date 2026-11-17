@@ -350,6 +350,7 @@ name = "covalence-core"
 version = "0.0.0"
 dependencies = [
  "cosmic-text",
+ "covalence-devices",
  "covalence-protocol",
  "covalence-store",
  "png",

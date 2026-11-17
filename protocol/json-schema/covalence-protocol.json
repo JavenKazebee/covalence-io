@@ -168,6 +168,10 @@
                 },
                 {
                     "type": "string",
+                    "const": "busy"
+                },
+                {
+                    "type": "string",
                     "const": "restart_required"
                 },
                 {

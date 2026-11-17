@@ -19,13 +19,20 @@ export type WorkerMethod =
 export type ToWorker =
   | { type: "req"; id: number; m: WorkerMethod; p: unknown }
   /** The call's deadline passed: abort it (its result is no longer wanted). */
-  | { type: "cancel"; call: string };
+  | { type: "cancel"; call: string }
+  /** A core → host notification for this connection: `io.data`, `io.state`. */
+  | { type: "ntf"; m: string; p: unknown }
+  /** The core's answer to one of the worker's `call`s. */
+  | { type: "res"; id: number; ok: true; r: unknown }
+  | { type: "res"; id: number; ok: false; e: ProtocolError };
 
 export type FromWorker =
   | { type: "res"; id: number; ok: true; r: unknown }
   | { type: "res"; id: number; ok: false; e: ProtocolError }
   /** A host → core notification for this worker's connection. */
-  | { type: "ntf"; m: string; p: unknown };
+  | { type: "ntf"; m: string; p: unknown }
+  /** A host → core request for this worker's connection (`io.open`, …). */
+  | { type: "call"; id: number; m: string; p: unknown };
 
 /** `conn.create` params as the worker gets them: the core's plus what the host resolved. */
 export interface WorkerCreate {

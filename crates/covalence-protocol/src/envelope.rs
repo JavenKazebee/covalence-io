@@ -133,6 +133,7 @@ pub enum ErrorCode {
     Timeout,
     Cancelled,
     StaleTerm,
+    Busy,
     RestartRequired,
     Overloaded,
     Internal,

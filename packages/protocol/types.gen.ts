@@ -96,6 +96,7 @@ export type ErrorCode =
   | "timeout"
   | "cancelled"
   | "stale_term"
+  | "busy"
   | "restart_required"
   | "overloaded"
   | "internal";

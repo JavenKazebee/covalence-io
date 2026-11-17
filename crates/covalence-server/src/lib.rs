@@ -23,7 +23,8 @@
 //! | `GET /runs/{run}`            | One run                                                  |
 //! | `POST /runs/{run}/cancel`    | Cancels a run: `202 {run, status}`                       |
 //! | `POST /expressions/evaluate` | Previews an expression: `{source, trigger?}` → `{value?, error?, reads}` |
-//! | `GET /devices`              | HID and serial devices, who holds each, and offers (see `devices`) |
+//! | `GET /devices?plugin`        | HID and serial devices, who holds each, and offers (see `devices`) |
+//! | `GET /connections/{id}/traffic` | Each of the connection's transport handles and its recent traffic |
 //!
 //! Surfaces, layers and control bindings are in surfaces spec §9 and
 //! bindings spec §2. Each entity type has the flows' five routes, with
@@ -317,6 +318,9 @@ impl App {
 
         let evaluator = Arc::new(QuickJs::default());
         let devices = config.devices.start();
+        if let Some(devices) = &devices {
+            core.host().io().set_devices(devices.clone());
+        }
         let app = Arc::new_cyclic(|app: &Weak<App>| {
             core.set_core_actions(Arc::new(core_actions::AppCore(app.clone())));
             let runtime = Runtime::start(

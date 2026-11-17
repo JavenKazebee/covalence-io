@@ -60,12 +60,38 @@ scope.addEventListener("unhandledrejection", (e) => {
 // Requests that arrive while conn.create is still importing the bundle wait
 // for it.
 const created = Promise.withResolvers<ConnectionRuntime>();
+let runtime: ConnectionRuntime | undefined;
 const calls = new Map<string, AbortController>();
+/** This worker's requests to the core, waiting for answers. */
+const toCore = new Map<
+  number,
+  { resolve(r: unknown): void; reject(e: unknown): void }
+>();
+let nextCall = 1;
+
+function request(m: string, p: unknown): Promise<unknown> {
+  const id = nextCall++;
+  return new Promise((resolve, reject) => {
+    toCore.set(id, { resolve, reject });
+    post({ type: "call", id, m, p });
+  });
+}
 
 scope.onmessage = async (event: MessageEvent<ToWorker>) => {
   const msg = event.data;
   if (msg.type === "cancel") {
     calls.get(msg.call)?.abort(new Error("deadline passed"));
+    return;
+  }
+  if (msg.type === "ntf") {
+    runtime?.receive(msg.m, msg.p);
+    return;
+  }
+  if (msg.type === "res") {
+    const waiter = toCore.get(msg.id);
+    toCore.delete(msg.id);
+    if (msg.ok) waiter?.resolve(msg.r);
+    else waiter?.reject(new ActionError(msg.e.code, msg.e.message, msg.e.data));
     return;
   }
   try {
@@ -81,12 +107,13 @@ async function handle(method: string, params: unknown): Promise<unknown> {
     case "conn.create": {
       const { bundle, conn, params: p } = params as WorkerCreate;
       const plugin = await loadPlugin(bundle);
-      const runtime = new ConnectionRuntime(plugin, { conn, ...p }, {
+      runtime = new ConnectionRuntime(plugin, { conn, ...p }, {
         notify: (m, p) => post({ type: "ntf", m, p }),
+        request,
       });
       created.resolve(runtime);
       // Reply first; status and the snapshot follow as notifications.
-      setTimeout(() => runtime.start(), 0);
+      setTimeout(() => runtime!.start(), 0);
       return {};
     }
     case "action.invoke": {

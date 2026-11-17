@@ -30,6 +30,16 @@ export {
   type StateApi,
 } from "./plugin.ts";
 export {
+  HidDevice,
+  IoHandle,
+  type NetAddr,
+  NetSocket,
+  SerialPort,
+  TcpConn,
+  type TcpConnectOptions,
+  toBytes,
+} from "./io.ts";
+export {
   formatPath,
   parsePath,
   type Path,

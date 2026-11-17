@@ -15,6 +15,9 @@
 //!   flight, patches and events that name it (`call`) are journaled with
 //!   `cause` → its `action.requested` entry.
 //!
+//! - performs connections' transports (`io.*`, `device.list`) through
+//!   [`IoHub`]: device handles outlive a host, sockets don't.
+//!
 //! The registry of plugins and connections is the desired state; it outlives
 //! any one host process.
 
@@ -30,6 +33,7 @@ use std::time::Duration;
 use covalence_protocol::action::{ActionInvoke, ActionResult};
 use covalence_protocol::connection::{ConnCreate, ConnDestroy, ConnMode, ConnStatusKind};
 use covalence_protocol::framing::{self, Format, FrameDecoder, FrameError};
+use covalence_protocol::io::DeviceMatch;
 use covalence_protocol::methods::{Method, MethodError, core_to_host, host_to_core};
 use covalence_protocol::plugin::{ActionDef, Effect};
 use covalence_protocol::plugin::{Manifest, PluginLoad};
@@ -46,6 +50,7 @@ use tokio::task::JoinHandle;
 use tokio::time::{Instant, MissedTickBehavior};
 
 use crate::clock;
+use crate::io::IoHub;
 use crate::journal::{
     ConnStatusRecord, EventRecord, JournalOp, LogRecord, NewEntry, Origin, Record, Seq,
     StatePatchRecord, StateQualityRecord,
@@ -142,6 +147,11 @@ struct Inner {
     modes: Mutex<HashMap<ConnId, ConnMode>>,
     /// Action calls in flight, by call ID.
     calls: Mutex<HashMap<String, InFlight>>,
+    /// Each connection's plugin's `devices`, for `device.list` without
+    /// waiting for the registry.
+    conn_devices: Mutex<HashMap<ConnId, Vec<DeviceMatch>>>,
+    /// Transports the core performs for connections (spec §7).
+    io: Arc<IoHub>,
     status: watch::Sender<HostStatus>,
     shutdown: watch::Sender<bool>,
 }
@@ -192,6 +202,8 @@ impl Host {
             registry: tokio::sync::Mutex::new(Registry::default()),
             modes: Mutex::new(HashMap::new()),
             calls: Mutex::new(HashMap::new()),
+            conn_devices: Mutex::new(HashMap::new()),
+            io: IoHub::new(),
             status,
             shutdown,
         });
@@ -200,6 +212,11 @@ impl Host {
             inner,
             task: Some(task),
         }
+    }
+
+    /// The transports, for the device layer and the traffic inspector.
+    pub fn io(&self) -> &Arc<IoHub> {
+        &self.inner.io
     }
 
     pub fn status(&self) -> watch::Receiver<HostStatus> {
@@ -220,6 +237,7 @@ impl Host {
             .await?;
         reg.manifests
             .insert(load.plugin.clone(), loaded.manifest.clone());
+        self.inner.index_devices(&reg);
         Ok(Some(loaded.manifest))
     }
 
@@ -244,6 +262,7 @@ impl Host {
         let mut reg = self.inner.registry.lock().await;
         reg.conns.insert(id.to_owned(), create.clone());
         self.inner.modes().insert(id.to_owned(), create.mode);
+        self.inner.index_devices(&reg);
         let Some(link) = reg.link.clone() else {
             return Ok(());
         };
@@ -256,6 +275,8 @@ impl Host {
         let mut reg = self.inner.registry.lock().await;
         reg.conns.remove(id);
         self.inner.modes().remove(id);
+        self.inner.index_devices(&reg);
+        self.inner.io.release(id);
         let Some(link) = reg.link.clone() else {
             return Ok(());
         };
@@ -341,6 +362,19 @@ impl Drop for Host {
 }
 
 impl Inner {
+    /// Refreshes `conn_devices` from the registry.
+    fn index_devices(&self, reg: &Registry) {
+        let index = reg
+            .conns
+            .iter()
+            .filter_map(|(id, c)| {
+                let m = reg.manifests.get(&c.plugin)?;
+                Some((id.clone(), m.devices.clone()))
+            })
+            .collect();
+        *self.conn_devices.lock().unwrap_or_else(|e| e.into_inner()) = index;
+    }
+
     fn modes(&self) -> MutexGuard<'_, HashMap<ConnId, ConnMode>> {
         self.modes.lock().unwrap_or_else(|e| e.into_inner())
     }
@@ -530,6 +564,7 @@ async fn run_session(
                         Ok(welcome) => {
                             link.respond(req.id, to_value(&welcome).map_err(internal));
                             hello_done = true;
+                            inner.io.attach(link.out.clone());
                             setup = Some(Box::pin(set_up(
                                 inner.clone(),
                                 link.clone(),
@@ -542,7 +577,7 @@ async fn run_session(
                         }
                     }
                 } else {
-                    handle_request(&link, req, hello_done);
+                    handle_request(inner, &link, req, hello_done);
                 }
             }
             Event::Incoming(Some(Message::Notification(ntf))) => {
@@ -587,6 +622,7 @@ async fn run_session(
 
     // Dropping the setup future releases the registry if it holds it.
     drop(setup);
+    inner.io.host_down();
     link.close();
     let _ = child.start_kill();
     let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
@@ -640,7 +676,7 @@ fn version_in_range(version: &str, min: &str, max: &str) -> bool {
     cmp(min).is_ge() && cmp(max).is_le()
 }
 
-fn handle_request(link: &Link, req: Request, hello_done: bool) {
+fn handle_request(inner: &Arc<Inner>, link: &Arc<Link>, req: Request, hello_done: bool) {
     let outcome = match host_to_core::Request::decode(&req.m, &req.p) {
         Err(MethodError::Unknown(m)) => Err(ProtocolError::new(
             ErrorCode::UnknownMethod,
@@ -650,17 +686,57 @@ fn handle_request(link: &Link, req: Request, hello_done: bool) {
         Ok(_) if !hello_done => Err(invalid_request("send host.hello first")),
         Ok(host_to_core::Request::Ping(_)) => Ok(Value::Map(Vec::new())),
         Ok(host_to_core::Request::HostHello(_)) => Err(invalid_request("duplicate host.hello")),
-        // Transports and devices are M7's device layer, still to come.
-        Ok(
-            r @ (host_to_core::Request::IoOpen(_)
-            | host_to_core::Request::IoFeature(_)
-            | host_to_core::Request::DeviceList(_)),
-        ) => Err(ProtocolError::new(
-            ErrorCode::UnknownMethod,
-            format!("`{}` isn't supported yet", r.method()),
-        )),
+        Ok(io_request) => {
+            let Some(conn) = req.conn.clone().filter(|c| inner.modes().contains_key(c)) else {
+                link.respond(
+                    req.id,
+                    Err(invalid_request("io requests need a known connection")),
+                );
+                return;
+            };
+            // Answered from a task: opening a socket takes a while.
+            let (inner, link, id) = (inner.clone(), link.clone(), req.id);
+            tokio::spawn(async move { io_request_task(inner, link, id, conn, io_request).await });
+            return;
+        }
     };
     link.respond(req.id, outcome);
+}
+
+async fn io_request_task(
+    inner: Arc<Inner>,
+    link: Arc<Link>,
+    id: u32,
+    conn: ConnId,
+    request: host_to_core::Request,
+) {
+    use host_to_core::Request as R;
+    let encode = |r: Result<Value, _>| r.map_err(internal);
+    match request {
+        R::IoOpen(open) => match inner.io.open(&conn, open).await {
+            Ok((opened, start)) => {
+                link.respond(id, encode(to_value(&opened)));
+                start.go();
+            }
+            Err(e) => link.respond(id, Err(e)),
+        },
+        R::IoFeature(feature) => {
+            let outcome = inner.io.feature(&conn, feature).await;
+            link.respond(id, outcome.and_then(|r| encode(to_value(&r))));
+        }
+        R::DeviceList(list) => {
+            let matches = inner
+                .conn_devices
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&conn)
+                .cloned()
+                .unwrap_or_default();
+            let devices = inner.io.device_list(&matches, &list);
+            link.respond(id, encode(to_value(&devices)));
+        }
+        R::Ping(_) | R::HostHello(_) => unreachable!("answered by handle_request"),
+    }
 }
 
 /// Loads plugins and creates connections on a fresh host. After a restart,
@@ -675,6 +751,7 @@ async fn set_up(inner: Arc<Inner>, link: Arc<Link>, restarted: bool) {
         {
             Ok(loaded) => {
                 reg.manifests.insert(load.plugin.clone(), loaded.manifest);
+                inner.index_devices(&reg);
             }
             Err(e) => inner.log(
                 LogLevel::Error,
@@ -884,12 +961,10 @@ fn route(inner: &Inner, ntf: Notification) {
                 }),
             ));
         }
-        // Transports and surfaces from plugins are M7's, still to come.
-        other @ (N::IoWrite(_)
-        | N::IoClose(_)
-        | N::SurfaceAttach(_)
-        | N::SurfaceDetach(_)
-        | N::SurfaceInput(_)) => inner.log(
+        N::IoWrite(write) => inner.io.write(&conn, write),
+        N::IoClose(close) => inner.io.close(&conn, close),
+        // Surfaces from plugins are M7 Phase 3's.
+        other @ (N::SurfaceAttach(_) | N::SurfaceDetach(_) | N::SurfaceInput(_)) => inner.log(
             LogLevel::Warn,
             format!(
                 "dropped `{}` from {conn}: not supported yet",

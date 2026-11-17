@@ -158,3 +158,233 @@ async fn without_a_device_layer_the_list_is_empty() {
     let body = server.get("/devices").await;
     assert_eq!(body, json!({ "available": false, "devices": [] }));
 }
+
+/// Runs an action on `deck` and returns its result.
+async fn act(server: &Server, action: &str, params: Value) -> Value {
+    let (status, outcome) = server
+        .post(
+            "/actions",
+            json!({ "action": format!("deck.{action}"), "params": params }),
+        )
+        .await;
+    assert_eq!(status.as_u16(), 200, "{outcome}");
+    assert_eq!(outcome["ok"], json!(true), "{action}: {outcome}");
+    outcome["result"].clone()
+}
+
+/// The value at `path`, once the connection its alias names exists.
+async fn value(server: &Server, path: &str) -> Option<Value> {
+    let alias = path.split('.').next().unwrap();
+    let conns = server.get("/connections").await;
+    if !conns
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|c| c["alias"] == alias)
+    {
+        return None;
+    }
+    server.value(path).await
+}
+
+/// A TCP server that answers each message with `echo: <message>`.
+async fn echo_server() -> u16 {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        while let Ok((mut socket, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let mut buf = [0u8; 1024];
+                while let Ok(n) = socket.read(&mut buf).await {
+                    if n == 0 {
+                        return;
+                    }
+                    let reply = [b"echo: ", &buf[..n]].concat();
+                    if socket.write_all(&reply).await.is_err() {
+                        return;
+                    }
+                }
+            });
+        }
+    });
+    port
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plugin_drives_its_device_and_sockets_through_the_core() {
+    let data = tempfile::tempdir().unwrap();
+    let fake = Fake::new();
+    fake.plug(stream_deck_mk2("/dev/hidraw0", Some("AL12")));
+    fake.set_feature("/dev/hidraw0", 0x06, &[0x06, 0x0c, 0xaa, 0xbb]);
+    let server = start(data.path(), &fake);
+
+    // The automatic connection opens its deck through `ctx.hid`.
+    server
+        .eventually(WAIT, "the deck's handle to open", || async {
+            (value(&server, "deck.io").await == Some(json!("open"))).then_some(())
+        })
+        .await;
+
+    // Input reports reach the plugin.
+    fake.input("/dev/hidraw0", &[0x01, 0x00, 0x0f, 0x00, 0x01]);
+    server
+        .eventually(WAIT, "the input in state", || async {
+            (value(&server, "deck.input").await == Some(json!("01000f0001"))).then_some(())
+        })
+        .await;
+
+    // Output and feature reports reach the device.
+    act(&server, "send", json!({ "hex": "0201ff" })).await;
+    let log = fake.wait_log("/dev/hidraw0", WAIT, |l| !l.writes.is_empty());
+    assert_eq!(log.writes, [vec![0x02, 0x01, 0xff]]);
+    assert_eq!(
+        act(&server, "feature", json!({ "reportId": 6, "length": 3 })).await,
+        json!("060caa")
+    );
+    act(&server, "sendFeature", json!({ "hex": "030832" })).await;
+    assert_eq!(
+        fake.log("/dev/hidraw0").features_sent,
+        [vec![0x03, 0x08, 0x32]]
+    );
+    assert_eq!(act(&server, "list", json!({})).await, json!([DECK]));
+
+    // Unplugged and back: the plugin's handle closes and reopens.
+    fake.unplug("/dev/hidraw0");
+    server
+        .eventually(WAIT, "the handle to close", || async {
+            (value(&server, "deck.io").await == Some(json!("closed:unplugged"))).then_some(())
+        })
+        .await;
+    fake.plug(stream_deck_mk2("/dev/hidraw1", Some("AL12")));
+    server
+        .eventually(WAIT, "the handle to reopen", || async {
+            (value(&server, "deck.io").await == Some(json!("open"))).then_some(())
+        })
+        .await;
+
+    // TCP, as a `Deno.Conn` and as a `node:net` socket.
+    let port = echo_server().await;
+    for via in ["conn", "net"] {
+        let reply = act(
+            &server,
+            "tcp",
+            json!({ "port": port, "text": via, "via": via }),
+        )
+        .await;
+        assert_eq!(reply, json!(format!("echo: {via}")));
+    }
+    let (status, refused) = server
+        .post(
+            "/actions",
+            json!({ "action": "deck.tcp", "params": { "port": 1, "text": "x", "via": "conn" } }),
+        )
+        .await;
+    assert_eq!(status.as_u16(), 200);
+    assert_eq!(refused["ok"], json!(false), "{refused}");
+
+    // The inspector saw all of it.
+    let conn = connections(&server).await.remove(0);
+    let traffic = server
+        .get(&format!(
+            "/connections/{}/traffic",
+            conn["id"].as_str().unwrap()
+        ))
+        .await;
+    assert_eq!(traffic["inspectable"], json!(true));
+    let handles = traffic["handles"].as_array().unwrap();
+    let deck = handles
+        .iter()
+        .find(|h| h["kind"] == "hid")
+        .expect("the deck's handle");
+    assert_eq!(deck["open"], json!(true));
+    let hexes: Vec<&str> = deck["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|e| e["hex"].as_str())
+        .collect();
+    assert!(
+        hexes.contains(&"01000f0001") && hexes.contains(&"0201ff"),
+        "{deck}"
+    );
+    let sockets: Vec<&Value> = handles.iter().filter(|h| h["kind"] == "tcp").collect();
+    // Two that talked, and the refused one, which says why.
+    assert_eq!(sockets.len(), 3, "{traffic}");
+    assert!(
+        traffic.to_string().contains("Connection refused"),
+        "{traffic}"
+    );
+    assert!(sockets.iter().all(|h| h["open"] == json!(false)));
+    let said: Vec<&str> = sockets
+        .iter()
+        .flat_map(|h| h["entries"].as_array().unwrap())
+        .filter(|e| e["dir"] == "out")
+        .filter_map(|e| e["hex"].as_str())
+        .collect();
+    assert!(said.contains(&"636f6e6e"), "{traffic}"); // "conn"
+
+    // Another connection can't open the deck.
+    let (status, second) = server
+        .post(
+            "/connections",
+            json!({ "plugin": PLUGIN, "alias": "other", "config": { "device": DECK }, "mode": "live" }),
+        )
+        .await;
+    assert_eq!(status.as_u16(), 201, "{second}");
+    server
+        .eventually(WAIT, "the second connection to fail with busy", || async {
+            let journal = server.get("/journal?limit=1000").await;
+            journal
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e.to_string().contains("is held by connection"))
+                .then_some(())
+        })
+        .await;
+
+    server.app.clone().shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn devices_stay_open_while_the_plugin_host_restarts() {
+    let data = tempfile::tempdir().unwrap();
+    let fake = Fake::new();
+    fake.plug(stream_deck_mk2("/dev/hidraw0", Some("AL12")));
+    let server = start(data.path(), &fake);
+    server
+        .eventually(WAIT, "the deck's handle to open", || async {
+            (value(&server, "deck.io").await == Some(json!("open"))).then_some(())
+        })
+        .await;
+    let before = server.get("/devices").await["devices"][0]["handle"]["handle"].clone();
+
+    let pid = server.get("/health").await["host"]["pid"].as_u64().unwrap();
+    std::process::Command::new("kill")
+        .args(["-9", &pid.to_string()])
+        .status()
+        .unwrap();
+    server
+        .eventually(WAIT, "a new host", || async {
+            let health = server.get("/health").await;
+            (health["host"]["pid"].as_u64().is_some_and(|p| p != pid)
+                && health["host"]["phase"] == "ready")
+                .then_some(())
+        })
+        .await;
+    fake.input("/dev/hidraw0", &[0x01, 0x07]);
+    server
+        .eventually(WAIT, "input after the restart", || async {
+            (value(&server, "deck.input").await == Some(json!("0107"))).then_some(())
+        })
+        .await;
+    let after = server.get("/devices").await["devices"][0]["handle"]["handle"].clone();
+    assert_eq!(after, before, "the same handle");
+    assert_eq!(
+        fake.log("/dev/hidraw0").opens,
+        1,
+        "the device was never closed"
+    );
+    server.app.clone().shutdown().await;
+}

@@ -19,6 +19,7 @@ import {
   PROTOCOL_VERSION,
   type SecretDef,
 } from "@covalence-io/protocol";
+import type { Transports } from "./io.ts";
 import type { Path, PathLike } from "./paths.ts";
 import type { Schema } from "./schema.ts";
 
@@ -76,6 +77,16 @@ export interface BaseContext<C = unknown, E = Record<string, unknown>> {
   status(status: ConnStatusKind, message?: string, detail?: unknown): void;
   /** Aborted when the connection is destroyed. */
   readonly signal: AbortSignal;
+  /** HID devices, opened by the core (spec §7). */
+  readonly hid: Transports["hid"];
+  /** Serial ports, opened by the core. */
+  readonly serial: Transports["serial"];
+  /** TCP through the core: `connect` gives a `Deno.Conn`-shaped object. */
+  readonly tcp: Transports["tcp"];
+  /** `node:net`-shaped sockets through the core. */
+  readonly net: Transports["net"];
+  /** Devices this plugin's `devices` match. */
+  readonly devices: Transports["devices"];
 }
 
 /** What live-mode actions get: the base context plus what `connect` returned. */

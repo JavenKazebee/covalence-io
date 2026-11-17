@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::routing::get;
 use axum::{Json, Router};
 use covalence_core::host::HostPhase;
@@ -191,7 +191,13 @@ pub(crate) fn spawn(app: &Arc<App>) {
     });
 }
 
-async fn list(State(app): State<Arc<App>>) -> Json<JsonValue> {
+#[derive(serde::Deserialize)]
+struct ListQuery {
+    /// Only devices this plugin's `devices` match: a connection form's picker.
+    plugin: Option<String>,
+}
+
+async fn list(State(app): State<Arc<App>>, Query(query): Query<ListQuery>) -> Json<JsonValue> {
     let Some(devices) = &app.devices else {
         return Json(json!({ "available": false, "devices": [] }));
     };
@@ -207,8 +213,15 @@ async fn list(State(app): State<Arc<App>>) -> Json<JsonValue> {
         .into_iter()
         .map(|h| (h.device.clone(), h))
         .collect();
-    let list: Vec<JsonValue> = devices
-        .list()
+    let mut present = devices.list();
+    if let Some(plugin) = &query.plugin {
+        let matches = manifests
+            .get(plugin)
+            .map(|m| m.devices.as_slice())
+            .unwrap_or_default();
+        present = matching::matching(matches, None, &present);
+    }
+    let list: Vec<JsonValue> = present
         .into_iter()
         .map(|d| {
             let mut out = serde_json::to_value(&d).expect("a device encodes as JSON");

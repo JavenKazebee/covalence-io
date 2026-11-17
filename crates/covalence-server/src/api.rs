@@ -31,6 +31,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/health", get(health))
         .route("/plugins", get(plugins))
         .route("/connections", get(connections).post(create_connection))
+        .route("/connections/{id}/traffic", get(traffic))
         .route("/state", get(state))
         .route("/actions", post(request_action))
         .route("/journal", get(journal))
@@ -180,6 +181,31 @@ async fn create_connection(
             Err(ApiError::new(status, e.to_string()))
         }
     }
+}
+
+/// A connection's transport handles and their recent traffic (spec §7).
+async fn traffic(
+    State(app): State<Arc<App>>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<JsonValue>> {
+    let conn = app
+        .conns()
+        .get(&id)
+        .cloned()
+        .or_else(|| app.conn_by_alias(&id));
+    let Some(conn) = conn else {
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            format!("no connection {id:?}"),
+        ));
+    };
+    let handles = app.core.host().io().traffic(&conn.id);
+    Ok(Json(json!({
+        "conn": conn.id,
+        // Opens its own sockets: what it sends isn't seen here (ADR 0025).
+        "inspectable": app.manifest(&conn.plugin).await.is_none_or(|m| m.direct_network != Some(true)),
+        "handles": handles,
+    })))
 }
 
 #[derive(Deserialize)]

@@ -180,6 +180,7 @@ async function create() {
         v-model="values"
         :fields="fields"
         :errors="errors"
+        :plugin="pluginId"
         id-prefix="conn-config"
       />
       <div class="row">

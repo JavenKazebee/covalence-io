@@ -75,6 +75,7 @@ class Connection {
     readonly id: string,
     onNotify: (m: string, p: unknown) => void,
     onCrash: (why: string) => void,
+    onCall: (m: string, p: unknown) => Promise<unknown>,
   ) {
     this.#worker = new Worker(new URL("./worker.ts", import.meta.url), {
       type: "module",
@@ -83,6 +84,19 @@ class Connection {
     this.#worker.onmessage = (e: MessageEvent<FromWorker>) => {
       const msg = e.data;
       if (msg.type === "ntf") return onNotify(msg.m, msg.p);
+      if (msg.type === "call") {
+        onCall(msg.m, msg.p).then(
+          (r) => this.#post({ type: "res", id: msg.id, ok: true, r }),
+          (e) =>
+            this.#post({
+              type: "res",
+              id: msg.id,
+              ok: false,
+              e: toProtocolError(e),
+            }),
+        );
+        return;
+      }
       const waiter = this.#pending.get(msg.id);
       if (!waiter) return; // gave up on it (deadline)
       this.#pending.delete(msg.id);
@@ -120,6 +134,11 @@ class Connection {
   abandon(id: number, call: string) {
     this.#pending.delete(id);
     this.#post({ type: "cancel", call });
+  }
+
+  /** Passes a core → host notification to the worker. */
+  notify(m: string, p: unknown) {
+    this.#post({ type: "ntf", m, p });
   }
 
   terminate() {
@@ -216,7 +235,12 @@ export class Host {
         break;
       }
       case "ntf":
-        break; // the core sends none we handle yet; unknown ones are ignored
+        // Transport traffic goes to its connection's worker; unknown
+        // notifications are ignored (spec §10).
+        if (msg.m === "io.data" || msg.m === "io.state") {
+          if (msg.conn) this.#conns.get(msg.conn)?.notify(msg.m, msg.p);
+        }
+        break;
     }
   }
 
@@ -334,6 +358,7 @@ export class Host {
           p: { status: "error", message: why },
         });
       },
+      (m, params) => this.#request(m, params, id),
     );
     this.#conns.set(id, conn);
     const create: WorkerCreate = {
@@ -428,11 +453,11 @@ export class Host {
     );
   }
 
-  #request(m: string, p: unknown): Promise<unknown> {
+  #request(m: string, p: unknown, conn?: string): Promise<unknown> {
     const id = this.#nextId++;
     return new Promise((resolve, reject) => {
       this.#pending.set(id, { resolve, reject });
-      this.#send({ t: "req", id, m, p: p as Request["p"] });
+      this.#send({ t: "req", id, m, conn, p: p as Request["p"] });
     });
   }
 

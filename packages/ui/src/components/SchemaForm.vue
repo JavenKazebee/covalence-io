@@ -3,6 +3,7 @@ import type { Manifest } from "../api";
 import type { Field } from "../forms/schema";
 import type { Source } from "../sources/model";
 import ChoiceSelect from "./ChoiceSelect.vue";
+import DeviceSelect from "./DeviceSelect.vue";
 import SourceInput from "./SourceInput.vue";
 
 /**
@@ -17,6 +18,8 @@ const props = defineProps<{
   /** Fills `x-choices` fields from this connection's live state. */
   alias?: string;
   manifest?: Manifest | null;
+  /** The plugin whose devices `format: "device"` fields offer. */
+  plugin?: string;
   /** Keeps input IDs unique when there are several forms. */
   idPrefix: string;
   /** For expression fields: the steps finished before this one, and all of them. */
@@ -118,6 +121,12 @@ function toggle(field: Field) {
       v-model="values[field.key]!"
       :path="`${alias}.${field.from}`"
       :label-field="labelField(field.from)"
+    />
+    <DeviceSelect
+      v-else-if="field.kind === 'device' && plugin !== undefined"
+      :id="inputId(field)"
+      v-model="values[field.key]!"
+      :plugin="plugin"
     />
     <input
       v-else

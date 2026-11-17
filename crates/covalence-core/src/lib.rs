@@ -10,6 +10,7 @@ pub mod expr;
 pub mod flow;
 pub mod gate;
 pub mod host;
+pub mod io;
 pub mod journal;
 pub mod schema;
 pub mod select;

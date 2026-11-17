@@ -95,6 +95,34 @@ export interface ActionOutcome {
   error?: { code: string; message: string };
 }
 
+/** A device the core found (plugin protocol §7.1), as `GET /devices` lists it. */
+export interface DeviceEntry {
+  id: string;
+  kind: "hid" | "serial" | "midi";
+  vendorId?: number;
+  productId?: number;
+  serial?: string;
+  manufacturer?: string;
+  product?: string;
+  path: string;
+  /** The connection that holds it. */
+  heldBy?: string;
+  handle?: {
+    handle: string;
+    state: "open" | "closed" | "reconnecting" | "error";
+    error?: { code: string; message: string; hint?: string } | null;
+    attached: boolean;
+  };
+  offer?: { kind: "offer"; plugins: string[] } | { kind: "autoCreate"; plugin: string };
+}
+
+export interface DeviceList {
+  /** Whether this server looks for devices at all. */
+  available: boolean;
+  devices: DeviceEntry[];
+  scanError?: { code: string; message: string; hint?: string };
+}
+
 export interface Health {
   host: HostStatus;
   journal: { lastSeq: number; term: number };
@@ -140,6 +168,9 @@ export const api = {
   health: () => call<Health>("GET", "/health"),
   plugins: () => call<Plugin[]>("GET", "/plugins"),
   connections: () => call<Connection[]>("GET", "/connections"),
+  /** Present devices; with `plugin`, only those its `devices` match. */
+  devices: (plugin?: string) =>
+    call<DeviceList>("GET", plugin === undefined ? "/devices" : `/devices?plugin=${encodeURIComponent(plugin)}`),
   createConnection: (req: NewConnection) => call<Connection>("POST", "/connections", req),
   requestAction: (action: string, params: Record<string, unknown>) =>
     call<ActionOutcome>("POST", "/actions", { action, params }),

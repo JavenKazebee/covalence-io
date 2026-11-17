@@ -26,12 +26,18 @@ import {
   type Plugin,
   type StateApi,
 } from "./plugin.ts";
+import { Transports } from "./io.ts";
 import { validate, withDefaults } from "./schema.ts";
 import { PatchCoalescer, StateTree } from "./state.ts";
 
-/** Where the runtime sends host → core notifications (without `conn`). */
+/** Where the runtime sends host → core messages (without `conn`). */
 export interface RuntimeSink {
   notify(method: string, params: unknown): void;
+  /**
+   * Sends a request to the core: `io.open`, `io.feature`, `device.list`.
+   * Without it (in plugin tests), transports fail with `not_connected`.
+   */
+  request?(method: string, params: unknown): Promise<unknown>;
 }
 
 export interface ConnectionInit {
@@ -57,6 +63,7 @@ export class ConnectionRuntime {
   /** The call the pending ops belong to (spec §6 `call`). */
   #pendingCall: string | undefined;
   readonly #abort = new AbortController();
+  readonly #io: Transports;
   readonly #ctx: BaseContext<unknown, Record<string, unknown>>;
   #timer: ReturnType<typeof setTimeout> | undefined;
   #status: ConnStatusKind | undefined;
@@ -75,6 +82,13 @@ export class ConnectionRuntime {
     this.#init = init;
     this.#sink = sink;
     this.#coalesceMs = options.coalesceMs ?? 1;
+    this.#io = new Transports({
+      notify: (m, p) => this.#send(m, p),
+      request: (m, p) =>
+        sink.request ? sink.request(m, p) : Promise.reject(
+          new ActionError("not_connected", `no core to send ${m} to`),
+        ),
+    });
     this.#ctx = this.#makeContext();
   }
 
@@ -169,6 +183,15 @@ export class ConnectionRuntime {
     return result === undefined ? {} : { result };
   }
 
+  /**
+   * Handles a notification from the core (`io.data`, `io.state`). Returns
+   * whether it was one the runtime knows.
+   */
+  receive(method: string, params: unknown): boolean {
+    if (this.#destroyed) return false;
+    return this.#io.receive(method, params);
+  }
+
   /** Sends a fresh `state.snapshot` (spec §3.3 `conn.resync`). */
   resync() {
     this.#sendSnapshot();
@@ -192,6 +215,8 @@ export class ConnectionRuntime {
         this.#log("warn", `disconnect failed: ${errorMessage(err)}`);
       }
     }
+    // Handles close after `disconnect`, which may still want to write.
+    this.#io.closeAll();
     clearTimeout(this.#timer);
     this.#pending.clear();
     this.#pendingCall = undefined;
@@ -219,7 +244,8 @@ export class ConnectionRuntime {
   }
 
   #send(method: string, params: unknown) {
-    if (this.#destroyed && method !== "log") return;
+    // A destroyed connection still says goodbye to its handles.
+    if (this.#destroyed && method !== "log" && method !== "io.close") return;
     this.#sink.notify(method, params);
   }
 
@@ -290,6 +316,11 @@ export class ConnectionRuntime {
       state,
       log,
       signal: this.#abort.signal,
+      hid: this.#io.hid,
+      serial: this.#io.serial,
+      tcp: this.#io.tcp,
+      net: this.#io.net,
+      devices: this.#io.devices,
       emit: (event, payload, options) => {
         if (this.#destroyed) return;
         this.flush(); // keep patches written before the event ahead of it

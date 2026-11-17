@@ -266,7 +266,9 @@ The SDK exposes these as `ctx.tcp`, `ctx.udp`, `ctx.ws`, `ctx.http`, `ctx.serial
 | `io.close` | host → core, ntf | `{handle}` |
 | `http.request` | host → core, req | `{conn, method, url, headers, body?, timeoutMs}` → `{status, headers, body}` |
 
-- **The connection is the envelope's `conn`,** as for every other method from a connection. **Bytes** (`data`, `image`) are MessagePack `bin`, and arrays of byte values in the JSON debug format.
+- **The connection is the envelope's `conn`,** as for every other method from a connection, and a connection can use only its own handles. **Bytes** (`data`, `image`) are MessagePack `bin`, and arrays of byte values in the JSON debug format.
+- **(M7) `tcp`:** `target` is `host:port`. `io.open` answers once the first attempt to connect has succeeded, or fails with `not_connected`; with `reconnect`, it answers either way and the handle goes `reconnecting` (backoff from `initialMs`, 500 ms, doubling to `maxMs`, 10 s). Writes while it's away are dropped. `framing`: `raw` sends what each read gave; `line` one `io.data` per line, its `\n` kept; `length` one per message after a 4-byte big-endian length. Sockets close when the plugin host goes. A handle's `io.state` and `io.data` follow `io.open`'s response.
+- **(M7) The core keeps each handle's recent traffic** (inspector, ADR 0012): what it read and wrote and its state changes, at `GET /connections/{id}/traffic`.
 - **Hardware goes through the core.** Deno has no HID, MIDI or serial of its own, and plugins don't use native add-ons for them. `usb` (interfaces, bulk, interrupt and control transfers) comes later.
 - **One connection holds a device at a time.** A second `io.open` of the same device is refused with `busy`.
 - **(M7) Device handles outlive a plugin host restart.** The core keeps the device open, drops its data while no host is there, and gives the restarted connection the same device on its next `io.open`.
