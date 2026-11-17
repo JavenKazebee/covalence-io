@@ -236,8 +236,13 @@ async fn a_plugin_drives_its_device_and_sockets_through_the_core() {
 
     // Output and feature reports reach the device.
     act(&server, "send", json!({ "hex": "0201ff" })).await;
-    let log = fake.wait_log("/dev/hidraw0", WAIT, |l| !l.writes.is_empty());
-    assert_eq!(log.writes, [vec![0x02, 0x01, 0xff]]);
+    // Draws (`0x07`) go out too: the deck is a surface, blank until a layer
+    // is shown.
+    let output = |l: &covalence_devices::fake::Log| -> Vec<Vec<u8>> {
+        l.writes.iter().filter(|w| w[0] != 0x07).cloned().collect()
+    };
+    let log = fake.wait_log("/dev/hidraw0", WAIT, |l| !output(l).is_empty());
+    assert_eq!(output(&log), [vec![0x02, 0x01, 0xff]]);
     assert_eq!(
         act(&server, "feature", json!({ "reportId": 6, "length": 3 })).await,
         json!("060caa")
@@ -385,6 +390,141 @@ async fn devices_stay_open_while_the_plugin_host_restarts() {
         fake.log("/dev/hidraw0").opens,
         1,
         "the device was never closed"
+    );
+    server.app.clone().shutdown().await;
+}
+
+/// A layer of the test deck's 15 image keys, with a label on `k3`.
+async fn deck_layer(server: &Server) -> String {
+    let controls: Vec<Value> = (0..15)
+        .map(|k| {
+            json!({
+                "id": format!("k{k}"), "at": { "x": k % 5, "y": k / 5 },
+                "inputs": ["momentary"], "outputs": ["image"],
+            })
+        })
+        .collect();
+    let (status, layer) = server
+        .post("/layers", json!({ "name": "Cams", "controls": controls }))
+        .await;
+    assert_eq!(status.as_u16(), 201, "{layer}");
+    let layer = layer["layer"]["id"].as_str().unwrap().to_owned();
+    let (status, binding) = server
+        .post(
+            "/control-bindings",
+            json!({ "layer": layer, "control": "k3", "props": { "label": { "expr": "'Hi'" } } }),
+        )
+        .await;
+    assert_eq!(status.as_u16(), 201, "{binding}");
+    layer
+}
+
+/// The JPEG images written to the fake deck's `key`, as the plugin writes
+/// them: `[0x07, key, first 4 bytes]`.
+fn drawn(fake: &Fake, path: &str, key: u8) -> usize {
+    fake.log(path)
+        .writes
+        .iter()
+        .filter(|w| w.len() == 6 && w[0] == 0x07 && w[1] == key && w[2..4] == [0xff, 0xd8])
+        .count()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plugin_provides_a_surface() {
+    let data = tempfile::tempdir().unwrap();
+    let fake = Fake::new();
+    fake.plug(stream_deck_mk2("/dev/hidraw0", Some("AL12")));
+    let server = start(data.path(), &fake);
+
+    // The plugin attaches its deck: the core makes it a surface entity.
+    let surface = server
+        .eventually(WAIT, "a surface for the deck", || async {
+            server
+                .get("/surfaces")
+                .await
+                .as_array()
+                .unwrap()
+                .first()
+                .cloned()
+        })
+        .await;
+    let conn = connections(&server).await.remove(0);
+    assert_eq!(surface["model"], json!("test.deck15"));
+    assert_eq!(surface["serial"], json!(DECK));
+    assert_eq!(surface["provider"], conn["id"]);
+    let slug = surface["slug"].as_str().unwrap().to_owned();
+    let id = surface["id"].as_str().unwrap().to_owned();
+    let connected = format!("surface.{slug}.connected");
+    server
+        .eventually(WAIT, "the surface to attach", || async {
+            (server.value(&connected).await == Some(json!(true))).then_some(())
+        })
+        .await;
+
+    // Showing a layer draws its keys on the device, as JPEG.
+    let layer = deck_layer(&server).await;
+    let (status, shown) = server
+        .post(
+            &format!("/surfaces/{id}/current"),
+            json!({ "layer": layer }),
+        )
+        .await;
+    assert_eq!(status.as_u16(), 200, "{shown}");
+    server
+        .eventually(WAIT, "k3 drawn on the device", || async {
+            (drawn(&fake, "/dev/hidraw0", 3) > 0).then_some(())
+        })
+        .await;
+
+    // Key reports become control state.
+    let pressed = format!("surface.{slug}.controls.k3.pressed");
+    fake.input("/dev/hidraw0", &[0x01, 3, 1]);
+    server
+        .eventually(WAIT, "k3 pressed", || async {
+            (server.value(&pressed).await == Some(json!(true))).then_some(())
+        })
+        .await;
+    fake.input("/dev/hidraw0", &[0x01, 3, 0]);
+    server
+        .eventually(WAIT, "k3 released", || async {
+            (server.value(&pressed).await == Some(json!(false))).then_some(())
+        })
+        .await;
+
+    // The host goes: the surface detaches, releasing a held key, and
+    // reattaches as the same entity, showing the same layer.
+    fake.input("/dev/hidraw0", &[0x01, 3, 1]);
+    server
+        .eventually(WAIT, "k3 held", || async {
+            (server.value(&pressed).await == Some(json!(true))).then_some(())
+        })
+        .await;
+    let before = drawn(&fake, "/dev/hidraw0", 3);
+    let pid = server.get("/health").await["host"]["pid"].as_u64().unwrap();
+    std::process::Command::new("kill")
+        .args(["-9", &pid.to_string()])
+        .status()
+        .unwrap();
+    server
+        .eventually(WAIT, "the surface to detach", || async {
+            (server.value(&connected).await == Some(json!(false))).then_some(())
+        })
+        .await;
+    assert_eq!(server.value(&pressed).await, Some(json!(false)), "released");
+    server
+        .eventually(WAIT, "the surface to reattach", || async {
+            (server.value(&connected).await == Some(json!(true))).then_some(())
+        })
+        .await;
+    server
+        .eventually(WAIT, "k3 drawn again", || async {
+            (drawn(&fake, "/dev/hidraw0", 3) > before).then_some(())
+        })
+        .await;
+    assert_eq!(server.get("/surfaces").await.as_array().unwrap().len(), 1);
+    assert_eq!(
+        server.value(&format!("surface.{slug}.current.main")).await,
+        Some(json!("cams"))
     );
     server.app.clone().shutdown().await;
 }

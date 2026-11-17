@@ -133,6 +133,19 @@ pub enum HostPhase {
     Stopped,
 }
 
+/// Takes the surfaces connections provide (spec §8): the server finds or
+/// creates their entities and attaches them. Called on the host's session
+/// loop, so it mustn't block.
+pub trait PluginSurfaces: Send + Sync {
+    /// `surface.attach`: `attach.surface` is the connection's own key for it.
+    fn attach(&self, conn: &str, attach: covalence_protocol::surface::SurfaceAttach);
+    fn input(&self, conn: &str, input: covalence_protocol::surface::SurfaceInput);
+    fn detach(&self, conn: &str, surface: &str);
+    /// The connection stopped (destroyed, or its host lost): its surfaces
+    /// detach.
+    fn stopped(&self, conn: &str);
+}
+
 /// A supervised host. Dropping it stops the host process.
 pub struct Host {
     inner: Arc<Inner>,
@@ -152,6 +165,10 @@ struct Inner {
     conn_devices: Mutex<HashMap<ConnId, Vec<DeviceMatch>>>,
     /// Transports the core performs for connections (spec §7).
     io: Arc<IoHub>,
+    /// Where `surface.*` notifications from connections go (spec §8).
+    surfaces: std::sync::RwLock<Option<Arc<dyn PluginSurfaces>>>,
+    /// The current host's outbox, once it has said hello.
+    outbox: Mutex<Option<mpsc::UnboundedSender<Message>>>,
     status: watch::Sender<HostStatus>,
     shutdown: watch::Sender<bool>,
 }
@@ -204,6 +221,8 @@ impl Host {
             calls: Mutex::new(HashMap::new()),
             conn_devices: Mutex::new(HashMap::new()),
             io: IoHub::new(),
+            surfaces: std::sync::RwLock::new(None),
+            outbox: Mutex::new(None),
             status,
             shutdown,
         });
@@ -212,6 +231,40 @@ impl Host {
             inner,
             task: Some(task),
         }
+    }
+
+    /// Hands `surface.attach`, `surface.input` and `surface.detach` from
+    /// connections to `surfaces`.
+    pub fn set_surfaces(&self, surfaces: Arc<dyn PluginSurfaces>) {
+        *self
+            .inner
+            .surfaces
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = Some(surfaces);
+    }
+
+    /// Sends a notification to a connection in the current host. `false` if
+    /// there's no host up.
+    pub fn notify<M: covalence_protocol::methods::NotificationMethod>(
+        &self,
+        conn: &str,
+        params: &M::Params,
+    ) -> bool
+    where
+        M::Params: serde::Serialize,
+    {
+        let Ok(p) = to_value(params) else {
+            return false;
+        };
+        let outbox = self.inner.outbox.lock().unwrap_or_else(|e| e.into_inner());
+        outbox.as_ref().is_some_and(|out| {
+            out.send(Message::Notification(Notification {
+                m: M::NAME.to_owned(),
+                conn: Some(conn.to_owned()),
+                p,
+            }))
+            .is_ok()
+        })
     }
 
     /// The transports, for the device layer and the traffic inspector.
@@ -277,6 +330,7 @@ impl Host {
         self.inner.modes().remove(id);
         self.inner.index_devices(&reg);
         self.inner.io.release(id);
+        self.inner.surfaces_stopped(id);
         let Some(link) = reg.link.clone() else {
             return Ok(());
         };
@@ -362,6 +416,20 @@ impl Drop for Host {
 }
 
 impl Inner {
+    fn plugin_surfaces(&self) -> Option<Arc<dyn PluginSurfaces>> {
+        self.surfaces
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// A connection stopped: the surfaces it provided detach.
+    fn surfaces_stopped(&self, conn: &str) {
+        if let Some(surfaces) = self.plugin_surfaces() {
+            surfaces.stopped(conn);
+        }
+    }
+
     /// Refreshes `conn_devices` from the registry.
     fn index_devices(&self, reg: &Registry) {
         let index = reg
@@ -565,6 +633,8 @@ async fn run_session(
                             link.respond(req.id, to_value(&welcome).map_err(internal));
                             hello_done = true;
                             inner.io.attach(link.out.clone());
+                            *inner.outbox.lock().unwrap_or_else(|e| e.into_inner()) =
+                                Some(link.out.clone());
                             setup = Some(Box::pin(set_up(
                                 inner.clone(),
                                 link.clone(),
@@ -623,6 +693,11 @@ async fn run_session(
     // Dropping the setup future releases the registry if it holds it.
     drop(setup);
     inner.io.host_down();
+    inner
+        .outbox
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take();
     link.close();
     let _ = child.start_kill();
     let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
@@ -793,6 +868,7 @@ async fn on_host_down(inner: &Inner, reason: &str) {
     let conns: Vec<ConnId> = reg.conns.keys().cloned().collect();
     drop(reg);
     for conn in conns {
+        inner.surfaces_stopped(&conn);
         let cause = inner.append(NewEntry::new(
             Origin::system(),
             Record::ConnStatus(ConnStatusRecord {
@@ -963,14 +1039,23 @@ fn route(inner: &Inner, ntf: Notification) {
         }
         N::IoWrite(write) => inner.io.write(&conn, write),
         N::IoClose(close) => inner.io.close(&conn, close),
-        // Surfaces from plugins are M7 Phase 3's.
-        other @ (N::SurfaceAttach(_) | N::SurfaceDetach(_) | N::SurfaceInput(_)) => inner.log(
-            LogLevel::Warn,
-            format!(
-                "dropped `{}` from {conn}: not supported yet",
-                other.method()
+        N::SurfaceAttach(attach) => match inner.plugin_surfaces() {
+            Some(surfaces) => surfaces.attach(&conn, attach),
+            None => inner.log(
+                LogLevel::Warn,
+                format!("dropped surface.attach from {conn}: this core takes no surfaces"),
             ),
-        ),
+        },
+        N::SurfaceDetach(detach) => {
+            if let Some(surfaces) = inner.plugin_surfaces() {
+                surfaces.detach(&conn, &detach.surface);
+            }
+        }
+        N::SurfaceInput(input) => {
+            if let Some(surfaces) = inner.plugin_surfaces() {
+                surfaces.input(&conn, input);
+            }
+        }
     }
 }
 

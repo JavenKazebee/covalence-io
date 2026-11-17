@@ -320,7 +320,7 @@ A surface is a two-way device ([ADR 0024](../adr/0024-surfaces-as-two-way-device
 
 | Method | Direction | Params |
 |---|---|---|
-| `surface.attach` | host → core, ntf | `{surface, model, serial?, name, controls: ControlDef[], outputs?: {brightness?: boolean}}`. **(Now)** No `layout`. **(M7)** From the plugin host, `surface` is the host's own key for the device, and the core matches the attach to a surface entity by `model` and `serial` (surfaces §1) |
+| `surface.attach` | host → core, ntf | `{surface, model, serial?, name, controls: ControlDef[], outputs?: {brightness?: boolean}}`. **(Now)** No `layout`. **(M7)** From the plugin host, `surface` is the host's own key for the device, and the core matches the attach to a surface entity by `model` and `serial` (surfaces §1), or by `model` and the connection when there's no serial, creating one on the first attach with `provider` set to the connection |
 | `surface.detach` | host → core, ntf | `{surface}` |
 | `surface.input` | host → core, ntf | `{surface, control, kind: "down" \| "up" \| "turn" \| "touch" \| "value", value?, ts, echo?}` |
 | `surface.draw` | core → host, ntf | `{surface, control, image: bytes, format: "jpeg" \| "bmp" \| "png" \| "rgb565"}`, for `image` outputs |
@@ -365,7 +365,8 @@ type OutputCap =
 - **A host can't run helpers.** It can `suggest` defaults for a control, such as a jog wheel's acceleration. **(M9)** A plugin can also ship transforms (§4), which the core runs in its own sandbox, never in the host ([ADR 0029](../adr/0029-dataflow-sources-transforms-sinks.md)).
 - **`echo: true`** **(Later)** marks input the device sent because the core moved it, such as a motor fader reaching its requested position (surfaces §4.4). A host that can't tell leaves it out, and the core decides from timing.
 - **Input that doesn't match a control's capabilities** (a `turn` on a control with no `relative` input) is dropped and logged, rate-limited.
-- **The core renders images** at each `image` output's native size and format, and sends only the outputs that changed.
+- **The core renders images** at each `image` output's native size and format, and sends only the outputs that changed. **(M7)** It draws `png` and `jpeg`, turned by `rotation` degrees clockwise; an attach with an image output it can't draw is refused. From the plugin host, `surface.draw`'s `surface` is the connection's own key.
+- **(M7) A connection that stops** (destroyed, or its plugin host lost) detaches its surfaces, which releases their input (surfaces §4.1). The device keeps what it shows until it's attached again.
 
 ---
 

@@ -20,6 +20,7 @@ import {
   type SecretDef,
 } from "@covalence-io/protocol";
 import type { Transports } from "./io.ts";
+import type { Surfaces } from "./surfaces.ts";
 import type { Path, PathLike } from "./paths.ts";
 import type { Schema } from "./schema.ts";
 
@@ -87,6 +88,8 @@ export interface BaseContext<C = unknown, E = Record<string, unknown>> {
   readonly net: Transports["net"];
   /** Devices this plugin's `devices` match. */
   readonly devices: Transports["devices"];
+  /** Surfaces this connection provides: `attach` one per device (spec §8). */
+  readonly surfaces: Surfaces;
 }
 
 /** What live-mode actions get: the base context plus what `connect` returned. */

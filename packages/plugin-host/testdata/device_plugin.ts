@@ -1,8 +1,14 @@
 /**
- * A plugin for device and transport tests. It declares the devices it drives
- * and names its device in its config. Live, it opens that device through
- * `ctx.hid` (or `ctx.serial`) and keeps the last input in state; its actions
- * write to the device, read feature reports, list devices and talk TCP.
+ * A plugin for device, transport and surface tests. It declares the devices
+ * it drives and names its device in its config. Live, it opens that device
+ * through `ctx.hid` (or `ctx.serial`) and keeps the last input in state; its
+ * actions write to the device, read feature reports, list devices and talk
+ * TCP.
+ *
+ * A HID device is also a 15-key surface, `test.deck15` with the device ID as
+ * its serial. Input report `[0x01, key, pressed]` presses and releases key
+ * `k<key>`, and each image the core draws is written to the device as
+ * `[0x07, key, ...the image's first 4 bytes]`.
  */
 
 import {
@@ -10,6 +16,7 @@ import {
   type HidDevice,
   type IoHandle,
   type Plugin,
+  presets,
   s,
   type SerialPort,
 } from "@covalence-io/sdk";
@@ -59,6 +66,28 @@ const plugin: Plugin = definePlugin<
       ctx.state.set("input", hex(data));
       ctx.state.set("inputs", ++inputs);
     });
+    if (device.kind === "hid") {
+      const deck = ctx.surfaces.attach({
+        model: "test.deck15",
+        serial: ctx.config.device,
+        name: "Test deck",
+        controls: presets.keys(5, 3, {
+          w: 72,
+          h: 72,
+          format: "jpeg",
+          rotation: 180,
+        }),
+      });
+      device.onData((data) => {
+        if (data[0] !== 0x01) return;
+        if (data[2]) deck.down(`k${data[1]}`);
+        else deck.up(`k${data[1]}`);
+      });
+      deck.onDraw(({ control, image }) => {
+        const key = Number(control.slice(1));
+        device.write(Uint8Array.of(0x07, key, ...image.subarray(0, 4)));
+      });
+    }
     ctx.state.set("io", device.state);
     device.onState((state, error) =>
       ctx.state.set("io", error ? `${state}:${error}` : state)

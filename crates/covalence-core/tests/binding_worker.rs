@@ -49,6 +49,7 @@ fn world() -> World {
                 model: "virtual.deck15".into(),
                 serial: None,
                 start_layer: Some(CAMS.into()),
+                provider: None,
             })
             .unwrap();
     }
@@ -419,6 +420,7 @@ async fn bench_a_full_page_of_expr_bindings() {
                 model: "virtual".into(),
                 serial: None,
                 start_layer: Some(page.clone()),
+                provider: None,
             })
             .unwrap();
         let keys = cols * rows;

@@ -27,6 +27,7 @@ import {
   type StateApi,
 } from "./plugin.ts";
 import { Transports } from "./io.ts";
+import { Surfaces } from "./surfaces.ts";
 import { validate, withDefaults } from "./schema.ts";
 import { PatchCoalescer, StateTree } from "./state.ts";
 
@@ -64,6 +65,7 @@ export class ConnectionRuntime {
   #pendingCall: string | undefined;
   readonly #abort = new AbortController();
   readonly #io: Transports;
+  readonly #surfaces: Surfaces;
   readonly #ctx: BaseContext<unknown, Record<string, unknown>>;
   #timer: ReturnType<typeof setTimeout> | undefined;
   #status: ConnStatusKind | undefined;
@@ -89,6 +91,7 @@ export class ConnectionRuntime {
           new ActionError("not_connected", `no core to send ${m} to`),
         ),
     });
+    this.#surfaces = new Surfaces({ notify: (m, p) => this.#send(m, p) });
     this.#ctx = this.#makeContext();
   }
 
@@ -189,7 +192,8 @@ export class ConnectionRuntime {
    */
   receive(method: string, params: unknown): boolean {
     if (this.#destroyed) return false;
-    return this.#io.receive(method, params);
+    return this.#io.receive(method, params) ||
+      this.#surfaces.receive(method, params);
   }
 
   /** Sends a fresh `state.snapshot` (spec §3.3 `conn.resync`). */
@@ -215,7 +219,9 @@ export class ConnectionRuntime {
         this.#log("warn", `disconnect failed: ${errorMessage(err)}`);
       }
     }
-    // Handles close after `disconnect`, which may still want to write.
+    // Surfaces detach and handles close after `disconnect`, which may still
+    // want to use them.
+    this.#surfaces.detachAll();
     this.#io.closeAll();
     clearTimeout(this.#timer);
     this.#pending.clear();
@@ -245,7 +251,8 @@ export class ConnectionRuntime {
 
   #send(method: string, params: unknown) {
     // A destroyed connection still says goodbye to its handles.
-    if (this.#destroyed && method !== "log" && method !== "io.close") return;
+    const goodbye = method === "io.close" || method === "surface.detach";
+    if (this.#destroyed && method !== "log" && !goodbye) return;
     this.#sink.notify(method, params);
   }
 
@@ -321,6 +328,7 @@ export class ConnectionRuntime {
       tcp: this.#io.tcp,
       net: this.#io.net,
       devices: this.#io.devices,
+      surfaces: this.#surfaces,
       emit: (event, payload, options) => {
         if (this.#destroyed) return;
         this.flush(); // keep patches written before the event ahead of it

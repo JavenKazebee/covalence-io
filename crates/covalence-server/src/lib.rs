@@ -77,6 +77,7 @@ mod api;
 mod core_actions;
 mod devices;
 mod flows;
+mod plugin_surfaces;
 mod surfaces;
 mod ui;
 mod web_surface;
@@ -323,6 +324,8 @@ impl App {
         }
         let app = Arc::new_cyclic(|app: &Weak<App>| {
             core.set_core_actions(Arc::new(core_actions::AppCore(app.clone())));
+            core.host()
+                .set_surfaces(Arc::new(plugin_surfaces::AppSurfaces::new(app.clone())));
             let runtime = Runtime::start(
                 core.shared().clone(),
                 Arc::new(AppActions(app.clone())),

@@ -1,6 +1,6 @@
 # Milestone 7: Surfaces from plugins
 
-- **Status:** In progress (Phases 0–2 done)
+- **Status:** In progress (Phases 0–3 done)
 
 A real Stream Deck drives Covalence, through a plugin. The core gets a device layer: it enumerates HID and serial devices, watches hotplug, matches them to plugins' manifests and performs their I/O, so a plugin of plain TypeScript can drive hardware with no native add-ons ([ADR 0025](../adr/0025-device-drivers-are-plugins.md)). The plugin host carries the surface protocol ([plugin protocol §8](../specs/plugin-protocol.md)), and `io.covalence.streamdeck` translates between the deck's reports and M5's surface model. Network transports arrive too, and the Videohub plugin moves onto them. MIDI, Orbitals and controls beyond keys stay out.
 
@@ -43,10 +43,10 @@ A real Stream Deck drives Covalence, through a plugin. The core gets a device la
 - [x] A connection's traffic is kept in a ring buffer per handle and served at `GET /connections/{id}/traffic`: the last 500 messages of each handle, up to 512 bytes of each in hex, with state changes, and the last 8 closed handles per connection. It says whether the connection is `inspectable` (not `directNetwork`).
 
 ### Phase 3: Surfaces over the plugin host
-- [ ] The core accepts §8 notifications from the plugin host, with `conn` as the provider, through the transport-independent surface module M5 built. Images go as binary frames.
-- [ ] Surface entities are created on first attach and matched by `model` and `serial` after that; `provider` is set.
-- [ ] A connection that stops (deleted, disabled, host lost) detaches its surfaces, releasing input as on any detach (surfaces §4.1).
-- [ ] SDK: `ctx.surfaces.attach(...)` with the button presets, giving input to send and draws to receive.
+- [x] The core accepts §8 notifications from the plugin host, with `conn` as the provider, through the transport-independent surface module M5 built. Images go as binary frames. The host supervisor hands them to the server (`PluginSurfaces`), which attaches them as the web surface does and sends each draw back as `surface.draw` with the connection's own key for the surface. The protocol's control and input types are converted to the core's at that edge, rather than replacing them: the core's are stricter and the web surface speaks them. The renderer gains `jpeg` (`jpeg-encoder`, quality 90) and `rotation` (0, 90, 180, 270), and an attach whose image outputs it can't draw is refused.
+- [x] Surface entities are created on first attach and matched by `model` and `serial` after that; `provider` is set. A surface without a serial is matched by `model` and provider. When another connection attaches the same device, `provider` follows it.
+- [x] A connection that stops (deleted, disabled, host lost) detaches its surfaces, releasing input as on any detach (surfaces §4.1). Deleted and host lost are covered; there's no disabling yet.
+- [x] SDK: `ctx.surfaces.attach(...)` with the button presets, giving input to send and draws to receive: `down`, `up`, `turn`, `value` and `touch` with the device's `ts`, and `onDraw`. Presets: `button`, `encoder`, `fader`, `touchstrip`, `lcd`, `led`, `keys(cols, rows, image)` and `row`. A destroyed connection detaches its surfaces.
 
 ### Phase 4: The Stream Deck plugin
 - [ ] `plugins/streamdeck`: `devices` for Elgato's vendor ID and the MK.2's product IDs, `autoCreate: true`.

@@ -62,6 +62,7 @@ fn world() -> World {
             model: "virtual.deck15".into(),
             serial: None,
             start_layer: Some(CAMS.into()),
+            provider: None,
         })
         .unwrap();
     for (id, slug, cols, rows) in [
@@ -709,6 +710,7 @@ async fn removing_a_layer_or_renaming_a_surface_updates_state() {
             model: "virtual.deck15".into(),
             serial: None,
             start_layer: None,
+            provider: None,
         })
         .unwrap();
     assert_eq!(state(&w.shared, "connected"), None, "the old slug is gone");

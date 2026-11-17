@@ -17,6 +17,8 @@ export interface Surface {
   model: string;
   serial?: string;
   startLayer?: string;
+  /** The connection whose device this is, for a surface a plugin provides. */
+  provider?: string;
 }
 
 /** Where a control is, in grid cells. `w` and `h` default to 1. */

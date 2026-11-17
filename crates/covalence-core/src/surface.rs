@@ -85,6 +85,10 @@ pub struct Surface {
     /// Shown when the surface first attaches.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_layer: Option<LayerId>,
+    /// The connection whose device this is, for a surface a plugin provides
+    /// (plugin protocol §8).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
 }
 
 /// A set of control bindings on the controls it covers (surfaces spec §1).
@@ -784,13 +788,16 @@ fn check_attach(attach: &Attach) -> Result<(), AttachError> {
                     output.kind().as_str()
                 ));
             }
-            if let OutputCap::Image(image) = output
-                && !((1..=MAX_IMAGE).contains(&image.w) && (1..=MAX_IMAGE).contains(&image.h))
-            {
-                return invalid(format!(
-                    "control {id:?} has a {}×{} image: use 1 to {MAX_IMAGE} pixels a side",
-                    image.w, image.h
-                ));
+            if let OutputCap::Image(image) = output {
+                if !((1..=MAX_IMAGE).contains(&image.w) && (1..=MAX_IMAGE).contains(&image.h)) {
+                    return invalid(format!(
+                        "control {id:?} has a {}×{} image: use 1 to {MAX_IMAGE} pixels a side",
+                        image.w, image.h
+                    ));
+                }
+                if let Err(e) = render::check_output(&image.format, image.rotation) {
+                    return invalid(format!("control {id:?}: {e}"));
+                }
             }
         }
         if let Some(other) = attach.controls[..i]

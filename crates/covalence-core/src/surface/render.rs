@@ -74,8 +74,8 @@ impl Default for Look {
 pub enum RenderError {
     #[error("{0:?} images aren't supported yet")]
     Format(String),
-    #[error("rotated images aren't supported yet")]
-    Rotation,
+    #[error("images rotate by 0, 90, 180 or 270 degrees, not {0}")]
+    Rotation(u16),
     #[error("a {0}×{1} image is empty or too large")]
     Size(u32, u32),
     #[error("cannot encode the image: {0}")]
@@ -100,7 +100,10 @@ impl Default for Renderer {
 }
 
 impl Renderer {
-    /// `look` as an image of `width` × `height` in `format`. Only `png` so far.
+    /// `look` as an image of `width` × `height` in `format`, `png` or
+    /// `jpeg`, turned `rotation` degrees clockwise for a device mounted that
+    /// way (gen-2 Stream Decks: 180). At 90 and 270, the look is drawn
+    /// `height` wide before it turns.
     pub fn render(
         &mut self,
         look: &Look,
@@ -109,16 +112,16 @@ impl Renderer {
         format: &str,
         rotation: u16,
     ) -> Result<Vec<u8>, RenderError> {
-        if format != "png" {
-            return Err(RenderError::Format(format.to_owned()));
-        }
-        if rotation != 0 {
-            return Err(RenderError::Rotation);
-        }
+        check_output(format, rotation)?;
         if width > 1024 || height > 1024 {
             return Err(RenderError::Size(width, height));
         }
-        let mut pixmap = Pixmap::new(width, height).ok_or(RenderError::Size(width, height))?;
+        let (draw_w, draw_h) = if rotation % 180 == 90 {
+            (height, width)
+        } else {
+            (width, height)
+        };
+        let mut pixmap = Pixmap::new(draw_w, draw_h).ok_or(RenderError::Size(width, height))?;
         let Rgb(r, g, b) = look.background;
         pixmap.fill(tiny_skia::Color::from_rgba8(r, g, b, 255));
         self.label(&mut pixmap, look);
@@ -126,7 +129,13 @@ impl Renderer {
             dim(&mut pixmap);
             marker(&mut pixmap);
         }
-        encode_png(&pixmap).map_err(|e| RenderError::Encode(e.to_string()))
+        let rgb = rotate(&rgb_of(&pixmap), draw_w, draw_h, rotation);
+        match format {
+            "png" => {
+                encode_png(&rgb, width, height).map_err(|e| RenderError::Encode(e.to_string()))
+            }
+            _ => encode_jpeg(&rgb, width, height).map_err(|e| RenderError::Encode(e.to_string())),
+        }
     }
 
     /// Draws the label centred, at the largest size that fits in
@@ -197,23 +206,77 @@ impl Renderer {
     }
 }
 
-/// Encodes an opaque pixmap as RGB PNG, compressed for speed: an image goes
-/// out once, over a LAN, and the default level is most of a key's drawing
-/// time (ADR 0023).
-fn encode_png(pixmap: &Pixmap) -> Result<Vec<u8>, png::EncodingError> {
-    let rgb: Vec<u8> = pixmap
+/// Whether the renderer can make images in `format`, turned `rotation`.
+pub fn check_output(format: &str, rotation: u16) -> Result<(), RenderError> {
+    if !matches!(format, "png" | "jpeg") {
+        return Err(RenderError::Format(format.to_owned()));
+    }
+    if !matches!(rotation, 0 | 90 | 180 | 270) {
+        return Err(RenderError::Rotation(rotation));
+    }
+    Ok(())
+}
+
+/// An opaque pixmap's pixels as RGB.
+fn rgb_of(pixmap: &Pixmap) -> Vec<u8> {
+    pixmap
         .pixels()
         .iter()
         .flat_map(|p| [p.red(), p.green(), p.blue()])
-        .collect();
+        .collect()
+}
+
+/// Turns a `w` × `h` RGB image `rotation` degrees clockwise.
+fn rotate(rgb: &[u8], w: u32, h: u32, rotation: u16) -> Vec<u8> {
+    if rotation == 0 {
+        return rgb.to_vec();
+    }
+    let (w, h) = (w as usize, h as usize);
+    let mut out = vec![0u8; rgb.len()];
+    for y in 0..h {
+        for x in 0..w {
+            // Where (x, y) lands, in an image `out_w` wide.
+            let (nx, ny, out_w) = match rotation {
+                90 => (h - 1 - y, x, h),
+                180 => (w - 1 - x, h - 1 - y, w),
+                _ => (y, w - 1 - x, h),
+            };
+            let from = (y * w + x) * 3;
+            let to = (ny * out_w + nx) * 3;
+            out[to..to + 3].copy_from_slice(&rgb[from..from + 3]);
+        }
+    }
+    out
+}
+
+/// Encodes RGB as baseline JPEG, which Stream Decks take. Quality 90 keeps
+/// small text crisp at 72 pixels.
+fn encode_jpeg(
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+) -> Result<Vec<u8>, jpeg_encoder::EncodingError> {
     let mut out = Vec::new();
-    let mut encoder = png::Encoder::new(&mut out, pixmap.width(), pixmap.height());
+    jpeg_encoder::Encoder::new(&mut out, 90).encode(
+        rgb,
+        width as u16,
+        height as u16,
+        jpeg_encoder::ColorType::Rgb,
+    )?;
+    Ok(out)
+}
+
+/// Encodes RGB as PNG, compressed for speed: an image goes out once, over
+/// a LAN, and the default level is most of a key's drawing time (ADR 0023).
+fn encode_png(rgb: &[u8], width: u32, height: u32) -> Result<Vec<u8>, png::EncodingError> {
+    let mut out = Vec::new();
+    let mut encoder = png::Encoder::new(&mut out, width, height);
     encoder.set_color(png::ColorType::Rgb);
     encoder.set_depth(png::BitDepth::Eight);
     encoder.set_compression(png::Compression::Fast);
     encoder.set_filter(png::Filter::Sub);
     let mut writer = encoder.write_header()?;
-    writer.write_image_data(&rgb)?;
+    writer.write_image_data(rgb)?;
     writer.finish()?;
     Ok(out)
 }
@@ -287,16 +350,42 @@ mod tests {
     }
 
     #[test]
+    fn rotates_clockwise() {
+        // 2 × 1: red, green.
+        let rgb = [255, 0, 0, 0, 255, 0];
+        assert_eq!(rotate(&rgb, 2, 1, 180), [0, 255, 0, 255, 0, 0]);
+        // Turned 90: 1 wide, red on top.
+        assert_eq!(rotate(&rgb, 2, 1, 90), [255, 0, 0, 0, 255, 0]);
+        // Turned 270: green on top.
+        assert_eq!(rotate(&rgb, 2, 1, 270), [0, 255, 0, 255, 0, 0]);
+        // 2 × 2 at 90: [a b / c d] becomes [c a / d b].
+        let sq = [1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4];
+        assert_eq!(rotate(&sq, 2, 2, 90), [3, 3, 3, 1, 1, 1, 4, 4, 4, 2, 2, 2]);
+    }
+
+    #[test]
+    fn draws_jpeg() {
+        let mut r = Renderer::default();
+        let look = Look {
+            label: "Cam 1".into(),
+            ..Look::default()
+        };
+        let jpeg = r.render(&look, 72, 72, "jpeg", 180).unwrap();
+        assert_eq!(&jpeg[..2], [0xff, 0xd8], "a JPEG's SOI marker");
+        assert_eq!(&jpeg[jpeg.len() - 2..], [0xff, 0xd9]);
+    }
+
+    #[test]
     fn rejects_what_it_cannot_draw() {
         let mut r = Renderer::default();
         let look = Look::default();
         assert_eq!(
-            r.render(&look, 72, 72, "jpeg", 0),
-            Err(RenderError::Format("jpeg".into()))
+            r.render(&look, 72, 72, "bmp", 0),
+            Err(RenderError::Format("bmp".into()))
         );
         assert_eq!(
-            r.render(&look, 72, 72, "png", 90),
-            Err(RenderError::Rotation)
+            r.render(&look, 72, 72, "png", 45),
+            Err(RenderError::Rotation(45))
         );
         assert_eq!(
             r.render(&look, 0, 72, "png", 0),

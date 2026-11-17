@@ -40,6 +40,13 @@ export {
   toBytes,
 } from "./io.ts";
 export {
+  type Draw,
+  type ImageSpec,
+  presets,
+  SurfaceHandle,
+  type SurfaceSpec,
+} from "./surfaces.ts";
+export {
   formatPath,
   parsePath,
   type Path,
