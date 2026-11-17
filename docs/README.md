@@ -10,8 +10,8 @@
 - [M4: Expressions](milestones/m4-expressions.md) (done)
 - [M5: Surfaces and bindings](milestones/m5-surfaces-and-bindings.md) (done)
 - [M6: Primitives](milestones/m6-primitives.md) (done; redraw budget to re-measure): sources, selectors, events by path, the core connection
-- [M7: Surfaces from plugins](milestones/m7-surfaces-from-plugins.md) (in progress: Phases 0–4 done)
-- [M8: Dataflow](milestones/m8-dataflow.md) (planned): reducers, cells, variables, sinks, helpers, layer resolution
+- [M7: Surfaces from plugins](milestones/m7-surfaces-from-plugins.md) (done, except checks on hardware: Phase 7 waits on a real MK.2 and the M3): devices, transports, surfaces over the plugin host, the Stream Deck plugin
+- [M8: Dataflow](milestones/m8-dataflow.md) (in progress: Phase 0 done): reducers, cells, variables, sinks, helpers, layer resolution
 - [M9: Composition](milestones/m9-composition.md) (planned): one template primitive, composites, components, nesting, `forEach`, plugin transforms
 
 ## Specs (drafts)
@@ -56,12 +56,12 @@
 | [0026](adr/0026-sources-and-selectors.md) | One way to give a value, one way to pick things: sources and selectors | Accepted |
 | [0027](adr/0027-events-addressed-by-path.md) | Events are addressed by state path; control triggers become event triggers | Accepted |
 | [0028](adr/0028-the-core-is-a-connection.md) | The core is a connection; surfaces and flows are its targets | Accepted |
-| [0029](adr/0029-dataflow-sources-transforms-sinks.md) | Dataflow is sources, transforms and sinks; helpers are transforms; transforms are sandboxed definitions | Proposed |
+| [0029](adr/0029-dataflow-sources-transforms-sinks.md) | Dataflow is sources, transforms and sinks; helpers are transforms; transforms are sandboxed definitions | Accepted |
 | [0030](adr/0030-composite-connections.md) | Composite connections: users build devices out of other devices | Proposed (amended by 0032; revised: `delegate`) |
 | [0031](adr/0031-templates-instances-and-components.md) | Reuse is by parameters: templates, instances, components, and explicit scope | Proposed (amended by 0032) |
 | [0032](adr/0032-one-template-primitive.md) | One reuse primitive: templates and instances, for layers, composites, components and flows | Proposed |
 | [0033](adr/0033-execution-model.md) | Execution model: one turn thread writes state; flows, scripts and drawing run beside it | Accepted |
-| [0034](adr/0034-live-edits.md) | Editing a running show: changesets, pinned runs and kept state | Proposed |
+| [0034](adr/0034-live-edits.md) | Editing a running show: changesets, pinned runs and kept state | Proposed (revised: kept state settled for M8; the rest waits for M9's Phase 0) |
 
 Each record covers its context, the decision, its consequences and the alternatives considered. Don't edit an accepted record to change its decision; write a new one that supersedes it.
 

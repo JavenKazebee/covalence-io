@@ -1,6 +1,6 @@
 # Milestone 8: Dataflow
 
-- **Status:** Planned, after [M7](m7-surfaces-from-plugins.md)
+- **Status:** In progress (Phase 0 done)
 
 Covalence gets its continuous half. Values can be computed, accumulated and sent somewhere without a flow ([ADR 0029](../adr/0029-dataflow-sources-transforms-sinks.md)):
 - **Reducers** (`toggle`, `position`, `select` …) are sandboxed transform definitions.
@@ -30,10 +30,11 @@ Helpers on controls are reducers whose input defaults to their control. Layers b
 ### Phase 0: Decisions and docs
 - [x] [ADR 0029](../adr/0029-dataflow-sources-transforms-sinks.md); [dataflow spec](../specs/dataflow.md) §4.2–§7; surfaces §4.3 and §5, bindings §5 marked **(M8)**.
 - [x] **The graph's home.** The turn thread ([ADR 0033](../adr/0033-execution-model.md)): the binding worker becomes part of it, with its own QuickJS runtime.
-- [ ] **Reducer state on failover:** confirm that replicated cell patches are enough to resume, with no separate checkpoint. ADR 0033 makes it a rule: reducers keep no state outside their cell.
-- [ ] **Kept state through edits** ([ADR 0034](../adr/0034-live-edits.md)): a cell keeps its value when its reducer is unchanged and its value still fits, and otherwise resets with `cause` → the edit.
-- [ ] **Journal tiers** (state spec §2.4): derived entries in memory only, inputs batched to disk.
-- [ ] **Entity plumbing.** A generic `EntityKind` in `covalence-server` (validate, dependencies, cascade on delete, routes) before `variable` joins and M9 adds three more types, so each type isn't another `save_x`/`put_x` pair.
+- [x] **Reducer state on failover:** replicated cell patches are enough, with no separate checkpoint, because a reducer's state travels with its value. A cell's patch op carries `reducer: {state, wakeAt?}` when the state differs from the value (`select` over `items`, `velocity`, `absolute` with `pickup`). The standby applies the patches and never steps a reducer. On promotion, reducers resume from that metadata and stateless cells are evaluated once, with no sink firing. A standby further behind than the memory window resyncs from a state snapshot. Persisted variables keep the same metadata in `state_cache`. [Dataflow §5.2](../specs/dataflow.md), [state and event log §1.3, §4](../specs/state-and-event-log.md).
+- [x] **Kept state through edits** ([ADR 0034](../adr/0034-live-edits.md), revised): a cell is its entity (a variable's ID, or a binding's ID and the helper's key), and it keeps its value and state when its transform is the same `use` at the same `version` and its value still validates. Changed options apply from the next step, and the conformance suite changes options between steps. Otherwise it resets, with `cause` → a new `project.applied` journal entry, since a journal `cause` can't name a project op. Edits never fire sinks. [Dataflow §5.4](../specs/dataflow.md).
+- [x] **Journal tiers** ([state and event log §2.4](../specs/state-and-event-log.md), no longer proposed): inputs reach the disk, and derived entries (cells, helpers, layer resolution, `trigger.matched`) stay in the memory ring. One `seq` for both, so the disk has gaps. An entry whose `cause` is derived also records `inputCause`, so `why` on disk steps over derived entries. Inputs are written in one transaction per turn, or with `journal.flushInterval` (`100ms` on a Pi), at most one per interval.
+- [x] **Entity plumbing.** `covalence_server::entity`: an `EntityKind` per type (parse, check, apply, unapply, references) and one `App::save`, `App::put`, `App::delete` and set of five routes for all of them. A reference says what happens when its target goes, `Cascade` (a binding with its layer) or `Clear` (a surface's start layer), and a delete applies that across every type in `KINDS`. Surfaces, layers, control bindings and flows are on it. Connections aren't yet: they're created through the plugin host and have no `PUT` or `DELETE`. `variable` joins in Phase 3.
+- [x] [ADR 0029](../adr/0029-dataflow-sources-transforms-sinks.md) accepted. ADR 0034 stays Proposed until M9's Phase 0, which settles changesets and pinned runs.
 
 ### Phase 1: Transform definitions and reducers (Rust + JS)
 - [ ] `defineTransform` and its sandbox context: pure, time passed in, `wakeAt`, the bindings' limits ([dataflow §4.4](../specs/dataflow.md)).

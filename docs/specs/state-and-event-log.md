@@ -1,6 +1,6 @@
 # Spec: State model and event log
 
-- **Status:** Draft v0.2
+- **Status:** Draft v0.3 (M8 Phase 0: journal tiers, `project.applied`, `inputCause`, reducer metadata)
 - **Related:** [ADR 0007](../adr/0007-event-sourced-core.md), [ADR 0008](../adr/0008-redundancy-and-failover.md), [ADR 0009](../adr/0009-multi-user-editing.md), [ADR 0027](../adr/0027-events-addressed-by-path.md), [ADR 0029](../adr/0029-dataflow-sources-transforms-sinks.md), [plugin protocol](plugin-protocol.md), [dataflow](dataflow.md)
 - **Markers:** **(M6)**, **(M8)** and **(M9)** name the milestone that implements a rule, as in the [dataflow spec](dataflow.md).
 
@@ -65,6 +65,7 @@ Each leaf value carries:
 | `seq` | Journal sequence number of the patch that set it |
 | `quality` | `good` · `stale` (source disconnected; the last value is kept) · `unknown` (never received) |
 | `source` | Connection ID, `core` or `user` |
+| `reducer` | **(M8)** A reducer cell's `{state?, wakeAt?}` ([dataflow §5.2](dataflow.md)), so it can resume after a failover or a restart. Not visible to expressions |
 
 When a connection drops, its subtree is marked **`stale` rather than deleted**. The UI greys it out, and expressions can test it with `stale(pp.timers.countdown.remaining)`. Reading a path that doesn't exist returns `undefined`.
 
@@ -143,6 +144,7 @@ interface Entry {
   mono: bigint;         // monotonic ns since node start (for ordering durations)
   origin: Origin;       // who produced it
   cause?: bigint;       // seq of the entry that directly caused this one (same log)
+  inputCause?: bigint;  // (M8) when `cause` is a derived entry: the nearest input entry among its causes (§2.4)
   run?: string;         // flow run ID this entry belongs to
   instance?: InstanceChain;   // (M9) the instances it was made inside, outermost first (composition §5)
   kind: string;         // see the tables below
@@ -180,6 +182,7 @@ Ordering is defined **only** by `seq` within a log. `ts` is for display.
 | `action.result` | `{call, ok, result?, error?, durationMs}` | |
 | `nondet` | `{run, kind: now\|random, value}` | Recorded so replay is exact |
 | `instance.added`, `instance.removed` | `{instance: InstanceChain}` | **(M9)** A per-item instance created or ended with its list ([composition §4](composition.md)). `cause` → the patch or domain change that changed the list |
+| `project.applied` | `{op, entity: {type, id}, rev}` | **(M8)** A project op (§2.3) took effect in the running core, in this turn. `op` is its `seq` in the project op log, which a journal `cause` can't name directly. A publish or undo that touches several entities is one entry, with `op` the `publish` op. What the edit changed in state (a cell reset, a stateless cell's new value, a layer re-resolved) has `cause` → this entry ([dataflow §5.4](dataflow.md)) |
 | `conn.status` | `{conn, status, message?}` | |
 | `node.role` | `{node, role: active\|standby, term}` | |
 | `log` | `{level, message, fields}` | Plugin and script logs |
@@ -219,16 +222,17 @@ interface ProjectOp extends Entry {
 
 **Compaction:** periodically fold the ops into an entity snapshot. Keep ops after the newest restore point, plus a configurable history window.
 
-### 2.4 What's kept, and for how long (proposed)
+### 2.4 What's kept, and for how long
 
-The journal holds two kinds of entry, and only one of them has to reach the disk.
+**(M8)** The journal holds two tiers of entry, and only one of them has to reach the disk.
 
-- **Inputs** can't be recomputed: patches from connections, control input, action requests and results, run lifecycle and steps, `nondet`, `event`s from plugins, connection status, node roles. They're written to the `journal` table and kept for the ring buffer's retention.
-- **Derived entries** can be recomputed from the inputs and the project: patches from cells, helpers and layer resolution (origin `{core: "dataflow"}` or a surface's resolution), `trigger.matched`, `instance.added` and `instance.removed`, events derived from input state. They're kept in the in-memory ring only, for its window (default 1 h, or 256 MB).
-- **`why` is complete inside the memory window.** Past it, a chain steps over derived entries from one input to the next: "the action came from this run, which this key press started". **(Later)** A replay of the journal from the nearest snapshot rebuilds the derived entries for an older window on request.
-- **High-rate inputs are sampled** by their schema's `journal: {sampled}` flag ([dataflow §5.1](dataflow.md)), so a meter or timecode writes a few entries per second, not hundreds.
-- **Replication is unaffected.** The standby is sent the live stream, both kinds of entry, not the disk ([0033](../adr/0033-execution-model.md)).
-- **On a Raspberry Pi** the defaults suit an SD card: derived entries never touch it, and inputs are batched into one write per turn, or every 100 ms at most.
+- **Inputs** can't be recomputed: patches from connections and from `set` steps, control input, action requests and results, run lifecycle and steps, `nondet`, `event`s from plugins, `project.applied`, connection status, node roles. They're written to the `journal` table and kept for the ring buffer's retention.
+- **Derived entries** can be recomputed from the inputs and the project, given time: patches from cells, helpers and layer resolution (origin `{core: "dataflow"}` or a surface's resolution), with their `reducer` state, `trigger.matched`, `instance.added` and `instance.removed`, and events derived from input state. They're kept in the in-memory ring only, for its window (default 1 h, or 256 MB, whichever comes first).
+- **One `seq` for both.** The live stream (subscribers, the UI and the standby) has no gaps. The `journal` table has gaps where derived entries were, and `GET /journal` past the memory window says so with `{derivedDropped: true}`.
+- **`inputCause` keeps `why` working on disk.** An entry whose `cause` is a derived entry also records the nearest input among its causes. A sink's `action.requested` has `cause` → the cell's patch (derived) and `inputCause` → the control's input patch, and a `run.started` has `cause` → `trigger.matched` and `inputCause` → the event or patch it matched. Inside the memory window `why` follows `cause`, through every link. Past it, a chain follows `inputCause` over the derived entries: "the action came from this run, which this key press started". **(Later)** Replaying the journal from the nearest snapshot rebuilds the derived entries for an older window on request.
+- **High-rate values are sampled** by their schema's `journal: {sampled}` flag ([dataflow §5.1](dataflow.md)), so a meter or timecode writes a few entries per second, not hundreds. Sampling applies to both tiers.
+- **Inputs are written in batches:** one SQLite transaction per turn, or with `journal.flushInterval` set, at most one per interval. The default is per turn on a desktop and `100ms` on a Raspberry Pi, where derived entries never touch the SD card. A crash loses at most one interval of inputs from disk. A standby has them already, and `state_cache` is written in the same transaction.
+- **Replication is unaffected.** The standby is sent the live stream, both tiers, not the disk ([0033](../adr/0033-execution-model.md)). One that's further behind than the memory window resyncs from a state snapshot ([dataflow §5.2](dataflow.md)).
 
 ---
 
@@ -255,6 +259,7 @@ Surface output (key images, LEDs) is gated by role only. A standby node doesn't 
   3. Re-arm triggers and schedules.
   4. Request fresh snapshots from all connections.
   5. **(Now)** Reset every surface's control input state to released. Surfaces reattach to the new active node, and nothing a standby replicated counts as held.
+  6. **(M8)** Resume reducers from their cells' `reducer` metadata and evaluate stateless cells once, with no sink firing ([dataflow §5.2](dataflow.md)).
 - **Fencing:** hosts and Orbitals reject `action.invoke` messages carrying a term lower than the highest term they've seen.
 
 ---
@@ -267,7 +272,7 @@ Surface output (key images, LEDs) is gated by role only. A standby node doesn't 
 | `project_ops` | The project op log |
 | `snapshots` | Restore points: a compacted copy of `entities` plus metadata |
 | `journal` | The runtime journal (time- and size-limited) |
-| `state_cache` | The last known state tree, so the UI shows `stale` values right after a restart |
+| `state_cache` | The last known state tree, so the UI shows `stale` values right after a restart. **(M8)** Persisted variables' values and `reducer` metadata are restored from it ([dataflow §6](dataflow.md)) |
 | `assets` | Content-addressed blobs (icons, images) |
 | `meta` | `schemaVersion`, node ID, current term |
 
@@ -278,7 +283,7 @@ Secrets aren't stored here ([ADR 0006](../adr/0006-project-storage-and-versionin
 ## 6. Open questions
 
 1. Should integers be a distinct type in expressions, or should we always use f64 in JS and keep `int` only as a schema hint? (Leaning towards the hint.)
-2. ~~Journal retention defaults on a Raspberry Pi with an SD card. How much should we write, and how do we limit wear?~~ Proposed in §2.4: only inputs reach the disk, batched, with high-rate values sampled; derived entries stay in memory.
+2. ~~Journal retention defaults on a Raspberry Pi with an SD card. How much should we write, and how do we limit wear?~~ Decided in §2.4 (M8 Phase 0): only inputs reach the disk, batched, with high-rate values sampled; derived entries stay in memory.
 3. Should `run.checkpoint` be automatic at every step, or opt-in per flow? Automatic is simpler; opt-in costs less.
 4. Should state patches from a connection be journaled in full, or sampled for very high-rate values (meters, timecode)? Proposal: the schema flag `journal: sampled(100ms)`. **(M8)** Decided for cells and helpers by [ADR 0029](../adr/0029-dataflow-sources-transforms-sinks.md): `journal: {sampled: "100ms"}` applies every value to state, journals the latest per interval, and a final entry when it settles ([dataflow §5.1](dataflow.md)). Connections' schemas get the same flag when a plugin needs it.
 5. How should drafts interact with multi-user editing? Is one draft shared per layer, or does each user have their own?

@@ -1,6 +1,7 @@
 # 0034 – Editing a running show: changesets, pinned runs and kept state
 
 - **Status:** Proposed
+- **Revised in place while Proposed:** kept state settled for M8 (Phase 0): identity, the transform's version, `project.applied`, and edits that don't fire sinks. Changesets and pinned runs are accepted with M9's Phase 0
 - **Date:** 2026-11-16
 - **Amends:** [0009](0009-multi-user-editing.md) (draft and publish becomes a changeset across entities)
 - **Specs:** [flows §8.5](../specs/flows.md), [composition §1](../specs/composition.md), [state and event log §2.3](../specs/state-and-event-log.md)
@@ -32,14 +33,18 @@
 
 ### State is kept when it still fits
 - **A cell keeps its value through an edit** when it's still the same kind of thing: the same reducer (`toggle` is still `toggle`) and a value that still matches its schema. Changed options take effect from the next step: a `position` whose `max` drops is clamped on its next input.
-- **Otherwise it resets** to `init`, journaled as a `state.patch` with `cause` → the project operation, so `why` says "reset by Ana's edit".
+- **"The same reducer" means the same transform at the same `version`** (`toggle@1`). A new version is a different reducer.
+- **Otherwise it resets** to `init`, journaled as a `state.patch` with `cause` → the edit. A journal `cause` can't name an entry in the project op log, so applying an op journals a `project.applied` entry that names it ([state and event log §2.2](../specs/state-and-event-log.md)), and the reset's `cause` is that entry. `why` says "reset by Ana's edit".
+- **An edit never sends an action.** Sinks don't fire for a change caused by an edit, a reset included ([dataflow §5.4](../specs/dataflow.md)). The device keeps what it had, and the editor warns before saving an edit that will reset a cell with sinks.
+- **A persisted variable restored after a restart** follows the same rule against the definition that loads.
 - **`forEach` instances are matched by key.** If the `key` expression changes, instances whose new key matches an old one keep their state. The rest are added and removed as for a list change, with `cause` → the operation.
-- **Identity is the entity, not its position.** Moving a binding to another control, or renaming a slug, keeps the cell. Deleting and recreating it doesn't.
+- **Identity is the entity, not its position.** A variable's cell is its ID, and a helper's is its binding's ID and its key. Moving a binding to another control, or renaming a slug, keeps the cell. Deleting and recreating it, or renaming the helper's key, doesn't.
 
 ## Consequences
 - Fixing a template and its instances is one safe step, not a sequence of broken ones.
 - A sequence that's running when someone saves a fix finishes as it began, and the next press runs the fix. Nothing changes partway through a cue.
 - A latched key stays latched through a relabel, and a counter keeps counting through a colour change.
+- A reset can leave a device out of step with its cell until the next change, since the reset isn't sent. That's the price of edits never acting on the show by themselves.
 - Runs hold an old revision until they end, so a flow's old revisions are kept while any run uses them.
 - The undo stack holds changesets as single entries.
 

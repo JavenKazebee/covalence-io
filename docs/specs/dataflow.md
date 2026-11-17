@@ -258,8 +258,16 @@ A **cell** is a source with a home in the state tree. It's how a computed or acc
 - **High-rate cells** may set `journal: {sampled: "100ms"}`: every value is applied to state, but the journal keeps the latest per interval, with a final entry when it settles. This answers state spec open question 4 for cells and fader input.
 
 ### 5.2 Persistence
+- **A reducer's state travels with its value.** `step` returns a `state` and a `value`, and they aren't always the same: `select` over `items` keeps an index and gives the item, `velocity` keeps recent samples and gives a rate, `absolute` with `pickup` keeps whether it has picked up. A cell's `state.patch` op carries both: `{path, value, reducer: {state, wakeAt?}}`. `reducer.state` is left out when it equals `value`, which covers `toggle`, `counter` and `latch`. `wakeAt` is the pending wake (§4.4), in scheduler time. The tree keeps `reducer` as metadata on the cell's leaf (state spec §1.3). Expressions don't see it, and `GET /state` shows it only with `?reducers=true`.
 - **Stateless cells** are recomputed from current state after a restart or a failover.
-- **Reducers** restart from `init` unless their home is a variable with `persist: true` (§6), in which case the last value is restored and becomes the state. On failover, the standby has replicated the patches, so a reducer resumes from its last journaled value.
+- **Reducers restart from `init`,** unless their home is a variable with `persist: true` (§6). A persisted variable keeps its value and its `reducer` metadata in `state_cache`, and both are restored before any trigger is armed. The kept-state rule (§5.4) decides whether they still fit the definition that loads.
+- **On failover, the replicated patches are enough to resume; there is no separate checkpoint** ([ADR 0033](../adr/0033-execution-model.md)). The standby applies cell patches as it applies any other, and never steps a reducer. On promotion (state spec §4):
+  - each reducer resumes from its leaf's `reducer.state`, or its value when there's none, and its `wakeAt` is re-armed. Both nodes share the time source ([ADR 0008](../adr/0008-redundancy-and-failover.md)), so a wake that's already past fires in the first turn.
+  - stateless cells are evaluated once against the replicated state. A difference is journaled like any change, with `cause` → the `node.role` entry.
+  - `follow` and `holdoff` start clear. Control input starts released (state spec §4), so nothing is `touched`, and a hold-off that was running is treated as over.
+  - **sinks don't fire on promotion,** as they don't at load (§7). The new leader's first action from a sink is for the first change after it took over.
+- **A sampled cell** (§5.1) resumes from its last journaled sample, at most one interval old, with the state from the same entry. A cell that `follow`s its device is back in step at the device's next change.
+- **A standby that falls further behind than the in-memory window** (state spec §2.4) can't catch up from disk, which has no derived entries. It takes a fresh state snapshot from the leader, cells and `reducer` metadata included, and then follows the live stream.
 
 ### 5.3 The graph and the scheduler turn
 - **Every reactive source is a node** in one graph: cells, display bindings, layer fields, state triggers, `waitUntil` steps and sinks. Edges are read sets, replaced after each evaluation.
@@ -269,6 +277,18 @@ A **cell** is a source with a home in the state tree. It's how a computed or acc
   3. Then, against the settled state: layer resolution (surfaces §5.2), display bindings, state triggers and `waitUntil`, and sinks (§7).
 - **Cycles.** A cell that would be evaluated a second time in one turn is on a cycle. Every cell on it keeps its previous value and reports `cycle`, until a later turn breaks the cycle. Saving a definition whose static reads already form a cycle is an error (`cycle`).
 - **The budgets stand:** a state change to a redrawn key in under 16 ms, including any cells in between.
+
+### 5.4 Kept state through edits
+How [ADR 0034](../adr/0034-live-edits.md)'s rule applies to cells. It's the same rule when a persisted variable is restored after a restart.
+
+- **A cell is identified by its entity, never by its path:** a variable by its ID, and a helper by its control binding's ID and its key in `helpers`. Renaming a variable's slug, or moving a binding to another control or layer, keeps the cell. Renaming a helper's key, or deleting and recreating its binding, makes a new one.
+- **The cell keeps its value and state** when both of these hold after the edit:
+  - it has the same transform: the same `use` at the same `version` (`toggle@1` is still `toggle@1`)
+  - its value still validates against the transform's `result` and, for a variable, its `schema`
+- **Changed options take effect from the next step,** not at the edit. A `position` whose `max` drops is clamped at its next input, and a `select` whose `items` shrink clamps its index at its next detent. So a definition must accept state made under any options it allows, and the conformance suite (§4.4) changes options between steps to check it.
+- **Otherwise the cell resets** to `init`, in the turn that applies the edit. Its patch has origin `{core: "dataflow"}` and `cause` → the edit's `project.applied` entry (state spec §2.2), so `why` says "reset by Ana's edit". The same goes for a stateless cell whose new definition gives a different value.
+- **An edit doesn't fire sinks.** A change whose `cause` is a `project.applied` entry is applied to state, read by bindings and triggers, and journaled, but no sink sends it. That includes a reset, so the device keeps what it had. Edits during a show never send actions on their own. When an edit will reset a cell that has sinks, the editor says so before saving: "k3's toggle will reset to off. Its sink won't send that."
+- **Stateless cells and bindings** are re-evaluated in the same turn as the edit, so readers see the new definition at once.
 
 ---
 
@@ -293,7 +313,7 @@ interface Variable {                  // project entity `variable`
 - **Writable** (no `value`): `set` steps and scripts write it, checked against `schema`.
 - **Computed** (`value` is a stateless source) or **accumulated** (`value` is a reducer): a cell (§5), read-only.
 - **Undeclared variables still work:** a `set` to a name with no entity creates the value, with a warning (`undeclaredVariable`). The editor offers to declare it.
-- **`persist: true`** keeps the value in `state_cache` and restores it at startup, before any trigger is armed.
+- **`persist: true`** keeps the value, and a reducer's state (§5.2), in `state_cache` and restores it at startup, before any trigger is armed.
 
 ---
 
@@ -314,7 +334,7 @@ type Sink =
     } };
 ```
 
-- **A sink fires when its cell's value changes,** not on every turn and not at load. A `toggle` with `to: {action: {…, param: "on"}}` sends one action per flip.
+- **A sink fires when its cell's value changes,** not on every turn, not at load, not on promotion (§5.2) and not for a change made by an edit (§5.4). A `toggle` with `to: {action: {…, param: "on"}}` sends one action per flip.
 - **`undefined` sends nothing,** so a `rules` source with no `else` value only sends while a rule matches.
 - **Only the latest value is kept** while a rate limit waits, so a slow device never builds a backlog.
 - **Actions from sinks** go through the output gate and the journal like any other, with origin `{core: "dataflow"}` and `cause` → the cell's patch.

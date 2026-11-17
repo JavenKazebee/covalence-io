@@ -1,6 +1,6 @@
 # 0029 – Dataflow is sources, transforms and sinks; helpers are transforms; transforms are sandboxed definitions
 
-- **Status:** Proposed
+- **Status:** Accepted, with [M8](../milestones/m8-dataflow.md)'s Phase 0. That phase settled reducer state on failover, kept state through edits and the journal's tiers in [dataflow §5.2 and §5.4](../specs/dataflow.md) and [state and event log §2.4](../specs/state-and-event-log.md)
 - **Date:** 2026-10-22
 - **Amends:** [0024](0024-surfaces-as-two-way-devices.md) (helpers become reducers; their `to` routes become sinks on any cell), [0025](0025-device-drivers-are-plugins.md) ("never: helpers" becomes "transforms, in the core's sandbox"), [0021](0021-expressions-as-sandboxed-snippets.md) (a new sandboxed context: transform definitions)
 - **Answers:** [state spec open question 4](../specs/state-and-event-log.md) for cells and fader input; [bindings open question 2](../specs/bindings.md) (with [0026](0026-sources-and-selectors.md))
