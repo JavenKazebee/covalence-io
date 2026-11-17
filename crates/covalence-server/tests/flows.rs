@@ -41,10 +41,10 @@ async fn flows_survive_a_restart() {
 
     let app = start(data.path());
     assert!(app.flows().is_empty());
-    app.put_flow(route_twice.clone()).unwrap();
-    app.put_flow(follow.clone()).unwrap();
+    app.put(route_twice.clone()).unwrap();
+    app.put(follow.clone()).unwrap();
     follow.enabled = false;
-    app.put_flow(follow.clone()).unwrap();
+    app.put(follow.clone()).unwrap();
     app.shutdown().await;
 
     let app = start(data.path());
@@ -62,8 +62,11 @@ async fn flows_survive_a_restart() {
     );
     assert_eq!(app.core().shared().state.value(&running), Some(0u64.into()));
 
-    assert_eq!(app.delete_flow(&follow.id).unwrap(), Some(follow.clone()));
-    assert_eq!(app.delete_flow(&follow.id).unwrap(), None);
+    assert_eq!(
+        app.delete::<Flow>(&follow.id).unwrap(),
+        Some(follow.clone())
+    );
+    assert_eq!(app.delete::<Flow>(&follow.id).unwrap(), None);
     assert!(
         app.runtime()
             .fire_api(&follow.id, covalence_core::journal::Origin::system())

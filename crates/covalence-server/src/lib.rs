@@ -27,8 +27,10 @@
 //! | `GET /connections/{id}/traffic` | Each of the connection's transport handles and its recent traffic |
 //!
 //! Surfaces, layers and control bindings are in surfaces spec §9 and
-//! bindings spec §2. Each entity type has the flows' five routes, with
-//! `{surface | layer | binding, warnings}` in place of `{flow, warnings}`.
+//! bindings spec §2. Every entity type has the flows' five routes, from one
+//! generic implementation (`entity`), with `{surface | layer | binding,
+//! warnings}` in place of `{flow, warnings}`. Deleting an entity deletes or
+//! clears whatever refers to it, as each reference says.
 //!
 //! | Method and path                     | Does                                              |
 //! |-------------------------------------|---------------------------------------------------|
@@ -46,7 +48,7 @@
 //!
 //! Any other path is the built web UI, when there is one (see `ui`).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -76,6 +78,7 @@ use serde::{Deserialize, Serialize};
 mod api;
 mod core_actions;
 mod devices;
+mod entity;
 mod flows;
 mod plugin_surfaces;
 mod surfaces;
@@ -84,6 +87,7 @@ mod web_surface;
 mod ws;
 
 pub use api::router;
+pub use entity::{EntityKind, OnDelete, Ref};
 pub use ui::{DEFAULT_UI_DIR, with_ui};
 
 /// Entity type for connections in the store.
@@ -313,10 +317,10 @@ impl App {
         let conns = load(&store, CONNECTION, |c: &Connection| c.id.clone())?;
         // Flows were validated when they were saved; they aren't checked again
         // here (flow spec §8.4).
-        let flows = load(&store, flow::ENTITY, |f: &Flow| f.id.clone())?;
-        let surface_entities = load(&store, surface::SURFACE_ENTITY, |s: &Surface| s.id.clone())?;
-        let layers = load(&store, surface::LAYER_ENTITY, |p: &Layer| p.id.clone())?;
-        let bindings = load(&store, binding::ENTITY, |b: &ControlBinding| b.id.clone())?;
+        let flows = load_kind::<Flow>(&store)?;
+        let surface_entities = load_kind::<Surface>(&store)?;
+        let layers = load_kind::<Layer>(&store)?;
+        let bindings = load_kind::<ControlBinding>(&store)?;
         let surfaces = Surfaces::new(core.shared().clone(), Timing::default());
         surfaces.set_aliases(alias_map(&conns));
         for layer in layers.values() {
@@ -460,89 +464,9 @@ impl App {
         roots
     }
 
-    /// Parses, checks and stores a flow from the API (flow spec §8.4). `id`
-    /// is the flow being replaced, or `None` to create one.
-    pub async fn save_flow(&self, json: &serde_json::Value, id: Option<&str>) -> SaveResult {
-        let mut flow = Flow::parse(json).map_err(SaveError::invalid)?;
-        let exists = |id: &str| read(&self.flows).contains_key(id);
-        assign_id(&mut flow.id, id, exists)?;
-
-        // Manifests first: fetching them waits on the plugin host.
-        let conns = self.conns().clone();
-        let mut manifests: BTreeMap<String, Option<Manifest>> = BTreeMap::new();
-        for conn in conns.values() {
-            if !manifests.contains_key(&conn.plugin) {
-                let manifest = self.manifest(&conn.plugin).await;
-                manifests.insert(conn.plugin.clone(), manifest);
-            }
-        }
-        let by_conn: BTreeMap<ConnId, Option<&Manifest>> = conns
-            .values()
-            .map(|c| (c.id.clone(), manifests[&c.plugin].as_ref()))
-            .collect();
-
-        let _saving = self.saving.lock().unwrap_or_else(|e| e.into_inner());
-        let taken: BTreeSet<String> = self
-            .flows()
-            .values()
-            .filter(|f| f.id != flow.id)
-            .map(|f| f.slug.clone())
-            .collect();
-        if flow.slug.is_empty() {
-            flow.slug = flow::derive_slug(&flow.name, &taken);
-        }
-        let layers = self.surfaces.layers();
-        let surfaces: BTreeSet<String> = self
-            .surface_entities
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .keys()
-            .cloned()
-            .collect();
-        let mut flow_ids: BTreeSet<String> = self.flows().keys().cloned().collect();
-        flow_ids.insert(flow.id.clone());
-        let report = flow::validate(
-            &flow,
-            &flow::Context {
-                conns: &by_conn,
-                taken_slugs: &taken,
-                layers: &layers,
-                surfaces: &surfaces,
-                flows: &flow_ids,
-                evaluator: self.evaluator.as_ref(),
-            },
-        );
-        if !report.is_ok() {
-            return Err(SaveError::Invalid {
-                errors: report.errors,
-                warnings: report.warnings,
-            });
-        }
-        self.put_flow(flow.clone())?;
-        Ok((flow, report.warnings))
-    }
-
     /// Every flow, by ID.
     pub fn flows(&self) -> BTreeMap<FlowId, Flow> {
         read(&self.flows).clone()
-    }
-
-    /// Stores a flow, replacing any with the same ID. The caller has
-    /// validated it.
-    pub fn put_flow(&self, flow: Flow) -> Result<(), covalence_store::StoreError> {
-        self.put_entity(flow::ENTITY, &flow.id, &flow)?;
-        self.runtime.set_flow(flow.clone());
-        write(&self.flows).insert(flow.id.clone(), flow);
-        Ok(())
-    }
-
-    /// Removes a flow, returning it if there was one.
-    pub fn delete_flow(&self, id: &str) -> Result<Option<Flow>, covalence_store::StoreError> {
-        self.delete_entity(flow::ENTITY, id)?;
-        if let Err(e) = self.runtime.remove_flow(id) {
-            tracing::error!(flow = %id, "cannot journal the end of a deleted flow's runs: {e}");
-        }
-        Ok(write(&self.flows).remove(id))
     }
 
     /// Stores an entity as JSON, replacing any with the same ID.
@@ -805,6 +729,11 @@ fn target_views(conns: &BTreeMap<ConnId, Connection>) -> Vec<TargetView> {
 }
 
 /// Reads every stored entity of one type, keyed by `id`.
+/// Every stored entity of a type, by ID.
+fn load_kind<K: EntityKind>(store: &Store) -> Result<BTreeMap<String, K>, StartError> {
+    load(store, K::TYPE, |e: &K| e.id().to_owned())
+}
+
 fn load<T: serde::de::DeserializeOwned>(
     store: &Store,
     kind: &'static str,

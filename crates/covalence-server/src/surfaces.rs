@@ -2,9 +2,10 @@
 //! bindings spec §2). The web surface's WebSocket is in `web_surface`.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
+use std::future::Future;
+use std::sync::{Arc, RwLock};
 
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -25,7 +26,8 @@ use serde::Deserialize;
 use serde_json::{Value as JsonValue, json};
 
 use crate::api::{ApiError, ApiResult, saved};
-use crate::{App, SaveError, SaveResult, assign_id, read, write};
+use crate::entity::{self, EntityKind, OnDelete, Ref};
+use crate::{App, SaveError, read};
 
 /// The size of a preview's image when the request doesn't give one: the
 /// virtual deck's keys.
@@ -33,30 +35,14 @@ const PREVIEW_SIZE: u32 = 144;
 
 pub(crate) fn routes() -> Router<Arc<App>> {
     Router::new()
-        .route("/surfaces", get(list_surfaces).post(create_surface))
-        .route(
-            "/surfaces/{id}",
-            get(read_surface)
-                .put(replace_surface)
-                .delete(remove_surface),
-        )
+        .merge(entity::routes::<Surface>())
+        .merge(entity::routes::<Layer>())
+        .merge(entity::routes::<ControlBinding>())
         .route("/surfaces/{id}/current", post(navigate))
         .route("/surfaces/{id}/controls", get(surface_controls))
         .route("/surface/{id}", get(crate::web_surface::upgrade))
-        .route("/layers", get(list_layers).post(create_layer))
-        .route(
-            "/layers/{id}",
-            get(read_layer).put(replace_layer).delete(remove_layer),
-        )
-        .route("/control-bindings", get(list_bindings).post(create_binding))
         .route("/control-bindings/problems", get(binding_problems))
         .route("/control-bindings/preview", post(preview))
-        .route(
-            "/control-bindings/{id}",
-            get(read_binding)
-                .put(replace_binding)
-                .delete(remove_binding),
-        )
 }
 
 impl App {
@@ -76,154 +62,6 @@ impl App {
 
     pub fn control_bindings(&self) -> BTreeMap<String, ControlBinding> {
         read(&self.bindings).clone()
-    }
-
-    /// Parses, checks and stores a surface from the API. `id` is the surface
-    /// being replaced, or `None` to create one.
-    pub fn save_surface(&self, json: &JsonValue, id: Option<&str>) -> SaveResult<Surface> {
-        let mut surface = Surface::parse(json).map_err(SaveError::invalid)?;
-        assign_id(&mut surface.id, id, |id| {
-            read(&self.surface_entities).contains_key(id)
-        })?;
-        let _saving = self.saving.lock().unwrap_or_else(|e| e.into_inner());
-        let taken: BTreeSet<String> = read(&self.surface_entities)
-            .values()
-            .filter(|s| s.id != surface.id)
-            .map(|s| s.slug.clone())
-            .collect();
-        if surface.slug.is_empty() {
-            surface.slug = flow::derive_slug_for("surface", &surface.name, &taken);
-        }
-        let report = surface::validate_surface(&surface, &taken, &self.surfaces.layers());
-        if !report.is_ok() {
-            return Err(SaveError::Invalid {
-                errors: report.errors,
-                warnings: report.warnings,
-            });
-        }
-        self.put_entity(surface::SURFACE_ENTITY, &surface.id, &surface)?;
-        self.surfaces.set_surface(surface.clone())?;
-        write(&self.surface_entities).insert(surface.id.clone(), surface.clone());
-        Ok((surface, report.warnings))
-    }
-
-    /// Removes a surface, detaching it, and returns it if there was one.
-    pub fn delete_surface(&self, id: &str) -> Result<Option<Surface>, SaveError> {
-        let _saving = self.saving.lock().unwrap_or_else(|e| e.into_inner());
-        self.delete_entity(surface::SURFACE_ENTITY, id)?;
-        self.delete_entity(crate::SHOWN_ENTITY, id)?;
-        // Forgotten before it's detached, so its socket can tell why it closed.
-        let removed = write(&self.surface_entities).remove(id);
-        self.surfaces.remove_surface(id)?;
-        Ok(removed)
-    }
-
-    /// Parses, checks and stores a layer from the API.
-    pub fn save_layer(&self, json: &JsonValue, id: Option<&str>) -> SaveResult<Layer> {
-        let mut layer = Layer::parse(json).map_err(SaveError::invalid)?;
-        assign_id(&mut layer.id, id, |id| read(&self.layers).contains_key(id))?;
-        let _saving = self.saving.lock().unwrap_or_else(|e| e.into_inner());
-        let taken: BTreeSet<String> = read(&self.layers)
-            .values()
-            .filter(|p| p.id != layer.id)
-            .map(|p| p.slug.clone())
-            .collect();
-        if layer.slug.is_empty() {
-            layer.slug = flow::derive_slug_for("layer", &layer.name, &taken);
-        }
-        let mut bound: BTreeMap<String, BTreeSet<OutputCapKind>> = BTreeMap::new();
-        for b in read(&self.bindings)
-            .values()
-            .filter(|b| b.layer == layer.id)
-        {
-            bound
-                .entry(b.control.clone())
-                .or_default()
-                .extend(b.outputs());
-        }
-        let report = surface::validate_layer(&layer, &taken, &bound);
-        if !report.is_ok() {
-            return Err(SaveError::Invalid {
-                errors: report.errors,
-                warnings: report.warnings,
-            });
-        }
-        self.put_entity(surface::LAYER_ENTITY, &layer.id, &layer)?;
-        self.surfaces.set_layer(layer.clone())?;
-        write(&self.layers).insert(layer.id.clone(), layer.clone());
-        Ok((layer, report.warnings))
-    }
-
-    /// Removes a layer, its bindings, and any surface's use of it as a start
-    /// layer. Flows whose `control` triggers name it keep them, and are told
-    /// when they're next saved.
-    pub fn delete_layer(&self, id: &str) -> Result<Option<Layer>, SaveError> {
-        let _saving = self.saving.lock().unwrap_or_else(|e| e.into_inner());
-        let bound: Vec<String> = read(&self.bindings)
-            .values()
-            .filter(|b| b.layer == id)
-            .map(|b| b.id.clone())
-            .collect();
-        for binding in bound {
-            self.delete_entity(binding::ENTITY, &binding)?;
-            self.surfaces.remove_binding(&binding);
-            write(&self.bindings).remove(&binding);
-        }
-        let starting: Vec<Surface> = read(&self.surface_entities)
-            .values()
-            .filter(|s| s.start_layer.as_deref() == Some(id))
-            .cloned()
-            .collect();
-        for mut surface in starting {
-            surface.start_layer = None;
-            self.put_entity(surface::SURFACE_ENTITY, &surface.id, &surface)?;
-            self.surfaces.set_surface(surface.clone())?;
-            write(&self.surface_entities).insert(surface.id.clone(), surface);
-        }
-        self.delete_entity(surface::LAYER_ENTITY, id)?;
-        self.surfaces.remove_layer(id)?;
-        Ok(write(&self.layers).remove(id))
-    }
-
-    /// Parses, checks and stores a control binding from the API.
-    pub fn save_binding(&self, json: &JsonValue, id: Option<&str>) -> SaveResult<ControlBinding> {
-        let mut binding = ControlBinding::parse(json).map_err(SaveError::invalid)?;
-        assign_id(&mut binding.id, id, |id| {
-            read(&self.bindings).contains_key(id)
-        })?;
-        let _saving = self.saving.lock().unwrap_or_else(|e| e.into_inner());
-        let taken: BTreeSet<(LayerId, String)> = read(&self.bindings)
-            .values()
-            .filter(|b| b.id != binding.id)
-            .map(|b| (b.layer.clone(), b.control.clone()))
-            .collect();
-        let conns: BTreeSet<ConnId> = self.conns().keys().cloned().collect();
-        let report = binding::validate(
-            &binding,
-            &binding::Context {
-                layers: &self.surfaces.layers(),
-                conns: &conns,
-                taken: &taken,
-                evaluator: self.evaluator.as_ref(),
-            },
-        );
-        if !report.is_ok() {
-            return Err(SaveError::Invalid {
-                errors: report.errors,
-                warnings: report.warnings,
-            });
-        }
-        self.put_entity(binding::ENTITY, &binding.id, &binding)?;
-        self.surfaces.set_binding(binding.clone());
-        write(&self.bindings).insert(binding.id.clone(), binding.clone());
-        Ok((binding, report.warnings))
-    }
-
-    pub fn delete_binding(&self, id: &str) -> Result<Option<ControlBinding>, SaveError> {
-        let _saving = self.saving.lock().unwrap_or_else(|e| e.into_inner());
-        self.delete_entity(binding::ENTITY, id)?;
-        self.surfaces.remove_binding(id);
-        Ok(write(&self.bindings).remove(id))
     }
 
     /// Evaluates a binding once against live state, as the binding worker
@@ -247,48 +85,6 @@ impl App {
             .render(&preview.look, size, size, "png", 0)
             .map_err(|e| e.to_string());
         (preview, image)
-    }
-}
-
-async fn list_surfaces(State(app): State<Arc<App>>) -> Json<Vec<Surface>> {
-    Json(app.surface_entities().into_values().collect())
-}
-
-async fn read_surface(
-    State(app): State<Arc<App>>,
-    Path(id): Path<String>,
-) -> ApiResult<Json<Surface>> {
-    app.surface_entities()
-        .remove(&id)
-        .map(Json)
-        .ok_or_else(|| not_found("surface", &id))
-}
-
-async fn create_surface(State(app): State<Arc<App>>, Json(body): Json<JsonValue>) -> Response {
-    saved(
-        app.save_surface(&body, None),
-        "surface",
-        StatusCode::CREATED,
-    )
-}
-
-async fn replace_surface(
-    State(app): State<Arc<App>>,
-    Path(id): Path<String>,
-    Json(body): Json<JsonValue>,
-) -> Response {
-    let result = app.save_surface(&body, Some(&id));
-    app.surfaces().flush().await;
-    saved(result, "surface", StatusCode::OK)
-}
-
-async fn remove_surface(
-    State(app): State<Arc<App>>,
-    Path(id): Path<String>,
-) -> ApiResult<StatusCode> {
-    match app.delete_surface(&id).map_err(ApiError::internal)? {
-        Some(_) => Ok(StatusCode::NO_CONTENT),
-        None => Err(not_found("surface", &id)),
     }
 }
 
@@ -355,7 +151,7 @@ async fn surface_controls(
     Path(id): Path<String>,
 ) -> ApiResult<Json<Vec<ControlDef>>> {
     if !app.surface_entities().contains_key(&id) {
-        return Err(not_found("surface", &id));
+        return Err(entity::not_found::<Surface>(&id));
     }
     app.surfaces().controls(&id).map(Json).ok_or_else(|| {
         ApiError::new(
@@ -365,101 +161,6 @@ async fn surface_controls(
     })
 }
 
-async fn list_layers(State(app): State<Arc<App>>) -> Json<Vec<Layer>> {
-    Json(app.layers().into_values().collect())
-}
-
-async fn read_layer(State(app): State<Arc<App>>, Path(id): Path<String>) -> ApiResult<Json<Layer>> {
-    app.layers()
-        .remove(&id)
-        .map(Json)
-        .ok_or_else(|| not_found("layer", &id))
-}
-
-async fn create_layer(State(app): State<Arc<App>>, Json(body): Json<JsonValue>) -> Response {
-    saved(app.save_layer(&body, None), "layer", StatusCode::CREATED)
-}
-
-async fn replace_layer(
-    State(app): State<Arc<App>>,
-    Path(id): Path<String>,
-    Json(body): Json<JsonValue>,
-) -> Response {
-    let result = app.save_layer(&body, Some(&id));
-    app.surfaces().flush().await;
-    saved(result, "layer", StatusCode::OK)
-}
-
-async fn remove_layer(
-    State(app): State<Arc<App>>,
-    Path(id): Path<String>,
-) -> ApiResult<StatusCode> {
-    let removed = app.delete_layer(&id).map_err(ApiError::internal)?;
-    app.surfaces().flush().await;
-    match removed {
-        Some(_) => Ok(StatusCode::NO_CONTENT),
-        None => Err(not_found("layer", &id)),
-    }
-}
-
-#[derive(Deserialize)]
-struct BindingsQuery {
-    layer: Option<LayerId>,
-}
-
-async fn list_bindings(
-    State(app): State<Arc<App>>,
-    Query(query): Query<BindingsQuery>,
-) -> Json<Vec<ControlBinding>> {
-    Json(
-        app.control_bindings()
-            .into_values()
-            .filter(|b| query.layer.as_ref().is_none_or(|p| *p == b.layer))
-            .collect(),
-    )
-}
-
-async fn read_binding(
-    State(app): State<Arc<App>>,
-    Path(id): Path<String>,
-) -> ApiResult<Json<ControlBinding>> {
-    app.control_bindings()
-        .remove(&id)
-        .map(Json)
-        .ok_or_else(|| not_found("binding", &id))
-}
-
-/// Answers once surfaces showing the binding's layer have been redrawn.
-async fn create_binding(State(app): State<Arc<App>>, Json(body): Json<JsonValue>) -> Response {
-    let result = app.save_binding(&body, None);
-    app.surfaces().flush().await;
-    saved(result, "binding", StatusCode::CREATED)
-}
-
-async fn replace_binding(
-    State(app): State<Arc<App>>,
-    Path(id): Path<String>,
-    Json(body): Json<JsonValue>,
-) -> Response {
-    let result = app.save_binding(&body, Some(&id));
-    app.surfaces().flush().await;
-    saved(result, "binding", StatusCode::OK)
-}
-
-async fn remove_binding(
-    State(app): State<Arc<App>>,
-    Path(id): Path<String>,
-) -> ApiResult<StatusCode> {
-    let removed = app.delete_binding(&id).map_err(ApiError::internal)?;
-    app.surfaces().flush().await;
-    match removed {
-        Some(_) => Ok(StatusCode::NO_CONTENT),
-        None => Err(not_found("binding", &id)),
-    }
-}
-
-/// `[{binding, prop, message}]`: each binding property that failed when it
-/// was last evaluated, for the editor.
 async fn binding_problems(State(app): State<Arc<App>>) -> Json<Vec<JsonValue>> {
     Json(
         app.surfaces()
@@ -574,6 +275,206 @@ fn hex(Rgb(r, g, b): Rgb) -> String {
     format!("#{r:02x}{g:02x}{b:02x}")
 }
 
-fn not_found(kind: &str, id: &str) -> ApiError {
-    ApiError::new(StatusCode::NOT_FOUND, format!("no {kind} {id:?}"))
+impl EntityKind for Surface {
+    const TYPE: &'static str = surface::SURFACE_ENTITY;
+    const NAME: &'static str = "surface";
+    const PATH: &'static str = "/surfaces";
+    type Context = ();
+
+    fn parse(json: &JsonValue) -> Result<Surface, Vec<flow::Problem>> {
+        Surface::parse(json)
+    }
+
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn id_mut(&mut self) -> &mut String {
+        &mut self.id
+    }
+
+    fn all(app: &App) -> &RwLock<BTreeMap<String, Surface>> {
+        &app.surface_entities
+    }
+
+    fn context(_: &App) -> impl Future<Output = ()> + Send {
+        std::future::ready(())
+    }
+
+    fn check(&mut self, app: &App, _: &()) -> flow::Report {
+        let taken: BTreeSet<String> = read(&app.surface_entities)
+            .values()
+            .filter(|s| s.id != self.id)
+            .map(|s| s.slug.clone())
+            .collect();
+        if self.slug.is_empty() {
+            self.slug = flow::derive_slug_for("surface", &self.name, &taken);
+        }
+        surface::validate_surface(self, &taken, &app.surfaces.layers())
+    }
+
+    fn refs(&self) -> Vec<Ref> {
+        self.start_layer
+            .iter()
+            .map(|layer| Ref::new(surface::LAYER_ENTITY, layer, "startLayer", OnDelete::Clear))
+            .collect()
+    }
+
+    fn clear_ref(&mut self, field: &str) {
+        if field == "startLayer" {
+            self.start_layer = None;
+        }
+    }
+
+    fn apply(&self, app: &App) -> Result<(), SaveError> {
+        app.surfaces.set_surface(self.clone())?;
+        Ok(())
+    }
+
+    /// Detaches it, and forgets the layer it showed.
+    fn unapply(id: &str, app: &App) -> Result<(), SaveError> {
+        app.delete_entity(crate::SHOWN_ENTITY, id)?;
+        app.surfaces.remove_surface(id)?;
+        Ok(())
+    }
+
+    fn settle(app: &App) -> impl Future<Output = ()> + Send {
+        app.surfaces.flush()
+    }
+}
+
+impl EntityKind for Layer {
+    const TYPE: &'static str = surface::LAYER_ENTITY;
+    const NAME: &'static str = "layer";
+    const PATH: &'static str = "/layers";
+    type Context = ();
+
+    fn parse(json: &JsonValue) -> Result<Layer, Vec<flow::Problem>> {
+        Layer::parse(json)
+    }
+
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn id_mut(&mut self) -> &mut String {
+        &mut self.id
+    }
+
+    fn all(app: &App) -> &RwLock<BTreeMap<String, Layer>> {
+        &app.layers
+    }
+
+    fn context(_: &App) -> impl Future<Output = ()> + Send {
+        std::future::ready(())
+    }
+
+    fn check(&mut self, app: &App, _: &()) -> flow::Report {
+        let taken: BTreeSet<String> = read(&app.layers)
+            .values()
+            .filter(|p| p.id != self.id)
+            .map(|p| p.slug.clone())
+            .collect();
+        if self.slug.is_empty() {
+            self.slug = flow::derive_slug_for("layer", &self.name, &taken);
+        }
+        let mut bound: BTreeMap<String, BTreeSet<OutputCapKind>> = BTreeMap::new();
+        for b in read(&app.bindings).values().filter(|b| b.layer == self.id) {
+            bound
+                .entry(b.control.clone())
+                .or_default()
+                .extend(b.outputs());
+        }
+        surface::validate_layer(self, &taken, &bound)
+    }
+
+    fn apply(&self, app: &App) -> Result<(), SaveError> {
+        app.surfaces.set_layer(self.clone())?;
+        Ok(())
+    }
+
+    fn unapply(id: &str, app: &App) -> Result<(), SaveError> {
+        app.surfaces.remove_layer(id)?;
+        Ok(())
+    }
+
+    fn settle(app: &App) -> impl Future<Output = ()> + Send {
+        app.surfaces.flush()
+    }
+}
+
+/// Flows whose `control` triggers name a deleted layer keep them, and are
+/// told when they're next saved, so flows declare no references to layers.
+impl EntityKind for ControlBinding {
+    const TYPE: &'static str = binding::ENTITY;
+    const NAME: &'static str = "binding";
+    const PATH: &'static str = "/control-bindings";
+    type Context = ();
+
+    fn parse(json: &JsonValue) -> Result<ControlBinding, Vec<flow::Problem>> {
+        ControlBinding::parse(json)
+    }
+
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn id_mut(&mut self) -> &mut String {
+        &mut self.id
+    }
+
+    fn all(app: &App) -> &RwLock<BTreeMap<String, ControlBinding>> {
+        &app.bindings
+    }
+
+    fn context(_: &App) -> impl Future<Output = ()> + Send {
+        std::future::ready(())
+    }
+
+    fn check(&mut self, app: &App, _: &()) -> flow::Report {
+        let taken: BTreeSet<(LayerId, String)> = read(&app.bindings)
+            .values()
+            .filter(|b| b.id != self.id)
+            .map(|b| (b.layer.clone(), b.control.clone()))
+            .collect();
+        let conns: BTreeSet<ConnId> = app.conns().keys().cloned().collect();
+        binding::validate(
+            self,
+            &binding::Context {
+                layers: &app.surfaces.layers(),
+                conns: &conns,
+                taken: &taken,
+                evaluator: app.evaluator.as_ref(),
+            },
+        )
+    }
+
+    /// A binding goes with its layer.
+    fn refs(&self) -> Vec<Ref> {
+        vec![Ref::new(
+            surface::LAYER_ENTITY,
+            &self.layer,
+            "layer",
+            OnDelete::Cascade,
+        )]
+    }
+
+    fn apply(&self, app: &App) -> Result<(), SaveError> {
+        app.surfaces.set_binding(self.clone());
+        Ok(())
+    }
+
+    fn unapply(id: &str, app: &App) -> Result<(), SaveError> {
+        app.surfaces.remove_binding(id);
+        Ok(())
+    }
+
+    fn settle(app: &App) -> impl Future<Output = ()> + Send {
+        app.surfaces.flush()
+    }
+
+    /// `?layer=<id>` lists one layer's bindings.
+    fn listed(&self, query: &BTreeMap<String, String>) -> bool {
+        query.get("layer").is_none_or(|layer| *layer == self.layer)
+    }
 }

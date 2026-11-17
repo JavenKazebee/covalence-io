@@ -147,7 +147,7 @@ impl CoreActions for AppCore {
                     };
                     if flow.enabled != p.enabled {
                         flow.enabled = p.enabled;
-                        app.put_flow(flow)
+                        app.put(flow)
                             .map_err(|e| error(ErrorCode::Internal, "internal", e.to_string()))?;
                     }
                     Ok(None)

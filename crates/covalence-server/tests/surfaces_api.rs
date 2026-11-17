@@ -9,6 +9,8 @@ use std::time::Duration;
 use axum::http::{Method, StatusCode};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
+use covalence_core::binding::ControlBinding;
+use covalence_core::surface::{Layer, Surface};
 use covalence_server::{App, Config};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
@@ -317,27 +319,36 @@ async fn surfaces_layers_and_bindings_survive_a_restart() {
     };
 
     let app = start();
-    let (layer, _) = app.save_layer(&deck_layer("Cameras"), None).unwrap();
+    let (layer, _) = app
+        .save::<Layer>(&deck_layer("Cameras"), None)
+        .await
+        .unwrap();
     let (surface, _) = app
-        .save_surface(
+        .save::<Surface>(
             &json!({ "name": "FOH deck", "model": "virtual.deck15", "startLayer": layer.id }),
             None,
         )
+        .await
         .unwrap();
     let (binding, _) = app
-        .save_binding(
+        .save::<ControlBinding>(
             &json!({ "layer": layer.id, "control": "k0", "props": { "label": { "expr": "'Hi'" } } }),
             None,
         )
+        .await
         .unwrap();
     // What surfaces show is kept: one moved off its start layer, and one with
     // no start layer, shown something while detached.
-    let (lights, _) = app.save_layer(&deck_layer("Lights"), None).unwrap();
+    let (lights, _) = app
+        .save::<Layer>(&deck_layer("Lights"), None)
+        .await
+        .unwrap();
     let (side, _) = app
-        .save_surface(
+        .save::<Surface>(
             &json!({ "name": "Side deck", "model": "virtual.deck15" }),
             None,
         )
+        .await
         .unwrap();
     let system = covalence_core::journal::Origin::system;
     app.surfaces()
