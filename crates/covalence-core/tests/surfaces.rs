@@ -173,6 +173,23 @@ fn entries(shared: &Shared) -> Vec<Arc<Entry>> {
     shared.journal.range(1, 10_000).unwrap()
 }
 
+/// The last entry, which is layer resolution's patch (surfaces spec §5.2),
+/// and the entry it names as its cause.
+fn resolved_after(shared: &Shared) -> Arc<Entry> {
+    let all = entries(shared);
+    let last = all.last().unwrap();
+    assert_eq!(
+        last.origin,
+        Origin::Core {
+            core: covalence_core::journal::CoreOrigin::Dataflow
+        }
+    );
+    all.iter()
+        .find(|e| Some(e.seq) == last.cause)
+        .cloned()
+        .expect("resolution names its cause")
+}
+
 /// A control input `event` entry, unpacked.
 #[derive(Clone, Debug)]
 struct Ev {
@@ -314,7 +331,7 @@ async fn attaching_publishes_state_and_draws_every_key() {
     assert_eq!(current(&w.shared), Some("cams".into()));
     assert_eq!(w.surfaces.shown(DECK).as_deref(), Some(CAMS));
 
-    let patch = entries(&w.shared).pop().unwrap();
+    let patch = resolved_after(&w.shared);
     assert_eq!(
         patch.origin,
         Origin::Surface {
@@ -661,7 +678,7 @@ async fn showing_a_layer_checks_it_fits() {
 
     w.surfaces.show(DECK, Some(AUDIO), user.clone()).unwrap();
     assert_eq!(current(&w.shared), Some("audio".into()));
-    assert_eq!(entries(&w.shared).last().unwrap().origin, user);
+    assert_eq!(resolved_after(&w.shared).origin, user);
     w.surfaces.flush().await;
     // The audio layer has no bindings either, so nothing looks different.
     assert_eq!(take_draws(&mut link).len(), 0);
@@ -916,6 +933,7 @@ async fn a_layer_fits_by_capability_not_by_size() {
         name: slug.into(),
         slug: slug.into(),
         controls,
+        ..Layer::default()
     };
     let control = |id: &str, inputs: Vec<InputCapKind>, outputs: Vec<OutputCapKind>| LayerControl {
         id: id.into(),
@@ -990,6 +1008,7 @@ async fn a_control_trigger_on_a_dial_gets_the_turn() {
                 inputs: vec![InputCapKind::Relative],
                 outputs: vec![],
             }],
+            ..Layer::default()
         })
         .unwrap();
     let flow: Flow = serde_json::from_value(json!({

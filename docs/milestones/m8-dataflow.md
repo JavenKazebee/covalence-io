@@ -1,6 +1,6 @@
 # Milestone 8: Dataflow
 
-- **Status:** In progress (Phases 0–4 done)
+- **Status:** In progress (Phases 0–5 done, except `cascade: through`)
 
 Covalence gets its continuous half. Values can be computed, accumulated and sent somewhere without a flow ([dataflow §10.3](../specs/dataflow.md#103-sources-transforms-and-sinks-helpers-are-transforms)):
 - **Reducers** (`toggle`, `position`, `select` …) are sandboxed transform definitions.
@@ -70,10 +70,10 @@ Notes from Phase 2:
 - [x] The virtual surface gains an optional encoder (`relative` + `momentary`) and fader (`absolute` + `touch`, with a `level` output and a motor mode that moves it) for tests and the UI. Per [surfaces spec §11.4](../specs/surfaces.md#114-level-outputs-echoes-gesture-timing-and-per-surface-helpers): configured on the surface entity, `virtual: {encoders, faders, motor}`, up to four of each. `virtual_controls` builds the controls for core tests; the UI's virtual deck draws them, glides a motor fader to its level, and attaches again when `virtual` changes. The surface's settings set them.
 
 ### Phase 5: Layer resolution (Rust)
-- [ ] `when`, `level`, `rank` and `on` as sources and selectors; the resolution rule of surfaces §5.2; `surface.<slug>.layers` and `.controls.<id>.layer`; `resolutionCycle`.
+- [x] `when`, `level`, `rank` and `on` as sources and selectors; the resolution rule of surfaces §5.2; `surface.<slug>.layers` and `.controls.<id>.layer`; `resolutionCycle`. `covalence_core::surface::resolve` runs as the state turn's last step, after cells, and writes both paths in that turn; the binding worker draws from it and input takes its layer from it. `self` in a layer's expressions is its surface. Navigation groups beyond `main` (API and `navigate`).
 - [ ] (Proposed) `cascade: through`: per-property resolution and input as a property (surfaces §5.2.1), `.controls.<id>.look`, the binding's `input`, and `ambiguousOrder`.
-- [ ] Armed layers, evaluated ahead while inactive.
-- [ ] Presets: navigation group, levels, shift, popover, always on.
+- [x] Armed layers, evaluated ahead while inactive: candidates whose `when` reads the surface's input state.
+- [x] Presets: navigation group, levels, shift, popover, always on, as `when` and `level`, evaluated natively. The editor shows them in Phase 6.
 
 ### Phase 6: UI
 - [ ] A variables view: declare, type, persist, computed with the source editor, and sinks.

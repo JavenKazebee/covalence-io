@@ -57,6 +57,10 @@ pub enum Code {
     ReadOnly,
     /// Computed variables whose reads form a cycle (dataflow §5.3).
     Cycle,
+    /// A layer field that reads layer resolution's results (surfaces spec §5.2).
+    ResolutionCycle,
+    /// A layer's `on` naming a surface that doesn't exist.
+    UnknownSurface,
     // Warnings.
     NoTriggers,
     /// An event trigger on a connection the flow also acts on (spec §8.6).

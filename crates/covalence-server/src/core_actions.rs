@@ -69,16 +69,16 @@ impl CoreActions for AppCore {
             match call.action.as_str() {
                 "navigate" => {
                     let p: Navigate = params(json)?;
-                    if let Some(group) = p.group.as_deref().filter(|g| *g != "main") {
-                        return Err(error(
-                            ErrorCode::InvalidParams,
-                            "unsupported",
-                            format!("only the main group can be navigated, not {group:?}"),
-                        ));
-                    }
+                    let group = p
+                        .group
+                        .as_deref()
+                        .unwrap_or(covalence_core::surface::MAIN_GROUP);
                     app.surfaces()
-                        .show(&key, p.layer.as_deref(), call.origin)
+                        .navigate(&key, group, p.layer.as_deref(), call.origin)
                         .map_err(|e| match e {
+                            ShowError::BadGroup(_) => {
+                                error(ErrorCode::InvalidParams, "invalid", e.to_string())
+                            }
                             ShowError::UnknownSurface(_) => {
                                 error(ErrorCode::NotFound, "no_target", e.to_string())
                             }

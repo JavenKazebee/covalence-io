@@ -98,10 +98,8 @@ pub use ui::{DEFAULT_UI_DIR, with_ui};
 /// Entity type for connections in the store.
 const CONNECTION: &str = "connection";
 
-/// Roots that aliases may not take (state spec §1.1).
-/// The reserved roots, and `core`, the core connection's alias (core actions §1).
-/// The layer each surface last showed, by surface ID: kept so a surface
-/// shows it again after a restart, in place of its start layer.
+/// The current layer of each surface's `main` group, by surface ID: kept so
+/// a surface shows it again after a restart, in place of its start layer.
 const SHOWN_ENTITY: &str = "surface_shown";
 
 #[derive(Serialize, Deserialize)]
@@ -110,7 +108,10 @@ struct Shown {
     layer: Option<LayerId>,
 }
 
-const RESERVED_ROOTS: &[&str] = &["vars", "sys", "surface", "layer", "flow", "core"];
+/// Roots that aliases may not take (state spec §1.1): the reserved roots,
+/// `core`, the core connection's alias (core actions §1), and `self`, a
+/// layer field's surface (dataflow §8).
+const RESERVED_ROOTS: &[&str] = &["vars", "sys", "surface", "layer", "flow", "core", "self"];
 
 /// A plugin the server makes available: `io.covalence.videohub@0.1.0=plugins/videohub/mod.ts`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -406,12 +407,21 @@ impl App {
                 tracing::error!("cannot journal sys:startup: {e}");
             }
             let keeping = app.clone();
+            // A surface has a layer's surface-scoped helpers once it's
+            // shown the layer: as its `main` group's current layer, even
+            // detached, or active (surfaces spec §11.4).
             surfaces.on_shown(Arc::new(move |surface, layer| {
                 if let Some(app) = keeping.upgrade() {
                     app.keep_shown(surface, layer);
                     if let Some(layer) = layer {
                         app.shown_on_surface(surface, layer);
                     }
+                }
+            }));
+            let adding = app.clone();
+            surfaces.on_active(Arc::new(move |surface, layer| {
+                if let Some(app) = adding.upgrade() {
+                    app.shown_on_surface(surface, layer);
                 }
             }));
             App {

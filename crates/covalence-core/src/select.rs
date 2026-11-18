@@ -633,6 +633,64 @@ impl Selector<Targets> {
 }
 
 // ---------------------------------------------------------------------------
+// Entities
+
+/// Project entities of one type, by ID: a layer's `on` picks surfaces
+/// (surfaces spec §1). There are no extra forms yet.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Entities;
+
+/// No forms: entities are picked by ID, list and combinators.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum NoForm {}
+
+impl Domain for Entities {
+    type Id = String;
+    type Form = NoForm;
+    const FORMS: &'static [&'static str] = &[];
+}
+
+impl Selector<Entities> {
+    /// Whether it picks `id` from `universe`, every entity of the type.
+    pub fn picks(
+        &self,
+        id: &str,
+        universe: &[String],
+        mut eval: Option<&mut Eval<'_>>,
+    ) -> Result<bool, ExprError> {
+        let Some(at) = universe.iter().position(|u| u == id) else {
+            return Ok(false);
+        };
+        let index_of = |id: &String| universe.iter().position(|u| u == id);
+        let from_expr = |v: &Json| v.as_str().map(str::to_owned);
+        let form = |f: &NoForm| -> BTreeSet<usize> { match *f {} };
+        let picked = resolve_in(
+            self,
+            universe.len(),
+            &index_of,
+            &from_expr,
+            &form,
+            &mut eval,
+        )?;
+        Ok(picked.contains(&at))
+    }
+
+    /// The IDs it names literally, for validation (dataflow §2): IDs inside
+    /// `expr` are only known at run time.
+    pub fn literal_ids(&self) -> Vec<&String> {
+        match self {
+            Selector::One(id) => vec![id],
+            Selector::List(ids) => ids.iter().collect(),
+            Selector::Expr(_) | Selector::Form(_) => Vec::new(),
+            Selector::Any(items) | Selector::All(items) => {
+                items.iter().flat_map(Selector::literal_ids).collect()
+            }
+            Selector::Not(inner) => inner.literal_ids(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Paths
 
 #[derive(Clone, Debug, PartialEq)]

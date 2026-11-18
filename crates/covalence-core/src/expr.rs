@@ -130,6 +130,9 @@ pub struct Scope<'a> {
     pub steps: &'a BTreeMap<String, Value>,
     /// Stops the evaluation when it turns `true`.
     pub cancel: Option<&'a watch::Receiver<bool>>,
+    /// Names for state paths where it's evaluated (dataflow §8): `self` in
+    /// a layer's fields is the surface being resolved.
+    pub named: &'a [(String, StatePath)],
 }
 
 impl<'a> Scope<'a> {
@@ -143,6 +146,7 @@ impl<'a> Scope<'a> {
             local: &EMPTY,
             steps: &EMPTY,
             cancel: None,
+            named: &[],
         }
     }
 }

@@ -6,6 +6,11 @@
 //! redraws each control whose resolved look differs from what that surface
 //! last got. A layer that comes into view is evaluated in full first.
 //!
+//! Which layer a control shows is layer resolution's (surfaces spec §5.2,
+//! [`crate::surface::resolve`]), done in the state turn before the worker
+//! sees it. The worker keeps the bindings of controlling layers evaluated,
+//! and of armed ones, so a shift layer that becomes active is drawn at once.
+//!
 //! A `value` property drives a `level` output (surfaces spec §11.4). Each level sent is
 //! written to `surface.<slug>.controls.<id>.requested.level`, with `cause` →
 //! the latest change among what the property read.
@@ -27,6 +32,7 @@ use crate::journal::{
 use crate::state::{ConnId, Dirty, LiveState, Meta, Quality, Source, StatePath};
 use crate::surface::Output;
 use crate::surface::render::{Look, Renderer};
+use crate::surface::resolve::{Resolution, Resolver};
 use crate::surface::{
     ControlDef, Draw, LayerId, OutputCap, OutputCapKind, SurfaceId, requested_level_path,
 };
@@ -48,11 +54,11 @@ enum Command {
     Set(Box<ControlBinding>),
     Remove(String),
     Aliases(Arc<BTreeMap<String, ConnId>>),
-    /// A surface shows `layer` (or nothing) through `outputs`.
+    /// A surface is shown through `outputs`, with the layers resolution
+    /// gives it.
     Show {
         surface: SurfaceId,
         slug: String,
-        layer: Option<LayerId>,
         controls: Vec<ControlDef>,
         outputs: mpsc::Sender<Output>,
     },
@@ -61,8 +67,9 @@ enum Command {
 }
 
 impl Bindings {
-    /// Starts the worker on its own thread.
-    pub fn start(shared: Shared) -> Self {
+    /// Starts the worker on its own thread, drawing each control from the
+    /// layer `resolver` gives it.
+    pub fn start(shared: Shared, resolver: Arc<Resolver>) -> Self {
         let (commands, rx) = mpsc::unbounded_channel();
         let problems = Arc::new(Mutex::new(Problems::new()));
         let feed = shared.state.subscribe();
@@ -80,6 +87,7 @@ impl Bindings {
             resolved: BTreeMap::new(),
             renderer: Renderer::default(),
             problems: problems.clone(),
+            resolver,
         };
         std::thread::Builder::new()
             .name("bindings".into())
@@ -111,14 +119,12 @@ impl Bindings {
         &self,
         surface: &str,
         slug: &str,
-        layer: Option<LayerId>,
         controls: Vec<ControlDef>,
         outputs: mpsc::Sender<Output>,
     ) {
         self.send(Command::Show {
             surface: surface.to_owned(),
             slug: slug.to_owned(),
-            layer,
             controls,
             outputs,
         });
@@ -190,11 +196,13 @@ struct Worker {
     resolved: BTreeMap<(LayerId, String), Resolved>,
     renderer: Renderer,
     problems: Arc<Mutex<Problems>>,
+    resolver: Arc<Resolver>,
 }
 
 struct Shown {
     slug: String,
-    layer: Option<LayerId>,
+    /// Which layer controls each control, as last taken from the resolver.
+    resolution: Arc<Resolution>,
     controls: Vec<ControlDef>,
     outputs: mpsc::Sender<Output>,
     /// What each control was last sent.
@@ -347,6 +355,7 @@ impl Worker {
                 Err(_) => break,
             }
         }
+        let resolved = self.take_resolutions();
         let keys: Vec<(LayerId, String)> = self.resolved.keys().cloned().collect();
         let mut changed = BTreeSet::new();
         for key in keys {
@@ -354,7 +363,7 @@ impl Worker {
                 changed.insert(key);
             }
         }
-        if !changed.is_empty() {
+        if resolved || !changed.is_empty() {
             let surfaces: Vec<SurfaceId> = self.shown.keys().cloned().collect();
             for surface in surfaces {
                 self.draw(&surface);
@@ -394,7 +403,6 @@ impl Worker {
             Command::Show {
                 surface,
                 slug,
-                layer,
                 controls,
                 outputs,
             } => {
@@ -412,11 +420,12 @@ impl Worker {
                     ),
                     _ => Default::default(),
                 };
+                let resolution = self.resolver.resolution(&surface).unwrap_or_default();
                 self.shown.insert(
                     surface.clone(),
                     Shown {
                         slug,
-                        layer,
+                        resolution,
                         controls,
                         outputs,
                         drawn,
@@ -450,16 +459,34 @@ impl Worker {
     fn is_visible(&self, layer: &str) -> bool {
         self.shown
             .values()
-            .any(|s| s.layer.as_deref() == Some(layer))
+            .any(|s| s.resolution.evaluated().any(|l| l == layer))
+    }
+
+    /// Takes each shown surface's latest resolution. Whether any changed,
+    /// in which case the layers kept evaluated are brought up to date.
+    fn take_resolutions(&mut self) -> bool {
+        let mut changed = false;
+        for (surface, shown) in &mut self.shown {
+            let latest = self.resolver.resolution(surface).unwrap_or_default();
+            if *latest != *shown.resolution {
+                shown.resolution = latest;
+                changed = true;
+            }
+        }
+        if changed {
+            self.track_visible();
+        }
+        changed
     }
 
     /// Evaluates layers that came into view in full, and drops layers that
-    /// nothing shows any more.
+    /// nothing shows any more. In view are the layers controlling a control
+    /// of a shown surface, and armed ones (surfaces spec §5.2).
     fn track_visible(&mut self) {
         let visible: BTreeSet<LayerId> = self
             .shown
             .values()
-            .filter_map(|s| s.layer.clone())
+            .flat_map(|s| s.resolution.evaluated().cloned())
             .collect();
         self.resolved
             .retain(|(layer, _), _| visible.contains(layer));
@@ -556,8 +583,9 @@ impl Worker {
         let mut requested = Vec::new();
         for control in &shown.controls {
             let resolved = shown
-                .layer
-                .as_ref()
+                .resolution
+                .controls
+                .get(&control.id)
                 .and_then(|layer| self.resolved.get(&(layer.clone(), control.id.clone())));
             let has_level = control
                 .outputs

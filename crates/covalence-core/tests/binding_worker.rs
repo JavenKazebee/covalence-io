@@ -742,6 +742,7 @@ async fn a_value_binding_sets_a_level_and_records_what_was_sent() {
             name: "mix".into(),
             slug: "mix".into(),
             controls: controls.iter().map(ControlDef::to_layer_control).collect(),
+            ..Default::default()
         })
         .unwrap();
     set(&w.shared, path(VH, &["mixer", "ch1"]), 0.25.into());

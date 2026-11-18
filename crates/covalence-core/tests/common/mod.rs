@@ -17,5 +17,6 @@ pub fn deck_layer(id: &str, slug: &str, cols: u32, rows: u32) -> Layer {
                 outputs: vec![OutputCapKind::Image],
             })
             .collect(),
+        ..Layer::default()
     }
 }

@@ -134,9 +134,9 @@ type OutputKind = OutputCap["kind"];
 |---|---|---|
 | `surface.<slug>.connected` | `boolean` | The core, on attach and detach |
 | `surface.<slug>.model` | `string` | The core, on attach |
-| `surface.<slug>.current.<group>` | layer slug, or `null` | **(Now)** The core and the API: the current layer of a navigation group (§5.3). `main` replaces M5's `surface.<slug>.page`, and is set on attach as `page` was. **(M7)** `main` is kept across restarts (stored, not replayed): a surface attaches showing the layer it last showed, if that still fits, and its `startLayer` only if it has never shown one |
-| `surface.<slug>.layers` | layer slugs, highest first | **(M8)** The core: the active layers in resolution order (§5.2) |
-| `surface.<slug>.controls.<id>.layer` | layer slug, or `null` | **(M8)** The core: the layer controlling the control (§5.2). With `through` layers (§5.2.1), the layer that has its input |
+| `surface.<slug>.current.<group>` | layer slug, or `null` | **(Now)** The core and the API: the current layer of a navigation group (§5.3). `main` replaces M5's `surface.<slug>.page`, and is set on attach as `page` was. **(M7)** `main` is kept across restarts (stored, not replayed): a surface attaches showing the layer it last showed, if that still fits, and its `startLayer` only if it has never shown one. **(M8)** Other groups (`popover`) are navigated the same way and start empty after a restart |
+| `surface.<slug>.layers` | layer slugs, highest first | **(M8)** The core: the active layers in resolution order (§5.2), while attached |
+| `surface.<slug>.controls.<id>.layer` | layer slug, or `null` | **(M8)** The core: the layer controlling the control (§5.2), while attached. With `through` layers (§5.2.1), the layer that has its input |
 | `surface.<slug>.controls.<id>.look` | `{[prop]: layer slug}` | **(M8, proposed)** The core: which layer each bound property comes from (§5.2.1) |
 | `surface.<slug>.controls.<id>.pressed` | `boolean` | **(Now)** The device: `momentary` input |
 | `surface.<slug>.controls.<id>.velocity` | `number`, 0 to 1 | **(Now)** The device: the last `down`, if the capability has `velocity` |
@@ -259,27 +259,29 @@ A **helper** builds on a control's input to give derived state, events, or both.
 
 ### 5.1 What a layer is
 
-A layer covers some controls and binds them. A layer that covers every control of a surface is what M5 called a page. One that covers three keys is a shift layer, a popover or a section. **(Now)** Every layer is in the `main` navigation group, and the surface's current layer controls the controls it covers, which is M5's behaviour.
+A layer covers some controls and binds them. A layer that covers every control of a surface is what M5 called a page. One that covers three keys is a shift layer, a popover or a section. A layer with no `when` is in the `main` navigation group, so a project without the fields of §5.2 behaves as M5 did: the surface's current layer controls the controls it covers.
 
 ### 5.2 Who controls a control (M8)
 
 For each surface and each control, the **controlling layer** is chosen from the layers that:
 - cover the control (`controls`, evaluated for this surface)
+- fit the surface (§5.4). A layer that doesn't is never a candidate there, whatever its `when`
 - may appear on this surface (`on`)
 - are active (`when`, evaluated for this surface)
 
 The highest `level` wins, then the highest `rank`. A tie goes to the layer that became active most recently, then to the oldest layer (by ID). A control no layer covers is blank and ignores input.
 
-- **The controlling layer sets the control's look and gets its input.** Nothing is resolved per property, and nothing is inherited from layers underneath.
+- **The controlling layer sets the control's look and gets its input.** Nothing is resolved per property, and nothing is inherited from layers underneath. An input belongs to the layer controlling its control as it arrives, before the input itself can change that, and a release to its press's layer. That's the `layer` in its events and in `{layer, controls}` triggers, and whose `gestures` time it.
+- **`rank`** is clamped to 0–99. One that isn't a number, or fails, counts as 0 and is reported as the layer's problem, as are failing `on` and `when` sources (a failing `when` is inactive).
 - **A layer becomes active** when its `when` goes from falsy to truthy, or when navigation selects it (§5.3). Becoming active again moves it to the top of its level and rank.
 - **Activation order is state:**
   - `surface.<slug>.layers` lists the active layers, highest first.
   - `surface.<slug>.controls.<id>.layer` names the controlling layer.
 
-  Both are journaled, so `why` explains who controls a key. After a restart, the order is rebuilt from current state, with ties going to the oldest layer.
+  Both are journaled as one `state.patch` per surface and turn, with origin `{core: "dataflow"}` and `cause` → the latest change among what the surface's layer fields read, so `why` explains who controls a key: "k3 is Shift's because k15 was pressed". After a restart, the order is rebuilt from current state, with ties going to the oldest layer. While the core runs, a surface that detaches and attaches again keeps its order.
 - **`self`.** In a layer's `controls`, `on`, `when` and `rank` sources, `self` is the surface being resolved: `self.controls.k15.pressed`, `self.current.main` (dataflow §8).
-- **Guards.** A layer's sources can't read resolution results (`surface.<slug>.layers`, `.controls.<id>.layer`); saving such a layer fails with `resolutionCycle`. Resolution runs once per scheduler turn, after cells have settled (dataflow §5.3).
-- **Armed layers.** A layer whose `when` reads input state is evaluated and rendered ahead of time while inactive, so that holding shift redraws within the 16 ms budget.
+- **Guards.** A layer's sources can't read resolution results (`surface.<slug>.layers`, `.controls.<id>.layer`, and the same through `self`); saving such a layer fails with `resolutionCycle`. The check reads refs and the dotted names in expressions, so a path computed at run time isn't caught. Resolution runs once per scheduler turn, after cells have settled (dataflow §5.3): it's the state turn's last step, and its results are written in the same turn. A cell that reads them sees them from the next turn.
+- **Armed layers.** A candidate layer whose `when` reads the surface's input state (`self.controls.*`, which includes surface-scoped helpers) has its bindings evaluated ahead of time while inactive, so that holding shift redraws within the 16 ms budget. A latching shift reads a layer-scoped `toggle`, isn't armed, and is evaluated when it becomes active.
 - **The editor shows a control's candidates:** "k3: Shift (over, while k15 is held), otherwise Cameras (main)". It can simulate a state ("hold k15") to show what would change.
 - **(M8, proposed) Ties are flagged.** Two layers that can be active at once, at the same level and rank, on the same control, get an `ambiguousOrder` warning in the editor. Recency still breaks ties at run time, since popovers in different navigation groups rely on it, but a project shouldn't depend on it by accident.
 
@@ -448,7 +450,7 @@ Surfaces, layers and control bindings have the same routes and answers as flows 
 | `POST` | `/surfaces`, `/layers`, `/control-bindings` | Create, validated like flows |
 | `GET`, `PUT`, `DELETE` | `/surfaces/{id}`, `/layers/{id}`, `/control-bindings/{id}` | Read, replace, delete. Deleting a surface detaches it and deletes its state. Deleting a layer deletes its bindings and clears it as any surface's `startLayer`; a flow whose event trigger names it gets `unknownLayer` when it's next saved |
 | `GET` | `/surfaces/{id}/controls` | **(Now)** The controls the surface declared when it last attached, for "New layer" in the editor. `404` if it has never attached |
-| `POST` | `/surfaces/{id}/current` `{group?: "main", layer: <id> \| null}` | **(Now)** Navigates a group (only `main` until groups arrive) and answers `{surface, group, layer}` once the surface has been sent its controls' outputs. Journaled as a `state.patch` on `surface.<slug>.current.<group>`, origin the user. `422 {error, code: "unknownLayer"}`, or `409 {error, code: "doesNotFit", controls}` listing the layer controls the surface lacks or can't support. Replaces M5's `POST /surfaces/{id}/page` and `layoutMismatch` |
+| `POST` | `/surfaces/{id}/current` `{group?: "main", layer: <id> \| null}` | **(Now)** Navigates a group and answers `{surface, group, layer}` once the surface has been sent its controls' outputs. **(M8)** Any group, named like an identifier (`422 {code: "invalid"}` otherwise); only `main` before. Journaled as a `state.patch` on `surface.<slug>.current.<group>`, origin the user. `422 {error, code: "unknownLayer"}`, or `409 {error, code: "doesNotFit", controls}` listing the layer controls the surface lacks or can't support. Replaces M5's `POST /surfaces/{id}/page` and `layoutMismatch` |
 | `GET` | `/control-bindings/problems` | `[{binding, prop, message}]`: each binding property that failed when last evaluated (bindings §3) |
 | `POST` | `/control-bindings/preview` `{binding, size?}` | The editor's preview (bindings §2.2) |
 | `GET` | `/surface/{id}` | The web surface WebSocket (§8) |
@@ -514,6 +516,14 @@ Why surfaces and layers are this way, and what was rejected. Keep these notes wh
   - *Conditional bindings with CSS-like specificity:* the hardest to predict, with no structure for the editor to show.
   - *Generating bindings at run time for dynamic grids:* the core would edit the project. Control groups (§6) evaluate a live list instead.
   - *Layering per property* (a shift layer inheriting the colour underneath): wrong for navigation, and two rules for one control are hard to explain. `through` layers (§5.2.1) are the proposed answer.
+
+### 11.3.1 Resolution runs in the state turn
+- **Decided:** layer resolution is the state turn's last step, after cells settle, and writes `layers` and `.controls.<id>.layer` in that turn. The binding worker draws from its results, and a surface's input reads the controlling layer from them as it arrives. A layer that doesn't fit a surface isn't a candidate there. Navigation groups other than `main` aren't kept across restarts. A surface-scoped helper's cells are added when its layer becomes its `main` group's current layer, attached or not, or becomes active on the surface, before that surface's next input.
+- **Why:** "k15 down, then k3 down" has to give k3's press to the shift layer. Resolving in the binding worker, after the turn, would let the second input land before the first had been resolved, unless every input waited for drawing too. In the turn, the resolution is there before the input task's next write, and `why` links it to the change that caused it. A layer that doesn't fit would be bound on controls the surface lacks, or with outputs it doesn't have. A popover left open across a restart is a surprise on a show day; `main` is the page the operator chose.
+- **Rejected:**
+  - *Resolving in the binding worker:* drawing waits on resolution anyway, but input would see the previous resolution.
+  - *Resolving in the dataflow graph, as cells:* resolution reads every layer's fields for every surface and orders them, which isn't one source with one home; and cells reading its results would make the `resolutionCycle` guard a graph cycle.
+  - *Partly fitting layers covering the controls they can:* a shift layer that loses one key to a smaller deck still takes the other two, silently.
 
 ### 11.4 Level outputs, echoes, gesture timing and per-surface helpers
 - **Decided:**

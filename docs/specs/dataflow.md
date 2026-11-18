@@ -358,6 +358,7 @@ What an expression or `{scope}` ref can name depends on where it's evaluated. **
 | `item`, `index`, `count`, `key` | a control group | the item the control shows (surfaces §6) |
 | `item`, `index`, `key` | an instance's `params` and placement fields, when it has `forEach` | the item this instance is for ([composition §4](composition.md)). Not inside the body |
 
+- **`self` in a layer's fields** is a name in expressions for `surface.<slug>` of the surface being resolved, and reads through it are tracked at their real paths. A connection alias can't be `self`. The `{scope: "self"}` ref form arrives with the other scope names (M9); until then a ref names `{root: "surface", path: [<slug>, …]}`.
 - **`params` replaces the `layer.params.<name>` shorthand** of [bindings §6](bindings.md), which collided with a layer whose slug is `params`. The absolute path is `layer.<slug>.params.<name>`.
 - **Placing binds parameters in the placer's scope.** A component placed on a layer gets `params: {camera: {ref: {scope: "params", path: ["camera"]}}}`, which reads the layer's `camera`; inside the component, `params.camera` is its own. The same holds at every level of nesting, and for every template kind ([composition §11.2](composition.md#112-one-template-primitive-for-four-kinds)).
 

@@ -91,14 +91,14 @@ impl App {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct NavigateBody {
-    /// Only `main` until navigation groups arrive.
+    /// `main` when absent.
     #[serde(default)]
     group: Option<String>,
     layer: Option<LayerId>,
 }
 
-/// Navigates a surface's `main` group to a layer, or to nothing (surfaces
-/// spec §5.3), and answers once the surface has been sent its controls'
+/// Navigates one of a surface's navigation groups, `main` by default, to a
+/// layer or to nothing (surfaces spec §5.3), and answers once the surface has been sent its controls'
 /// outputs: `{surface, group, layer}`.
 async fn navigate(
     State(app): State<Arc<App>>,
@@ -112,17 +112,17 @@ async fn navigate(
     let problem = |status: StatusCode, code: &str, message: String| {
         (status, Json(json!({ "error": message, "code": code }))).into_response()
     };
-    if let Some(group) = body.group.as_deref().filter(|g| *g != "main") {
-        return problem(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "unsupported",
-            format!("only the main group can be navigated, not {group:?}"),
-        );
-    }
-    match app.surfaces().show(&id, body.layer.as_deref(), origin) {
+    let group = body.group.as_deref().unwrap_or(surface::MAIN_GROUP);
+    match app
+        .surfaces()
+        .navigate(&id, group, body.layer.as_deref(), origin)
+    {
         Ok(()) => {
             app.surfaces().flush().await;
-            Json(json!({ "surface": id, "group": "main", "layer": body.layer })).into_response()
+            Json(json!({ "surface": id, "group": group, "layer": body.layer })).into_response()
+        }
+        Err(e @ ShowError::BadGroup(_)) => {
+            problem(StatusCode::UNPROCESSABLE_ENTITY, "invalid", e.to_string())
         }
         Err(e @ ShowError::UnknownSurface(_)) => {
             ApiError::new(StatusCode::NOT_FOUND, e.to_string()).into_response()
@@ -395,7 +395,16 @@ impl EntityKind for Layer {
                 .or_default()
                 .extend(b.outputs());
         }
-        surface::validate_layer(self, &taken, &bound)
+        let surfaces: BTreeSet<String> = read(&app.surface_entities).keys().cloned().collect();
+        surface::validate_layer(
+            self,
+            &surface::LayerContext {
+                taken_slugs: &taken,
+                bound: &bound,
+                surfaces: &surfaces,
+                evaluator: &*app.evaluator,
+            },
+        )
     }
 
     fn apply(&self, app: &App) -> Result<(), SaveError> {

@@ -256,10 +256,20 @@ async fn surfaces_layers_and_bindings_are_validated_and_stored() {
     let (status, body) = server.post(&show, json!({ "layer": "nope" })).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body["code"], "unknownLayer");
-    let (status, _) = server
-        .post(&show, json!({ "group": "popover", "layer": null }))
+    let (status, body) = server
+        .post(&show, json!({ "group": "popover", "layer": id(&audio) }))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["group"], "popover");
+    assert_eq!(
+        server.value("surface.fohDeck.current.popover").await,
+        Some(json!("audio"))
+    );
+    let (status, body) = server
+        .post(&show, json!({ "group": "pop over", "layer": null }))
         .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["code"], "invalid");
     // It has never attached, so it has no controls to copy yet.
     let (status, _) = server
         .call(

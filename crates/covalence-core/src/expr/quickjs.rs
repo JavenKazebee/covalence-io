@@ -273,6 +273,10 @@ fn setup<'js>(
         let id = t.node(name, StatePath::root(*conn));
         roots.insert((*name).to_owned(), id.into());
     }
+    for (name, path) in scope.named {
+        let id = t.node(name, path.clone());
+        roots.insert(name.clone(), id.into());
+    }
     drop(t);
 
     let map_json = |m: &BTreeMap<String, Value>| {
