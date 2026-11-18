@@ -55,16 +55,15 @@ These are the user-facing terms. Product and component names use the chemistry t
 |---|---|
 | **Plugin** | An installable package that knows how to talk to one kind of device or service, control surfaces included. It can also ship components and transforms. |
 | **Connection** | A configured, running instance of a plugin ("ProPresenter – FOH Mac"). It has an **alias** used in expressions (`pp`). The core itself is a connection, `core` ([core actions §6.1](core-actions.md#61-the-core-is-a-connection)). |
-| **Composite** | A connection users build from other connections' state, events and actions, and flows: "Camera A" ([composition §11.4](composition.md#114-composite-connections)). |
+| **Composite** | A connection users build from other connections' state, events and actions, and flows: "Camera A". A composite template is also how devices from different plugins are controlled as one kind ([composition §11.4](composition.md#114-composite-connections)). |
 | **Manifest** | What a plugin declares: config, permissions, actions, events, state schema, presets. |
 | **Action** | Something a connection can do, with typed parameters (`videohub.route`). |
-| **Target** | What an action acts on: a connection, optionally narrowed to one item it controls. Fixed, or chosen at run time ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-and-interfaces-proposed)). |
-| **Interface** | A versioned contract for one way of controlling something (`ptz.speed@1`, `ptz.presets@1`, `tally@1`), with units and ranges. Plugins implement the ones their device really does, so one action or binding works across brands ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-and-interfaces-proposed)). |
+| **Target** | What an action acts on: a connection, optionally narrowed to one item it controls. Fixed, or chosen at run time ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-proposed)). |
 | **Event** | Something that happened at a moment in time, at a node in the state tree (`pp:timerEnded`, `surface.deck.controls.k3:press`) ([dataflow §10.2](dataflow.md#102-events-are-addressed-by-state-path)). |
 | **State** | Typed values that persist over time, held in one tree (`pp.timers.countdown.remaining`). |
 | **Variable** | User-defined state (`vars.serviceStarted`): written by flows, or computed from a source. |
 | **Source** | Where a value comes from: a literal, a state path, an expression or a transform. Every field that can follow state is one ([dataflow §10.1](dataflow.md#101-one-way-to-give-a-value-one-way-to-pick-things)). |
-| **Selector** | Which things: controls, targets, paths or entities, by ID, list, region, capability, interface, pattern or expression. |
+| **Selector** | Which things: controls, targets, paths or entities, by ID, list, region, capability, plugin, template, pattern or expression. |
 | **Transform** | A function over sources: stateless (`rules`, `map`, `format`) or a reducer that keeps a value (`toggle`, `position`, `select`). Defined as sandboxed JS, so plugins and projects can add their own ([dataflow §10.3](dataflow.md#103-sources-transforms-and-sinks-helpers-are-transforms)). |
 | **Cell** | A source with a home in the state tree: a computed variable, a helper's value, a composite's state. |
 | **Sink** | Where a value goes: a control's output, a variable, or an action parameter. |

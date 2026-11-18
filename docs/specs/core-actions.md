@@ -25,7 +25,7 @@ Everything Covalence itself can do (navigate a surface, inject input, cancel a f
 | `flows` | flow ID | `flow@1` | `flow.<slug>` |
 
 - **A variable can hold "the selected deck":** `schema: {kind: "target", interface: "surface@1"}` (state spec §1.2). Its value is `{conn: "core", key: "<surface ID>"}`.
-- **Interfaces are maintained with the others** in `protocol/`. Surfaces from plugins (M7) are surfaces like any other, so they're items of `core`'s `surfaces`, not of their provider connection.
+- **Only the core implements interfaces** ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-proposed)). They're kept in `protocol/interfaces/`. Surfaces from plugins (M7) are surfaces like any other, so they're items of `core`'s `surfaces`, not of their provider connection.
 
 ## 3. Actions
 

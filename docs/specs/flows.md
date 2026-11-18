@@ -60,7 +60,7 @@ type Expr = string;                   // JS expression source (§11.2)
 | `action` **(M9)** | none: set by a composite whose action names this flow ([composition §6.2](composition.md)) | `{conn, call}`; the action's params are `input`, and `params` are the composite instance's |
 
 - **(M6) One trigger kind for every event** ([dataflow §10.2](dataflow.md#102-events-are-addressed-by-state-path)). Events happen at a node in the state tree and have a name (`pp:timerEnded`, `surface.deck.controls.k3:press`, `flow.preService:finished`, `sys:startup`). `from` picks the nodes with a path selector, a target selector, a layer or surface with a control selector, a group, or a component slot. The M5 `control` and the planned `startup` kinds are event triggers now: `{from: {layer, controls}, event: "press"}` and `{from: {path: "sys"}, event: "startup"}`.
-- An `event` trigger can listen to an interface instead of one connection. `from: {target: {interface: "tally@1"}}` fires for any camera with tally, composites included, and `trigger.source` says which ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-and-interfaces-proposed)).
+- An `event` trigger can listen to many targets instead of one connection. `from: {target: {template: <Camera's ID>}}` fires for every instance of a composite template, and `{target: {plugin: …}}` for every connection of a plugin; `trigger.source` says which ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-proposed)).
 - `state` triggers are edge-triggered. Their dependencies are tracked at run time, like bindings. **(M6)** `when` can be a structured source (`{use: "compare", …}`), as well as an expression string.
 - **A control's input is state, and its events are derived from that state** ([surfaces §11.2](surfaces.md#112-surfaces-are-two-way-devices-and-control-input-is-state), [surfaces spec §4](surfaces.md)). An event trigger is the quick way in for them: a press, a double, a turn. A layer source matches per surface, on whichever surfaces that layer controls the control.
 - **(M6) Flows emit events** at `flow.<slug>`: `started`, `finished` and `failed`, with `{run, status, error?}`. "When that flow finishes" is an event trigger.
@@ -110,7 +110,10 @@ type Target = { conn: string; key?: PathSegment };          // plugin protocol s
 
 // (M6) An action step's target is a Source (dataflow §1): a literal Target is fixed;
 // a ref or an expression is dynamic, and then `constraint` is required.
-type TargetConstraint = { plugin: string } | { interface: string | string[] };   // "ptz.presets@1"; a list requires all of them
+type TargetConstraint =
+  | { plugin: string }                // every connection of a plugin, and its items
+  | { template: string }              // (M9) every instance of a composite template, and its items (composition §6.5)
+  | { interface: string };            // one of the core's: "surface@1", "flow@1"
 ```
 
 - **(M6) Parameters are `Source`s,** one per top-level parameter: a literal, `{ref}`, `{expr}` or a stateless transform. This generalises M4's `{expr}` parameters (§8.3), which are already in this shape.
@@ -151,7 +154,7 @@ Steps read data through expressions. These names are in scope:
 | `<as>`, `index` | The current loop item and index, inside `forEach` | no |
 | `error` | The error, inside a `catch` | no |
 | state roots | `<alias>`, `vars`, `sys`, `surface`, `layer` (M5: `page`), `flow` ([state spec §1.1](state-and-event-log.md)) | `vars` via `set` and scripts |
-| `target(t)` | A target's state ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-and-interfaces-proposed)) | no |
+| `target(t)` | A target's state ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-proposed)) | no |
 | `params` **(M9)** | The flow instance's parameters, or its owner instance's for an owned flow: a layer's, a composite's or a placement's ([composition §2](composition.md)) | no |
 
 - **Steps in a branch that didn't run are absent** from `steps`. Reading them gives `undefined`, like any missing value ([§11.2](#112-expressions-and-scripts-one-language-sandboxed-by-where-code-runs)).
@@ -170,8 +173,8 @@ Types are checked **when editing**. Values stay dynamic at runtime.
   - each action's `result` schema, for `steps.<id>.result`
   - `local` names, inferred from `set` steps. A `local` may also be declared with a schema in `editor.locals`
   - the state schema and plugin manifests, as in [§11.2](#112-expressions-and-scripts-one-language-sandboxed-by-where-code-runs)
-  - interface schemas, for dynamic targets
-- Action `params` are checked against the action's schema, or against the interface's when the target is an interface.
+  - for a dynamic target, the constraint's actions: the plugin's manifest, the composite template's actions, or the core interface's
+- Action `params` are checked against the action's schema, taken from the target's constraint when the target is dynamic.
 - **Errors block publishing. Warnings don't.** Drafts can be saved with errors ([state spec §7.5](state-and-event-log.md#75-multi-user-editing-designed-not-built)).
   - Errors: unknown action, missing required parameter, type mismatch, a `break` outside a loop, a reference to a step ID that doesn't exist.
   - Warnings: a state path that isn't in the schema yet (it may appear after a connection connects), and possibly-`undefined` reads.
@@ -191,7 +194,7 @@ Types are checked **when editing**. Values stay dynamic at runtime.
 
 ### 5.3 Journaling
 - Each step logs `run.step` `started`, then `done`, `failed` or `skipped`. `detail` carries the step's position and, on failure, the error.
-- Actions log `action.requested` with `cause` → the `run.step` entry. A dynamic target also records the resolved `conn`, `key` and `via` ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-and-interfaces-proposed)).
+- Actions log `action.requested` with `cause` → the `run.step` entry. A dynamic target also records the resolved `conn` and `key` ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-proposed)).
 - `retry` attempts each journal a `run.step` entry, with `attempt` in `detail`.
 
 ### 5.4 Flow status in state
@@ -237,7 +240,7 @@ body:
   - id: recall
     kind: action
     target: { ref: { root: vars, path: [selectedCam] } }
-    constraint: { interface: ptz.presets@1 }
+    constraint: { template: 01JC0CAMERA0TEMPLATE0000000 }   # camera
     action: recallPreset
     params: { preset: { expr: params.shot } }
     timeout: 2s

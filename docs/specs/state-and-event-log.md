@@ -48,7 +48,7 @@ type Value =
 
 The **state schema** (declared by the plugin manifest, or by the user for variables) adds meaning to the plain types:
 - `unit`: `ms`, `s`, `dB`, `%`, `Hz`, `K`, `fps`
-- `kind`: `duration`, `timestamp`, `color`, `enum` (with labels), `percent`, `id`, `target` (a connection or item, with an optional `interface` constraint; proposed in [plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-and-interfaces-proposed))
+- `kind`: `duration`, `timestamp`, `color`, `enum` (with labels), `percent`, `id`, `target` (a connection or item, with an optional constraint: a plugin, a composite template or one of the core's interfaces; proposed in [plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-proposed))
 - `range`, `step`
 - `readOnly`
 - `description`
@@ -176,7 +176,7 @@ Ordering is defined **only** by `seq` within a log. `ts` is for display.
 | `run.step` | `{run, step, status: started\|done\|failed\|skipped, detail?}` | |
 | `run.checkpoint` | `{run, step, locals}` | For `resume` on failover |
 | `run.finished` | `{run, status: ok\|failed\|cancelled\|aborted, error?}` | |
-| `action.requested` | `{call, conn, key?, via?, action, params, deadline?}` | `call` is the idempotency key. `key` and `via` (interface) record a resolved dynamic target ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-and-interfaces-proposed)) |
+| `action.requested` | `{call, conn, key?, action, params, deadline?}` | `call` is the idempotency key. `key` records the item of a resolved dynamic target ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-proposed)) |
 | `action.dispatched` | `{call}` | Passed the output gate |
 | `action.suppressed` | `{call, reason: standby\|simulate\|showLock\|permission\|staleTerm}` | |
 | `action.result` | `{call, ok, result?, error?, durationMs}` | |

@@ -888,8 +888,8 @@ fn alias_map(conns: &BTreeMap<ConnId, Connection>) -> BTreeMap<String, ConnId> {
         .collect()
 }
 
-/// Connections as target selectors see them. No plugin declares interfaces
-/// yet (plugin protocol spec §13.9), so `{interface}` picks none of them.
+/// Connections as target selectors see them. Only the core implements
+/// interfaces (plugin protocol spec §13.9), so `{interface}` picks none of them.
 fn target_views(conns: &BTreeMap<ConnId, Connection>) -> Vec<TargetView> {
     conns
         .values()

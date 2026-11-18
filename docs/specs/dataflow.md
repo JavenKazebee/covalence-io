@@ -92,14 +92,14 @@ type Selector<Id> =
 | Domain | `Id` | Extra forms | Universe for `not` |
 |---|---|---|---|
 | **Controls** | a control ID | `{region: Rect}`, `{near: "left" \| "right" \| "above" \| "below", of: string}`, `{has: {inputs?, outputs?}}` | the controls of the layer, surface or group it's on |
-| **Targets** | `Target` (`{conn, key?}`; a string is a connection ID) | `{plugin: string}`, `{interface: string}` | every connection and item |
+| **Targets** | `Target` (`{conn, key?}`; a string is a connection ID) | `{plugin: string}`, `{template: string}` (M9), `{interface: string}` | every connection and item |
 | **Paths** | `Ref` | `{match: PathPattern}` | none: `not` only inside `all` |
 | **Entities** | an entity ID | `{tag: string}` (Later) | every entity of the type |
 
 - **Controls are resolved per surface.** A layer's `controls: {region}` covers whatever controls lie in the rectangle on each surface (surfaces §2). `has` filters by capability: `{has: {inputs: ["relative"]}}` is every encoder.
-- **`{interface}` resolves to every target implementing it,** including items through `at` ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-and-interfaces-proposed)) and composites that declare it, or each of their items (composition §6).
+- **`{template}` resolves to every instance of a composite template,** or each item of a `forEach` instance (composition §6.5). **`{interface}`** resolves to the core's collections that implement it: every surface for `surface@1` ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-proposed)).
 - **`PathPattern`** is a text path where `*` matches one segment: `surface.*.controls.*.pressed`. The segments it matched are its **captures**, in order.
-- **Reactive selectors re-resolve** when their reads change, or when the domain changes: a control attaches, a connection is created, an interface gets a new implementer.
+- **Reactive selectors re-resolve** when their reads change, or when the domain changes: a control attaches, a connection is created, a composite instance gains an item.
 - **Order is stable:** a selector's result is in the domain's order (controls by `at`, row-major; targets and entities by ID), so a control group's items line up the same way every time.
 - **Validation:** an ID that doesn't exist is an error (`unknownControl`, `unknownConnection`, `unknownLayer` …), except inside `expr`, where it resolves to nothing at run time.
 
@@ -120,7 +120,6 @@ Every event happens **at a node in the state tree** and has a **name**. The text
 
 - **Events are journaled as one kind,** `event` ([state spec §2.2](state-and-event-log.md)), with the node's path in ID form, the name, the payload and its context: `surface`, `layer`, `control` and `item` for control input; `conn` and `key` for a target's. `input.event` is folded into it.
 - **The payload is the event's own data:** `{delta}` for `turn` and `hold`, `{value}` for `change`, the `EventDef` payload for a plugin's.
-- **Interface events** are reached through the interface's name. A plugin's `tallyChanged` mapped to `tally@1`'s `changed` is addressable as either.
 
 ### 3.1 Event sources
 
@@ -135,7 +134,7 @@ interface EventSpec {
 
 type EventSource =
   | { path: Selector<Ref> }                                   // any node(s); {match} for patterns
-  | { target: Selector<Target> }                              // connections, items, interfaces
+  | { target: Selector<Target> }                              // connections, items, plugins, composite templates
   | { layer: string; controls?: Selector<ControlId> }         // the controls a layer controls, per surface
   | { surface: string; controls?: Selector<ControlId> }       // whatever layer controls them
   | { group: string }                                         // (Later) any control in a control group
@@ -143,7 +142,7 @@ type EventSource =
   | { controls: Selector<ControlId> };                        // (M9) in a flow a layer owns: that layer's controls
 ```
 
-- **Every form reduces to a path pattern and a context filter.** `{layer: L, controls: [k0]}` is `{path: {match: "surface.*.controls.k0"}}` where the event's `layer` is `L`. `{target: {interface: "tally@1"}}` is the roots of every implementer, with names mapped through the interface. The matcher indexes them, so a trigger costs nothing until its events happen.
+- **Every form reduces to a path pattern and a context filter.** `{layer: L, controls: [k0]}` is `{path: {match: "surface.*.controls.k0"}}` where the event's `layer` is `L`. `{target: {template: T}}` is the roots of every instance of `T` and their items. The matcher indexes them, so a trigger costs nothing until its events happen.
 - **The `trigger` payload is the same for every event:** `{path, event, payload, captures?, source?, surface?, layer?, control?, item?, index?, instance?}`. `source` is the target, for target events. `captures` are the pattern's matches. **(M9)** `instance` is the chain of instances the event came from ([composition §5](composition.md)).
 - **A `layer` source matches per surface,** on whichever surfaces that layer controlled the control when the input arrived, as `control` triggers did (surfaces §7).
 
@@ -237,7 +236,7 @@ export default defineTransform({
 - **Pure functions only.** No host API, no clock (`now` is passed in), no randomness, no state between calls except what `step` returns. The core keeps the state. A step can return `wakeAt` (ms, scheduler time) to be stepped again with `event: undefined`.
 - **Limits:** the bindings' 10 ms per call and the expression memory limit. A failing step keeps the previous state and value and is reported like a binding error.
 - **Native implementations are allowed** for speed, if a conformance suite runs the definition and the native code over the same inputs and requires equal states, values and events. The definition is the specification.
-- **Names.** Built-ins are bare (`toggle`). **(M9)** A plugin's are `<plugin id>/<id>` (`io.covalence.streamdeck/ringLevel`), and a project's are `project/<slug>`. Versions follow the interface rule: a breaking change is a new `version`, and a saved `use` may name one (`toggle@1`).
+- **Names.** Built-ins are bare (`toggle`). **(M9)** A plugin's are `<plugin id>/<id>` (`io.covalence.streamdeck/ringLevel`), and a project's are `project/<slug>`. A breaking change is a new `version`, and a saved `use` may name one (`toggle@1`).
 
 ---
 

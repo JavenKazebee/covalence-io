@@ -7,7 +7,7 @@ The single source of truth for the plugin protocol ([plugin protocol §13.1](../
 | `main.tsp`, `src/*.tsp` | TypeSpec source |
 | `json-schema/` | Emitted JSON Schema. Generated, but committed, so other-language SDKs don't need TypeSpec |
 | `scripts/gen-ts.mjs` | Generates `packages/protocol/types.gen.ts` from the JSON Schema |
-| `interfaces/*.json` | Interfaces ([plugin protocol spec §13.9](../docs/specs/plugin-protocol.md#139-dynamic-targets-and-interfaces-proposed)): `surface@1` and `flow@1`, which the core connection implements (core actions spec) |
+| `interfaces/*.json` | The core's interfaces ([plugin protocol spec §13.9](../docs/specs/plugin-protocol.md#139-dynamic-targets-proposed)): `surface@1` and `flow@1`, which the core connection implements (core actions spec) |
 | `fixtures/messages.json` | Golden messages: every message type, with every optional field filled |
 | `fixtures/invalid.json` | Messages both sides must reject |
 | `fixtures/encoded/` | MessagePack frames produced by each side; each side's tests decode the other's |

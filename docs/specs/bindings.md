@@ -143,7 +143,7 @@ The shapes above, with these rules, which the native evaluator and the compiled 
 
 ## 4. Typing
 
-- The editor knows the type of every `Ref` from the state schema, plugin manifests and interfaces, and checks each kind against the property's expected type.
+- The editor knows the type of every `Ref` from the state schema, plugin manifests and composite templates, and checks each kind against the property's expected type.
   - `rules`: each `value` must match the property type, and each `Condition.value` must match the type at `path`.
   - `map`: `path` must be a number.
   - `expr`: checked with the generated TypeScript definitions ([flows spec §11.2](flows.md#112-expressions-and-scripts-one-language-sandboxed-by-where-code-runs)).
@@ -192,9 +192,9 @@ type Helper = ReducerSource & {                 // {use: "toggle" | "position" |
 
 ## 6. Layer parameters and templates (M9)
 
-- **A layer can declare parameters:** `params: { camera: { kind: "target", interface: "ptz.speed@1" } }`. Their values live at `layer.<slug>.params.<name>`, and the layer's own bindings, helpers and owned flows read them as `params.<name>` (dataflow §8). Nothing reads them implicitly from another layer or from a free-standing flow ([composition §11.1](composition.md#111-reuse-is-by-parameters-never-by-copying-or-overriding), [composition §11.2](composition.md#112-one-template-primitive-for-four-kinds)).
-- **One layer, a selector row.** The layer's `camera` parameter defaults to `{ref: vars.selectedCam}`, and buttons at the top set that variable. Every binding and action on the layer that uses `params.camera` follows the selection. This is the main "control any camera" layout ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-and-interfaces-proposed)).
-- **Or instances.** "Create from template" makes an **instance** ([composition §7](composition.md)), and one instance with `forEach: {targets: {interface: "ptz.speed@1"}}` makes a layer per camera, including cameras added during the show ([composition §4](composition.md)). Instances follow their template: there are no copies to drift. To spread a list over the controls of one layer, a control group (surfaces §6) does it instead.
+- **A layer can declare parameters:** `params: { camera: { kind: "target", constraint: { template: "<Camera's ID>" } } }`. Their values live at `layer.<slug>.params.<name>`, and the layer's own bindings, helpers and owned flows read them as `params.<name>` (dataflow §8). Nothing reads them implicitly from another layer or from a free-standing flow ([composition §11.1](composition.md#111-reuse-is-by-parameters-never-by-copying-or-overriding), [composition §11.2](composition.md#112-one-template-primitive-for-four-kinds)).
+- **One layer, a selector row.** The layer's `camera` parameter defaults to `{ref: vars.selectedCam}`, and buttons at the top set that variable. Every binding and action on the layer that uses `params.camera` follows the selection. This is the main "control any camera" layout. Cameras from one plugin can be constrained by plugin instead; cameras from several meet in a composite template ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-proposed)).
+- **Or instances.** "Create from template" makes an **instance** ([composition §7](composition.md)), and one instance with `forEach: {targets: {template: "<Camera's ID>"}}` makes a layer per camera, including cameras added during the show ([composition §4](composition.md)). Instances follow their template: there are no copies to drift. To spread a list over the controls of one layer, a control group (surfaces §6) does it instead.
 
 ---
 

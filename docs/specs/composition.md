@@ -21,7 +21,7 @@ Users build bigger things out of smaller ones, and reuse them by giving them par
 ## 1. Templates and instances
 
 ```ts
-interface ParamDef extends StateSchemaNode {   // type, kind (target with interface…), description
+interface ParamDef extends StateSchemaNode {   // type, kind (a target with a constraint…), description
   default?: Source<Value>;            // used by the template itself, and by instances that don't bind it
   required?: boolean;                 // no default and required: the template is abstract
 }
@@ -120,7 +120,7 @@ Flows have both, with the same `ParamDef` shape, binding shape and editor:
 ```ts
 type ForEach = (
   | { items: Source<Value[]> }               // a live list: {expr: "target(vars.selectedCam).isos"}
-  | { targets: Selector<Target> }            // every target the selector picks: {interface: "recorder@1"}
+  | { targets: Selector<Target> }            // every target the selector picks: {plugin: "io.covalence.recsim"}
 ) & {
   key?: Expr;                                // each item's identity; default the item, or a target's ID form
 };
@@ -160,7 +160,7 @@ type ForEach = (
 
 ## 6. Composite connections
 
-A **composite** is a connection whose definition is a project entity, not a plugin. It has an alias, state, actions and events like any other connection, and it can implement interfaces, so every layer, binding and flow written against an interface works with it.
+A **composite** is a connection whose definition is a project entity, not a plugin. It has an alias, state, actions and events like any other connection, so nothing downstream knows it's composite. A **composite template** is also the project's own contract for a kind of thing: a layer, binding or flow constrained to it works with every instance, whatever devices each one binds (§6.5).
 
 ```ts
 interface Connection {
@@ -177,8 +177,6 @@ interface CompositeDef extends TemplateFields {
   connected?: Source<boolean>;        // default: true while every connection it reads is connected
   actions?: { [id: string]: CompositeAction };
   events?: { [id: string]: CompositeEvent };
-  implements?: InterfaceImpls;        // as a plugin manifest's (plugin protocol spec §13.9)
-  delegate?: { interface: string; to: Source<Target> }[];   // §6.5: whole interfaces passed through
 }
 
 type StateSources = { [segment: string]: Source<Value> | StateSources };
@@ -217,14 +215,13 @@ interface CompositeEvent {
 
 ### 6.4 Collections
 - **A composite with `forEach` is one connection with a collection.** Each item is a target, `{conn, key: ["items", <key>]}`, with its state at `<alias>.items[<key>]`.
-- **Its interfaces are implemented per item,** through `at: ["items"]` ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-and-interfaces-proposed)), so `{interface: "ptz.speed@1"}` selects each item like a real camera.
+- **Each item is an instance of the template,** so `{template}` selects each item as it does a single instance (§6.5).
 - **Actions and events are per item:** an action on an item's target runs with that item's `params`, and an item's events carry its key in `instance`.
 
-### 6.5 Interfaces
-- `implements` maps the composite's members to an interface's, as a plugin manifest does. Conformance is checked when the composite is saved, with the same rules as a plugin's at load.
-- A composite with `implements: {"tally@1": {}}` is selected by `{interface: "tally@1"}` like a real camera.
-- **`delegate`** passes whole interfaces through to another target ([§11.4](#114-composite-connections)): `[{interface, to: Source<Target>}]`. Every member of the interface on `to` becomes the composite's, and the composite implements it. `to`'s constraint must include the interface (checked on save), and a delegated member can't also be defined (`duplicateMember`). Delegated actions are `internal` and cause the target's `action.requested`, with `via`.
-- **Delegate what you pass through, define what you add.** A camera built from a PTZ head and a switcher delegates the `ptz.*` interfaces to the head and defines `tally@1` itself.
+### 6.5 Templates as contracts
+- **A constraint `{template: <id>}` accepts every instance of a composite template,** and each item of a `forEach` one, and nothing else ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-proposed)). The editor types parameters and `target(t)` from the template's actions and state, which every instance shares.
+- **Different devices behind one template are bridged by the template, in the open.** Instances bind whatever devices they have; where plugins differ, the template's state expressions and owned flows handle it, for example by branching on `target(params.ptz).plugin`. `why` follows the branch to the real device.
+- **Every action is declared.** A composite offers only the actions it lists, each a `forward` or an owned flow. Nothing is passed through wholesale, so the template's shape is the same whatever an instance binds.
 
 ### 6.6 Limits
 - **Composites combine others by reference,** through target params. A state cycle is `cycle` (dataflow §5.3). An action that ends up invoking itself is stopped by the loop guard (flows §8.6), and calls nest at most 16 deep (`tooDeep`).
@@ -240,24 +237,25 @@ alias: camera
 plugin: core.composite
 config:
   params:
-    ptz:      { kind: target, interface: [ptz.speed@1, ptz.presets@1], required: true }
-    switcher: { kind: target, interface: switcher@1, required: true }
+    ptz:      { kind: target, constraint: { plugin: io.covalence.ptzsim }, required: true }
+    switcher: { kind: target, constraint: { plugin: io.covalence.switchersim }, required: true }
     input:    { type: integer, required: true }
-    recorder: { kind: target, interface: recorder@1 }
-  delegate:                      # passed through whole: every action, event and state member
-    - { interface: ptz.speed@1,   to: { ref: { scope: params, path: [ptz] } } }
-    - { interface: ptz.presets@1, to: { ref: { scope: params, path: [ptz] } } }
-    - { interface: recorder@1,    to: { ref: { scope: params, path: [recorder] } } }
-  state:                         # what this composite adds
+    recorder: { kind: target, constraint: { plugin: io.covalence.recsim } }
+  state:
     tally:
       program: { expr: "target(params.switcher).program == params.input" }
       preview: { expr: "target(params.switcher).preview == params.input" }
+    recording: { expr: "target(params.recorder).recording" }
   actions:
+    recallPreset:
+      params: { type: object, properties: { preset: { type: integer } }, required: [preset] }
+      forward:
+        target: { ref: { scope: params, path: [ptz] } }
+        action: recallPreset
+        params: { preset: { expr: "input.preset" } }
     takeLive:
       params: { type: object }
       flow: 01JC0TAKE0LIVE0FLOW00000000   # a flow with owner: this composite
-  implements:
-    tally@1: {}
 ---
 name: Cameras
 alias: cams
@@ -270,7 +268,7 @@ params:
   input:    { expr: "item.input" }
 ```
 
-`cams.items["Cam A"].tally.program` follows the switcher, and `{conn: cams, key: ["items", "Cam A"]}` is a `ptz.speed@1`, `ptz.presets@1`, `recorder@1` and `tally@1` target. A recorder that isn't set reads as disconnected, and its delegated actions fail with `no_target`.
+`cams.items["Cam A"].tally.program` follows the switcher, and `{conn: cams, key: ["items", "Cam A"]}` is accepted by `{template: <Camera's ID>}`. A recorder that isn't set reads as disconnected. A rig with a second make of PTZ widens `ptz` to an unconstrained target and makes `recallPreset` an owned flow that branches on `target(params.ptz).plugin`.
 
 ---
 
@@ -348,7 +346,7 @@ interface Part {
 name: Tally key
 slug: tallyKey
 params:
-  camera: { kind: target, interface: tally@1, required: true }
+  camera: { kind: target, constraint: { template: <Camera's ID> }, required: true }
   label:  { type: string }
 slots:
   - { id: key, inputs: [momentary], outputs: [image] }
@@ -374,7 +372,7 @@ flows:
 name: Camera strip
 slug: cameraStrip
 params:
-  camera: { kind: target, interface: [tally@1, recorder@1], required: true }
+  camera: { kind: target, constraint: { template: <Camera's ID> }, required: true }
 slots:
   - { id: tally, inputs: [momentary], outputs: [image] }
   - { id: rec,   inputs: [momentary], outputs: [image] }
@@ -389,7 +387,7 @@ bindings:
   rec:
     props:
       label: REC
-      background: { use: rules, rules: [{ when: { expr: "target(params.camera).recorder.recording" }, value: "#d00" }], else: "#222" }
+      background: { use: rules, rules: [{ when: { expr: "target(params.camera).recording" }, value: "#d00" }], else: "#222" }
 ```
 
 ---
@@ -398,7 +396,7 @@ bindings:
 
 - **A flow with `params` is a template.** Its instances are flows with `template` and `params`, and their own `slug`, `enabled` and `owner`. Triggers, conditions, concurrency and steps come from the template.
 - **`params` and `inputs` are different** (§2.1): params are bound once per instance and follow state, inputs are bound per run.
-- **A flow instance with `forEach`** is one flow per item: `template: recorderWatchdog`, `forEach: {targets: {interface: "recorder@1"}}`, `params: {recorder: {expr: "item"}}` watches every recorder, including ones added during the show.
+- **A flow instance with `forEach`** is one flow per item: `template: recorderWatchdog`, `forEach: {targets: {plugin: "io.covalence.recsim"}}`, `params: {recorder: {expr: "item"}}` watches every recorder, including ones added during the show.
 - **Each instance has its own runs** and its own concurrency. `flow.<slug>.items[<key>]:failed` is one recorder's watchdog failing, and `flow.<slug>.items.*:failed` (dataflow §2) is any of them.
 - **A `call` step names a flow,** not an instance. Calling a flow template binds its `inputs`. Its `params` take their defaults, and calling an abstract one is `unboundParam`.
 
@@ -443,10 +441,11 @@ Why composition works this way, and what was rejected. This is one proposed desi
 - **Rejected:** per-item copies made by the editor; copies don't follow the list while the show runs.
 
 ### 11.4 Composite connections
-- **Decided:** a composite is a connection (plugin `core.composite`) defined in the project, with params, state as cells, actions that run a flow or forward to another target, re-emitted events, `implements`, and `delegate` to pass whole interfaces through (§6). Nothing downstream knows it's composite. Causation runs through it, so `why` reaches the real device, and its actions are `internal` while the actions they cause are gated themselves.
-- **Why:** a "camera" on a show is several devices: PTZ from one connection, tally from the switcher, record state from a recorder, an iris from a CCU. Interfaces let a layer control any camera, but one connection at a time. A composite makes "Camera A" one target, selectable by interfaces like a real camera, and lets users adapt a device to an interface its plugin doesn't implement without writing a plugin. With `delegate`, adding tally doesn't mean forwarding every PTZ action by hand. A composite's state is only as fresh as what it reads.
+- **Decided:** a composite is a connection (plugin `core.composite`) defined in the project, with params, state as cells, actions that run a flow or forward to another target, and re-emitted events (§6). A composite template is the contract that a constraint names (§6.5). Nothing downstream knows it's composite. Causation runs through it, so `why` reaches the real device, and its actions are `internal` while the actions they cause are gated themselves.
+- **Why:** a "camera" on a show is several devices: PTZ from one connection, tally from the switcher, record state from a recorder, an iris from a CCU. A composite makes "Camera A" one target. Its template gives every camera the same shape, so one layer or flow works with all of them, and devices from different plugins are bridged in the template, where users can see and change it, without writing a plugin. A composite's state is only as fresh as what it reads.
 - **Rejected:**
   - *Aggregator plugins:* hand-written per combination, and the journal sees only the aggregator.
-  - *Standalone interface implementations* (an entity mapping a connection onto an interface): with capability-sized interfaces and `range`, it would only rename and convert, which is the plugin author's job. Revisit if real projects wrap the same plugin over and over.
+  - *Device interfaces that composites implement, with `delegate` to pass a whole interface through:* dropped with device interfaces themselves ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-proposed)). Without them, a template declares each action it offers, which is more typing for a composite that only passes a PTZ through, and keeps its shape the same whatever an instance binds.
+  - *Standalone interface implementations* (an entity mapping a connection onto an interface): moot without device interfaces; a composite does the mapping.
   - *Targets spanning several connections* (`{conn: [a, b]}`): every place that resolves a target would merge state and route actions.
   - *Layer parameters only:* every layer, binding and flow repeats the wiring, and nothing can select "a camera" as one thing.
