@@ -1,6 +1,6 @@
 // Flows: the implemented subset of the flow spec (docs/specs/flows.md §8, §9).
 // Mirrors `covalence_core::flow` by hand; the shared fixtures in
-// crates/covalence-core/fixtures/flows/ catch drift (ADR 0020).
+// crates/covalence-core/fixtures/flows/ catch drift (overview spec: project entities).
 
 import type { JsonSchema, Manifest } from "../api";
 import { fieldsOf, parseValues, type Field } from "../forms/schema";

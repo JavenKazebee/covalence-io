@@ -129,7 +129,7 @@ async fn plugins(State(app): State<Arc<App>>) -> Json<JsonValue> {
 }
 
 /// The project's connections, and `core`, which always exists. A connection
-/// whose plugin opens its own sockets says `directNetwork` (ADR 0025): its
+/// whose plugin opens its own sockets says `directNetwork` (plugin protocol spec §13.6): its
 /// traffic isn't seen by the core, so the UI marks it as not inspectable.
 async fn connections(State(app): State<Arc<App>>) -> Json<JsonValue> {
     let conns: Vec<Connection> = app.conns().values().cloned().collect();
@@ -213,7 +213,7 @@ async fn traffic(
     let handles = app.core.host().io().traffic(&conn.id);
     Ok(Json(json!({
         "conn": conn.id,
-        // Opens its own sockets: what it sends isn't seen here (ADR 0025).
+        // Opens its own sockets: what it sends isn't seen here (plugin protocol spec §13.6).
         "inspectable": app.manifest(&conn.plugin).await.is_none_or(|m| m.direct_network != Some(true)),
         "handles": handles,
     })))

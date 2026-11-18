@@ -1,4 +1,4 @@
-//! The expression engine: QuickJS-ng through `rquickjs` (ADR 0004, ADR 0021).
+//! The expression engine: QuickJS-ng through `rquickjs` (flows spec §11.2).
 //!
 //! Every evaluation gets a fresh context, so nothing carries over between
 //! evaluations. The context has no timers, `performance` or weak references,

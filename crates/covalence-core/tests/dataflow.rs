@@ -1,4 +1,4 @@
-//! Cells and the graph (dataflow spec §5): M8 Phase 2.
+//! Cells and the graph (dataflow spec §5).
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -520,7 +520,7 @@ fn a_failing_cell_keeps_its_value_and_a_removed_one_takes_its_value_with_it() {
 }
 
 // ---------------------------------------------------------------------------
-// Sinks (dataflow §7): M8 Phase 3
+// Sinks (dataflow §7)
 
 /// Journals requests as the core does, and keeps them.
 #[derive(Default)]
@@ -765,7 +765,7 @@ fn a_sink_stays_quiet_for_its_own_echo_and_for_edits() {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers on controls (surfaces §4.3): M8 Phase 4
+// Helpers on controls (surfaces §4.3)
 
 const LAYER: &str = "01JC5PAGE00000000000000001";
 

@@ -1017,7 +1017,7 @@ async fn a_control_trigger_on_a_dial_gets_the_turn() {
     runtime.shutdown().await;
 }
 
-/// ADR 0035: input the host marks as an echo (a motor fader following what
+/// surfaces spec §11.4: input the host marks as an echo (a motor fader following what
 /// it was sent) moves the control's state and gives no events.
 #[tokio::test(start_paused = true)]
 async fn echoes_marked_by_the_host_are_state_only() {
@@ -1062,7 +1062,7 @@ fn set_var(shared: &Shared, name: &str, v: Value) {
     shared.state.mutate(|tree| ((), tree.set(&at, &v, &meta)));
 }
 
-/// ADR 0035: a binding's `gestures` set its control's timing. `longAfter`
+/// surfaces spec §11.4: a binding's `gestures` set its control's timing. `longAfter`
 /// and `holdEvery` are read when the control goes down and kept for the
 /// press; `doubleWindow` at the next press.
 #[tokio::test(start_paused = true)]

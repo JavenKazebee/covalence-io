@@ -1,4 +1,4 @@
-//! Host supervisor (architecture: Host Supervisor; protocol spec §2–§6).
+//! Host supervisor (overview spec: Host Supervisor; protocol spec §2–§6).
 //!
 //! Spawns a host child process and speaks the protocol with it over stdio:
 //!

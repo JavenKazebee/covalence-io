@@ -27,7 +27,7 @@ pub const DEFAULT_RING_CAPACITY: usize = 100_000;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Entry {
     pub seq: Seq,
-    /// Leadership term (ADR 0008); 1 for a single node.
+    /// Leadership term (state spec §7.4); 1 for a single node.
     pub term: u32,
     /// Wall clock, RFC 3339 with microseconds. For display only.
     pub ts: String,
@@ -229,7 +229,7 @@ pub struct ActionRequestedRecord {
     /// ULID; the idempotency key.
     pub call: String,
     pub conn: ConnId,
-    /// The item within the connection (ADR 0019): a surface or flow of `core`.
+    /// The item within the connection (plugin protocol spec §13.9): a surface or flow of `core`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
     pub action: String,
@@ -526,7 +526,7 @@ impl Journal {
         self.lock().term
     }
 
-    /// Changes the leadership term (on promotion, ADR 0008).
+    /// Changes the leadership term (on promotion, state spec §7.4).
     pub fn set_term(&self, term: u32) -> Result<(), JournalError> {
         let mut inner = self.lock();
         if let Some(store) = &inner.store {

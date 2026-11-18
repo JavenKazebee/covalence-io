@@ -1,11 +1,11 @@
-//! Stateless transforms (dataflow spec §4.1, ADR 0026): functions over
+//! Stateless transforms (dataflow spec §4.1, §10.1): functions over
 //! sources, used as `{use: <id>, …options}` wherever a source can be.
 //!
 //! `format`, `template`, `rules` and `map` are M5's binding kinds; `compare`,
 //! `all`, `any` and `not` let conditions combine. Their options are sources,
 //! so they chain. Each is evaluated natively ([`Transform::evaluate`]),
 //! following the rules of bindings §2.1, and compiles to an expression
-//! ([`Transform::to_expr`]) that gives the same result (ADR 0023).
+//! ([`Transform::to_expr`]) that gives the same result (bindings spec §9.2).
 
 use std::collections::BTreeMap;
 

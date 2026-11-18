@@ -1,6 +1,6 @@
 //! State, events and logs (host → core). Spec §6.
 //!
-//! Paths are segment arrays relative to the connection root (ADR 0017).
+//! Paths are segment arrays relative to the connection root (plugin protocol spec §13.3).
 
 use serde::{Deserialize, Serialize};
 

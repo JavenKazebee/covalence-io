@@ -1,4 +1,4 @@
-//! SQLite working store: entities, runtime journal, snapshots and assets (ADR 0006).
+//! SQLite working store: entities, runtime journal, snapshots and assets (state spec §7.2).
 //!
 //! Milestone 1 needs the runtime journal, `meta` and materialised `entities`
 //! (state spec §5); the project op log comes later. The store knows nothing

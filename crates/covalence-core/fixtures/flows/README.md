@@ -1,6 +1,6 @@
 # Flow fixtures
 
-Example flows shared by the Rust tests (`crates/covalence-core/tests/flow_fixtures.rs`) and the UI's tests (ADR 0020).
+Example flows shared by the Rust tests (`crates/covalence-core/tests/flow_fixtures.rs`) and the UI's tests ([overview spec: project entities](../../../../docs/specs/overview.md#project-entities-are-rust-types)).
 
 - `*.json`: valid flows, exactly as stored and as the API sends them. Each must parse, validate with no errors or warnings, and round-trip unchanged.
 - `problems/*.json`: `{flow, errors, warnings}`, where `errors` and `warnings` list the expected `{path, code}` of each problem, in the order validation reports them.

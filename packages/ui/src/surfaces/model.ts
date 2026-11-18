@@ -19,7 +19,7 @@ export interface Surface {
   startLayer?: string;
   /** The connection whose device this is, for a surface a plugin provides. */
   provider?: string;
-  /** A virtual deck's encoders and faders, beside its keys (ADR 0035). */
+  /** A virtual deck's encoders and faders, beside its keys (surfaces spec §11.4). */
   virtual?: VirtualLayout;
 }
 
@@ -106,7 +106,7 @@ export function keysOf(layout: Layout): string[] {
 /**
  * The controls a deck of `model` attaches with (surfaces spec §8): its keys,
  * then `layout`'s encoders in a row beneath them and faders to their right
- * (ADR 0035). The core builds the same list (`virtual_controls`).
+ * (surfaces spec §11.4). The core builds the same list (`virtual_controls`).
  */
 export function deckControls(model: Model, layout: VirtualLayout = {}): ControlDef[] {
   const { cols, rows } = model.layout;

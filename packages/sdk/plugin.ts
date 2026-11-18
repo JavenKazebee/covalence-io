@@ -120,7 +120,7 @@ export interface ActionSpec<C, E, S, P> {
   run(ctx: Context<C, E, S>, params: P, call: CallInfo): unknown;
 }
 
-/** The state-level simulator (ADR 0012): used when `mode` is `simulate`. */
+/** The state-level simulator (overview spec: simulated devices): used when `mode` is `simulate`. */
 export interface SimulatorSpec<C, E, A> {
   /** Publishes believable initial state. */
   init?(sim: BaseContext<C, E>): void | Promise<void>;
@@ -147,11 +147,11 @@ export interface PluginDefinition<C, E, S, A> {
   icon?: string;
 
   config: Schema<C>;
-  /** Config schema version (ADR 0006). Defaults to 1. */
+  /** Config schema version (state spec §7.2). Defaults to 1. */
   configVersion?: number;
   configUi?: Record<string, unknown>;
   secrets?: Record<string, SecretDef>;
-  /** Declared, not yet enforced (ADR 0015). */
+  /** Declared, not yet enforced (plugin protocol spec §13.5). */
   permissions?: Permissions;
   connections?: ConnectionPolicy;
 

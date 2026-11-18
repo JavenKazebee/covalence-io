@@ -1,5 +1,5 @@
 /**
- * A plugin that opens its own sockets (`directNetwork`, ADR 0025), for
+ * A plugin that opens its own sockets (`directNetwork`, plugin protocol spec §13.6), for
  * checking that its connections are marked as not inspectable. It connects to
  * nothing.
  */

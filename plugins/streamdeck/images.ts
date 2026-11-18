@@ -1,6 +1,6 @@
 /**
  * Key images: the core renders each key in the deck's native format, and the
- * library sends it (plugin protocol §8, M7 Phase 0's spike).
+ * library sends it (plugin protocol §8).
  *
  * - **JPEG models** (gen 2): the library flips a raw image and hands it to
  *   `encodeJPEG`. Encoding in JS is far over budget, so the core renders

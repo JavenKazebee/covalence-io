@@ -9,8 +9,8 @@ Covalence IO is open-source software for running live production. It sits in the
 - **Runs on** Windows, macOS and Linux, including a Raspberry Pi. You can run it headless, through the web UI, or through the desktop app.
 - **Orbital** remote nodes bring surfaces and devices on other machines into one system.
 
-> Status: early development. The core, the plugin host, the web UI, flows, expressions and Stream Deck surfaces work; dataflow (M8) is in progress. Not ready for a show yet. See [docs/](docs/README.md) for the milestones, specs and decision records.
+> Status: early development. The core, the plugin host, the web UI, flows, expressions and Stream Deck surfaces work; dataflow (M8) is in progress. Not ready for a show yet. See [docs/](docs/README.md) for the specs and milestones.
 
 ## Licence
 
-MIT. See [docs/adr/0011-license.md](docs/adr/0011-license.md).
+MIT. See [the licence decision](docs/specs/overview.md#licence).

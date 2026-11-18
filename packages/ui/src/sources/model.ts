@@ -1,6 +1,6 @@
-// Sources and stateless transforms (dataflow spec §1, §4.1, ADR 0026).
+// Sources and stateless transforms (dataflow spec §1, §4.1, dataflow spec §10.1).
 // Mirrors `covalence_core::source` and `covalence_core::transform` by hand;
-// the shared fixtures catch drift (ADR 0020).
+// the shared fixtures catch drift (overview spec: project entities).
 
 import { formatPath, splitPath, type Segment } from "../live/paths";
 

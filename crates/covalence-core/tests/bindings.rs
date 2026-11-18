@@ -1,6 +1,6 @@
-//! Bindings: the shared fixtures (`fixtures/bindings/`, ADR 0020), and the
-//! rule from ADR 0023 that a source evaluated natively gives what its
-//! compiled expression gives on QuickJS, for every transform (ADR 0026).
+//! Bindings: the shared fixtures (`fixtures/bindings/`, overview spec: project entities), and the
+//! rule from bindings spec §9.2 that a source evaluated natively gives what its
+//! compiled expression gives on QuickJS, for every transform (dataflow spec §10.1).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};

@@ -431,7 +431,7 @@ fn aliases_cannot_hide_globals() {
 }
 
 /// The cost of one evaluation, against the 16 ms re-render budget
-/// (architecture). Run with
+/// (overview spec). Run with
 /// `cargo test --release -p covalence-core --lib expr::tests::bench -- --ignored --nocapture`.
 #[test]
 #[ignore]

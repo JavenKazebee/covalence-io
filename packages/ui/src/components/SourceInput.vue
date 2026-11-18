@@ -30,7 +30,7 @@ import RefInput from "./bindings/RefInput.vue";
 import TemplateInput from "./bindings/TemplateInput.vue";
 
 /**
- * One source (dataflow §1, ADR 0026): a value, a path, an expression or a
+ * One source (dataflow §1, dataflow spec §10.1): a value, a path, an expression or a
  * transform, whose options are sources in turn. Binding properties and
  * action parameters both use it. A structured form shows the expression it
  * compiles to, and can become it.

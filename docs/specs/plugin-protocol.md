@@ -1,7 +1,7 @@
 # Spec: Plugin protocol
 
 - **Status:** Draft v0.1 (protocol version `0.1.0`)
-- **Related:** [ADR 0002](../adr/0002-protocol-first-plugins.md), [ADR 0003](../adr/0003-plugin-runtime-deno.md), [ADR 0010](../adr/0010-orbital-remote-nodes.md), [ADR 0027](../adr/0027-events-addressed-by-path.md), [ADR 0029](../adr/0029-dataflow-sources-transforms-sinks.md), [state and event log](state-and-event-log.md), [dataflow](dataflow.md), [composition](composition.md)
+- **Related:** [state and event log](state-and-event-log.md), [dataflow](dataflow.md), [composition](composition.md)
 
 The protocol is the contract between the **core** and any **host**. Message shapes below use TypeScript notation for readability. The real source of truth will be the schema in `protocol/`.
 
@@ -91,7 +91,7 @@ The response is `host.welcome`: `{ protocol: "0.1.0", session: string, term: num
 
 `{ plugin: string, version: string, bundle: string /* path, or a blob reference for Orbital */ }`
 
-The response is `{ manifest: Manifest }`. The core checks it against the signed manifest from the package ([ADR 0013](../adr/0013-plugin-distribution.md)) and rejects any mismatch.
+The response is `{ manifest: Manifest }`. The core checks it against the signed manifest from the package ([§13.10](#1310-distribution-registry-signing-offline-install-pinning-not-built)) and rejects any mismatch.
 
 ### 3.3 Connection lifecycle (core → host, req)
 
@@ -135,7 +135,7 @@ interface Manifest {
   config: {
     schema: JSONSchema;          // drives the connection form
     ui?: UiHints;                // field order, groups, help, conditional visibility
-    version: number;             // config schema version (ADR 0006)
+    version: number;             // config schema version (state spec §7.2)
   };
   secrets?: { [key: string]: { label: string; description?: string } };
 
@@ -145,9 +145,9 @@ interface Manifest {
     udpBroadcast?: boolean;
     env?: string[];
   };
-  directNetwork?: boolean;       // (M7) opens sockets itself instead of through host transports (§7, ADR 0025)
+  directNetwork?: boolean;       // (M7) opens sockets itself instead of through host transports (§7, §13.6)
   devices?: DeviceMatch[];       // (M7) hardware this plugin drives, matched on hotplug (§7.1)
-  connections: "multiple" | "single";   // policy for standby nodes (ADR 0008)
+  connections: "multiple" | "single";   // policy for standby nodes (state spec §7.4)
 
   actions: ActionDef[];
   events: EventDef[];
@@ -155,7 +155,7 @@ interface Manifest {
   presets?: PresetDef[];         // suggested button and layer templates; (M9) replaced by `components`
   components?: ComponentDef[];   // (M9) reusable controls: look, helpers, flows, params, parts (composition §8)
   transforms?: string[];         // (M9) transform definition modules, run in the core's sandbox (dataflow §4.4)
-  implements?: InterfaceImpls;   // proposed: interfaces such as "ptz.position@1", with `range` on numeric state (ADR 0019)
+  implements?: InterfaceImpls;   // proposed: interfaces such as "ptz.position@1", with `range` on numeric state (§13.9)
   surfaces?: SurfaceProviderDef; // if the plugin provides surfaces (for example a web panel)
   simulator?: { stateLevel: boolean; protocolLevel: boolean };
 }
@@ -181,7 +181,7 @@ interface EventDef {
 }
 ```
 
-- **(M9) `components`** are content with no code ([ADR 0025](../adr/0025-device-drivers-are-plugins.md)): the `Component` shape of [composition §8](composition.md), with IDs namespaced by the plugin. They replace `presets`.
+- **(M9) `components`** are content with no code ([§13.6](#136-device-drivers-are-plugins-the-core-performs-hardware-io)): the `Component` shape of [composition §8](composition.md), with IDs namespaced by the plugin. They replace `presets`.
 - **(M9) `transforms`** are paths to modules in the package, each a `defineTransform` ([dataflow §4.4](dataflow.md)). The core loads them into its own sandbox, never into the plugin host, and names them `<plugin id>/<id>`. A module that fails to load or to pass its declared types is skipped with an error on the plugin; the rest of the plugin is unaffected.
 
 ### 4.1 Instance schema updates (host → core, ntf `schema.update`)
@@ -237,7 +237,7 @@ Params (the connection is the envelope's `conn`):
 | `event.emit` | ntf | `{event: string, payload?: unknown, at?: Path, call?, ts?}`. **(M6)** `at` is the node the event happened at, relative to the connection root (`["outputs", 3]`), so it's addressed `vh.outputs[3]:routeChanged` ([dataflow §3](dataflow.md)). Absent, it's the root |
 | `log` | ntf | `{level: "trace" \| "debug" \| "info" \| "warn" \| "error", msg, fields?}` |
 
-The envelope's `conn` is required, except for `log`. Paths are segment arrays ([ADR 0017](../adr/0017-wire-paths-as-segment-arrays.md)) relative to the connection root: `["timers", "countdown", "remaining"]`. The core adds the connection prefix and validates against the schema. Invalid patches are dropped and logged.
+The envelope's `conn` is required, except for `log`. Paths are segment arrays ([§13.3](#133-paths-on-the-wire-are-segment-arrays)) relative to the connection root: `["timers", "countdown", "remaining"]`. The core adds the connection prefix and validates against the schema. Invalid patches are dropped and logged.
 
 **Causation:** `call` is the `action.invoke` call ID (§5.1) of the action that produced the change or event. The SDK sets it for writes and events made through the context an action's `run` (or its simulator handler) receives, while that call is running; one patch never mixes ops from different calls, or from a call and outside one. Changes from device traffic outside an action (including a device's echo of a command an action sent) carry no `call`. While the call is in flight on that connection, the core journals the entry with `cause` → the call's `action.requested` entry (state spec §2.2); a `call` it doesn't know, or one belonging to another connection, is ignored. The host must send these before the call's response, and the core handles a host's messages in the order it sent them.
 
@@ -254,7 +254,7 @@ The envelope's `conn` is required, except for `log`. Paths are segment arrays ([
 
 ## 7. Host transports (core-performed I/O)
 
-The SDK exposes these as `ctx.tcp`, `ctx.udp`, `ctx.ws`, `ctx.http`, `ctx.serial`, `ctx.hid` and `ctx.midi`. The core opens the socket or device, checks the target against the connection's resolved `permissions`, records traffic for the inspector and for record/replay ([ADR 0012](../adr/0012-simulated-devices.md)), and handles reconnects when asked. Transports are byte-level: what the bytes mean is the plugin's business ([ADR 0025](../adr/0025-device-drivers-are-plugins.md)).
+The SDK exposes these as `ctx.tcp`, `ctx.udp`, `ctx.ws`, `ctx.http`, `ctx.serial`, `ctx.hid` and `ctx.midi`. The core opens the socket or device, checks the target against the connection's resolved `permissions`, records traffic for the inspector and for record/replay ([overview: simulated devices](overview.md#simulated-devices)), and handles reconnects when asked. Transports are byte-level: what the bytes mean is the plugin's business ([§13.6](#136-device-drivers-are-plugins-the-core-performs-hardware-io)).
 
 | Method | Direction | Params / result |
 |---|---|---|
@@ -268,11 +268,11 @@ The SDK exposes these as `ctx.tcp`, `ctx.udp`, `ctx.ws`, `ctx.http`, `ctx.serial
 
 - **The connection is the envelope's `conn`,** as for every other method from a connection, and a connection can use only its own handles. **Bytes** (`data`, `image`) are MessagePack `bin`, and arrays of byte values in the JSON debug format.
 - **(M7) `tcp`:** `target` is `host:port`. `io.open` answers once the first attempt to connect has succeeded, or fails with `not_connected`; with `reconnect`, it answers either way and the handle goes `reconnecting` (backoff from `initialMs`, 500 ms, doubling to `maxMs`, 10 s). Writes while it's away are dropped. `framing`: `raw` sends what each read gave; `line` one `io.data` per line, its `\n` kept; `length` one per message after a 4-byte big-endian length. Sockets close when the plugin host goes. A handle's `io.state` and `io.data` follow `io.open`'s response.
-- **(M7) The core keeps each handle's recent traffic** (inspector, ADR 0012): what it read and wrote and its state changes, at `GET /connections/{id}/traffic`.
+- **(M7) The core keeps each handle's recent traffic** (inspector, [overview spec: simulated devices](overview.md#simulated-devices)): what it read and wrote and its state changes, at `GET /connections/{id}/traffic`.
 - **Hardware goes through the core.** Deno has no HID, MIDI or serial of its own, and plugins don't use native add-ons for them. `usb` (interfaces, bulk, interrupt and control transfers) comes later.
 - **One connection holds a device at a time.** A second `io.open` of the same device is refused with `busy`.
 - **(M7) Device handles outlive a plugin host restart.** The core keeps the device open, drops its data while no host is there, and gives the restarted connection the same device on its next `io.open`.
-- **Network transports are optional.** A plugin that opens sockets itself declares `directNetwork: true` (§4). It's still limited by its worker's permissions once they're enforced ([ADR 0015](../adr/0015-defer-plugin-permission-enforcement.md)), but its traffic isn't in the inspector or record/replay, and an Orbital can't route it. **(M7)** The SDK's `ctx.tcp` returns an object shaped like `Deno.Conn`, and `ctx.net.socket()` one shaped like a `node:net` `Socket`, so libraries that accept a socket can use the core's.
+- **Network transports are optional.** A plugin that opens sockets itself declares `directNetwork: true` (§4). It's still limited by its worker's permissions once they're enforced ([§13.5](#135-permissions-are-declared-now-enforced-later)), but its traffic isn't in the inspector or record/replay, and an Orbital can't route it. **(M7)** The SDK's `ctx.tcp` returns an object shaped like `Deno.Conn`, and `ctx.net.socket()` one shaped like a `node:net` `Socket`, so libraries that accept a socket can use the core's.
 
 ### 7.1 Devices (M7)
 
@@ -316,7 +316,7 @@ interface DeviceInfo {
 
 ## 8. Surfaces (Orbital and plugin-provided)
 
-A surface is a two-way device ([ADR 0024](../adr/0024-surfaces-as-two-way-devices.md), [surfaces spec](surfaces.md)). The host reports its controls' input, which the core keeps as state and derives events from, and the core sets their outputs. **(Now)** marks the M5 Phase 5 reshaping; **(M7)**, [M7](../milestones/m7-surfaces-from-plugins.md); **(Later)**, what has no milestone yet. The web surface carries these notifications today (surfaces §8). **(M7)** The plugin host carries them, with the envelope's `conn` naming the connection that provides the surface: a hardware surface is a plugin that reads its device through `ctx.hid` (§7) and translates ([ADR 0025](../adr/0025-device-drivers-are-plugins.md)). Orbitals carry them **(Later)**.
+A surface is a two-way device ([surfaces §11.2](surfaces.md#112-surfaces-are-two-way-devices-and-control-input-is-state), [surfaces spec](surfaces.md)). The host reports its controls' input, which the core keeps as state and derives events from, and the core sets their outputs. **(Now)** marks the M5 Phase 5 reshaping; **(M7)**, [M7](../milestones/m7-surfaces-from-plugins.md); **(Later)**, what has no milestone yet. The web surface carries these notifications today (surfaces §8). **(M7)** The plugin host carries them, with the envelope's `conn` naming the connection that provides the surface: a hardware surface is a plugin that reads its device through `ctx.hid` (§7) and translates ([§13.6](#136-device-drivers-are-plugins-the-core-performs-hardware-io)). Orbitals carry them **(Later)**.
 
 | Method | Direction | Params |
 |---|---|---|
@@ -325,7 +325,7 @@ A surface is a two-way device ([ADR 0024](../adr/0024-surfaces-as-two-way-device
 | `surface.input` | host → core, ntf | `{surface, control, kind: "down" \| "up" \| "turn" \| "touch" \| "value", value?, ts, echo?}` |
 | `surface.draw` | core → host, ntf | `{surface, control, image: bytes, format: "jpeg" \| "bmp" \| "png" \| "rgb565" \| "rgb"}`, for `image` outputs. **(M7)** `rgb` is raw 8-bit RGB, rows top to bottom, for a driver that packs images itself |
 | `surface.led` | core → host, ntf | `{surface, control, color}`, for `led` outputs **(Later)** |
-| `surface.level` | core → host, ntf | `{surface, control, value: 0..1}`, for `level` outputs: motor faders, encoder rings, meters. **(M8)** The SDK's `onLevel`; a plugin reports its motor's own movement with `echo` (ADR 0035) |
+| `surface.level` | core → host, ntf | `{surface, control, value: 0..1}`, for `level` outputs: motor faders, encoder rings, meters. **(M8)** The SDK's `onLevel`; a plugin reports its motor's own movement with `echo` ([surfaces spec §11.4](surfaces.md#114-level-outputs-echoes-gesture-timing-and-per-surface-helpers)) |
 | `surface.text` | core → host, ntf | `{surface, control, text}`, for `text` outputs **(Later)** |
 | `surface.brightness` | core → host, ntf | `{surface, value: 0..100}`, when the attach declares `brightness` **(Later)** |
 
@@ -362,7 +362,7 @@ type OutputCap =
 
 - **The SDK has presets** for common controls: `button`, `encoder`, `fader`, `touchstrip`, `lcd` and `led` build the capability lists that M5's `kind` stood for. A device with no physical layout (GPIO pins) still gets an `at`: the SDK places its controls in a row.
 - **Input state, events and gestures are computed in the core,** using the host's `ts` (surfaces §4). Network jitter therefore never turns a double-press into two separate presses. Hosts send what happened, not what it means: a MIDI host normalises its controller's relative encoding into signed detents, and a 14-bit fader into 0 to 1.
-- **A host can't run helpers.** It can `suggest` defaults for a control, such as a jog wheel's acceleration. **(M9)** A plugin can also ship transforms (§4), which the core runs in its own sandbox, never in the host ([ADR 0029](../adr/0029-dataflow-sources-transforms-sinks.md)).
+- **A host can't run helpers.** It can `suggest` defaults for a control, such as a jog wheel's acceleration. **(M9)** A plugin can also ship transforms (§4), which the core runs in its own sandbox, never in the host ([dataflow §10.3](dataflow.md#103-sources-transforms-and-sinks-helpers-are-transforms)).
 - **`echo: true`** **(Later)** marks input the device sent because the core moved it, such as a motor fader reaching its requested position (surfaces §4.4). A host that can't tell leaves it out, and the core decides from timing.
 - **Input that doesn't match a control's capabilities** (a `turn` on a control with no `relative` input) is dropped and logged, rate-limited.
 - **The core renders images** at each `image` output's native size and format, and sends only the outputs that changed. **(M7)** It draws `png`, `jpeg` and `rgb`, turned by `rotation` degrees clockwise; an attach with an image output it can't draw is refused. From the plugin host, `surface.draw`'s `surface` is the connection's own key.
@@ -446,8 +446,83 @@ export default definePlugin({
 
 ## 12. Open questions
 
-1. ~~Schema tool~~: TypeSpec → JSON Schema. See [ADR 0016](../adr/0016-protocol-schema-tooling.md).
-2. ~~Path format on the wire~~: segment arrays. See [ADR 0017](../adr/0017-wire-paths-as-segment-arrays.md).
+1. ~~Schema tool~~: TypeSpec → JSON Schema (§13.2).
+2. ~~Path format on the wire~~: segment arrays (§13.3).
 3. Transferring Orbital plugin bundles: should the core push the package over the link, or should the Orbital fetch it from the registry?
-4. ~~Should plugins be able to define **custom gestures or controls**, such as a jog wheel's acceleration curve, or does the core own all gesture logic?~~ Decided by [ADR 0024](../adr/0024-surfaces-as-two-way-devices.md): controls are any set of capabilities, their input is state with events derived in the core, the core owns helpers, and a host can `suggest` defaults (§8).
+4. ~~Should plugins be able to define **custom gestures or controls**, such as a jog wheel's acceleration curve, or does the core own all gesture logic?~~ Decided by [surfaces §11.2](surfaces.md#112-surfaces-are-two-way-devices-and-control-input-is-state): controls are any set of capabilities, their input is state with events derived in the core, the core owns helpers, and a host can `suggest` defaults (§8).
 5. Port number and mDNS TXT records for Orbital discovery.
+
+---
+
+## 13. Decisions
+
+Why the protocol and the plugin host are the way they are, and what was rejected. Keep these notes when the sections above change: they stop old alternatives coming back.
+
+### 13.1 Protocol first
+- **Decided:** the plugin protocol is versioned and language-neutral, and it's the contract: every SDK and host implements it. The schema in `protocol/` is the source of truth. Frames are length-prefixed MessagePack, with a newline-delimited JSON debug mode (§2). The TypeScript SDK is the first-class SDK. Other languages implement the same protocol.
+- **Why:** the device ecosystem decides whether the project succeeds, and plugins have to run in different hosts (the shared Deno host, isolated processes, Orbitals, later WASM or other languages) and outlive any one runtime. Orbital is then just another host. The cost: the protocol is a public API, so a breaking change needs a major version and a deprecation window (§10).
+- **Rejected:**
+  - *A runtime-specific plugin API* (Companion's model): faster to start, but ties the ecosystem to one runtime.
+  - *gRPC/protobuf:* heavier, and awkward for dynamic JSON-shaped state and schemas.
+  - *Companion module compatibility as the foundation:* modules are built around buttons, with no first-class events and loosely typed variables. A compatibility adapter may come later, as a separate, lower-tier layer.
+
+### 13.2 Schema tooling: TypeSpec → JSON Schema
+- **Decided:** the schema is written in TypeSpec and emitted as JSON Schema, which is committed so other-language SDKs never need TypeSpec. TypeScript types are generated (`json-schema-to-typescript`). **Rust types in `covalence-protocol` are written by hand**, and golden vectors in `protocol/fixtures/` that both test suites decode, re-encode and compare are the contract between the two. Opaque payloads that are themselves JSON Schema (`config.schema`, action `params`) are plain JSON values.
+- **Why hand-written Rust:** tested on 2026-10-18 with `typify` 0.8.0 on the §2.1 envelope. It dropped `const` (`t: "req"` became `String`), made the union `#[serde(untagged)]` so a notification with a stray `id` decoded as a request, and turned opaque payloads into `serde_json::Value`, which can't hold MessagePack binary. Fixing that meant changing the wire format to suit the tool. `json-schema-to-typescript` produced clean discriminated unions.
+- **Rejected:** hand-written JSON Schema (verbose, error-prone); Rust-first (`serde` + `schemars`) or TypeScript-first (zod), which make one language the source of truth; protobuf (§13.1).
+
+### 13.3 Paths on the wire are segment arrays
+- **Decided:** on the wire and in storage a path is `(string | number)[]`, such as `["outputs", "SDI 4", "source"]`. The text form (`vh.outputs["SDI 4"].source`) is only for people: expressions, the UI, logs and docs, and the core converts at those edges. The SDK accepts text paths and converts before sending.
+- **Why:** state patches are the highest-volume traffic (target 10,000 updates/s). No parsing or escaping on the hot path, no quoting bugs with keys like `"SDI 4"` or `"a.b"` across two languages, and the store already keeps references in this form. Frames are slightly larger.
+- **Rejected:** dotted strings with bracket syntax on the wire.
+
+### 13.4 One shared Deno host, a worker per connection
+- **Decided:** one Deno process hosts every plugin by default. Each connection runs in its own worker, with its own event loop, and can be terminated alone. An **Isolate** toggle per connection moves it into its own process. The core supervises every host: health pings, restart with backoff, memory and CPU limits, all visible in the UI. The SDK has no runtime-specific code.
+- **Why:** plugin work is mostly waiting on the network, so V8 is far faster than needed. The real cost is memory per process (30–60 MB each in Companion's process-per-connection model). Companion 3 moved modules out of process because in 2.x one bad module could freeze the app; workers give that isolation for crashes and hangs. The risk: a native crash or out-of-memory in the shared process takes down every non-isolated connection. Mitigations: fast restart with state resynced, and automatically isolating a connection that crashes the host repeatedly.
+- **Rejected:**
+  - *Process per connection:* best isolation, highest memory.
+  - *Process per plugin type:* the fallback if per-worker permissions never work (§13.5).
+  - *Node:* best npm and native-add-on support, weaker sandbox. *Bun:* no sandbox, gaps in Node compatibility.
+  - *V8 or QuickJS embedded in the core:* a native crash would take down the engine.
+  - *WASM components:* excellent isolation, but immature networking and no npm ecosystem. A possible future host type.
+
+### 13.5 Permissions are declared now, enforced later
+- **Decided:** `permissions` stay in the manifest and in `conn.create`, and the UI shows them, but **per-connection permissions aren't enforced yet**: no per-worker narrowing and no core checks on host transports. The shared host runs with a coarse process-level allowlist instead (`packages/plugin-host/README.md`): network allowed, reads limited to the plugin directories, no `--allow-run`, `--allow-ffi` or `--allow-sys`.
+- **Why:** permissions protect against plugins you don't trust, and until the registry takes third-party plugins every plugin is first-party. Per-worker narrowing relies on Deno's `deno.permissions` worker option, behind `--unstable-worker-options`. What matters in a show, crash and hang isolation, the workers give anyway. Declaring permissions from the start avoids a breaking protocol change later.
+- **Release blocker:** enforcement must land before the registry opens to third-party plugins. Then: confirm per-worker narrowing works on the current Deno, measure memory with 50 connections and restart-to-restored (target under 3 s), check a worker in a busy loop can be terminated alone, and enforce both layers. If narrowing doesn't work, rely on the core-enforced transports and make process-per-plugin-type the isolation unit. Once enforced, a worker without `directNetwork` gets no network permission at all.
+- **Rejected:** enforcing from the start (guards a threat that doesn't exist yet, on an unstable API); dropping permissions from the manifest (adding them later breaks the protocol).
+
+### 13.6 Device drivers are plugins; the core performs hardware I/O
+- **Decided:** everything that knows a device's protocol (HID report layouts, key image formats, MIDI mappings, serial framing) is in a plugin. The core has no built-in drivers. It keeps input state, gesture timing, events, rendering, layers and helpers (surfaces spec): a surface plugin translates, it doesn't interpret. The core owns enumeration, hotplug and the byte-level `hid`, `serial` and `midi` transports (`usb` later), holds each device for one connection, reconnects across unplug and replug, and keeps hardware open across a plugin host restart (§7.1). An Orbital performs hardware I/O the same way, so a plugin doesn't know where its device is.
+- **Why:** with drivers in the core, every new surface model or USB gadget would need a core release. Core I/O gives what a plugin can't: no native add-ons (Deno's least-tested path), one owner per device, hotplug matching in one place, devices that survive a host restart, and Orbitals opening devices on their own machine. The cost: surface input and key images cross the plugin host (device → core → host → core), an IPC round trip inside the 5 ms key-down budget, and the core needs a device layer on every OS with clear errors for macOS exclusive access, WinUSB and udev rules.
+- **Devices that need native code** (DeckLink, AJA, NDI) would use a native add-on in an isolated connection, or a helper process that speaks the protocol. Not designed yet.
+- **Rejected:** drivers in the core; plugins opening hardware with native add-ons (every plugin scans USB, and a host restart closes every device); a WASM host for drivers (deferred, not rejected).
+
+### 13.7 Network I/O is the plugin's choice
+- **Decided:** host transports (`ctx.tcp`, `ctx.udp`, `ctx.ws`, `ctx.http`) are optional. A plugin that opens its own sockets declares `directNetwork: true`, and the UI marks it as not inspectable. First-party plugins use host transports, and the SDK's socket shapes (§7) let libraries that take a socket use them unchanged.
+- **Why:** the core performing I/O gives the inspector, record/replay, reconnects and enforceable permissions. But most network device libraries open their own sockets with `node:net` or `fetch`, and requiring core transports would mean forking them, with every protocol the core lacks (multicast, mDNS, HTTP/2, SRT, custom TLS) a dead end. The cost: `directNetwork` traffic isn't in the inspector or record/replay, and an Orbital can't route it.
+- **Rejected:** requiring host transports for all network I/O.
+
+### 13.8 What plugins can define
+- **Now:** connections (actions, state, events), surfaces, and content with no code (presets, layer templates).
+- **Later:** interfaces (§13.9), time sources, flow templates, and pure functions such as transforms, key widgets and expression libraries. Pure functions run in the core's QuickJS sandbox, not the plugin host, so they fit the render budget (dataflow §4.4).
+- **Never:** flow step kinds, scheduling, gesture rules, helpers or layer resolution. Cancellation, `why`, replay and timing depend on these being the core's.
+
+### 13.9 Dynamic targets and interfaces (proposed)
+A show often needs one layer that controls *any* camera, with a row of keys to choose which. In Companion each action is fixed to one connection, so users copy the page per camera. Targets solve the same-plugin case; interfaces solve cameras from different makers.
+
+- **A target** is `{conn, key?}`: a connection, and optionally one item of a collection it exposes, since one connection can drive many devices. A step's target is fixed or a source (dataflow §1) with a **constraint** (a plugin ID or interfaces), which the editor uses to type-check parameters and the runtime checks. A target can be stored in state (`kind: "target"`, with an optional `interface`), in ID form, so renaming an alias never breaks it. In expressions `target(t)` is a read-only view of its state, narrowed to `key` and mapped to the interface's names, with `.alias`, `.name`, `.connected` and `.supports(member)`. A target that resolves to nothing or fails the constraint fails the step with `no_target`, and nothing is dispatched. The journal records the resolved target (`key?`, `via?`).
+- **An interface is a contract for one way of controlling something, not a kind of device.** The project maintains the set in `protocol/interfaces/`, each the size of a capability: `ptz.speed@1`, `ptz.position@1`, `ptz.presets@1`, `tally@1`, `switcher@1`, `router@1`, `recorder@1`, `mixer.audio@1`, and more over time, based on real plugins rather than designed up front. A camera implements several, and nothing is emulated to fit. Each declares actions, events and state with schemas. Member names are unique across the whole set, each interface under its own root. Numeric members declare a unit and range (`pan`: degrees, −170 to 170). Stepped values are published by the device, not fixed by the interface (`iris.options` and `iris.select`). Members can be optional. A constraint can require several interfaces. Plugin extensions are reachable only through a plugin-constrained target.
+- **A plugin declares what it implements** in the manifest (`implements`), mapping interface members to its own actions, state paths and events; matching names need no mapping. `at` maps a collection, so each item is a target. A `range` converts linearly both ways, for state read and the matching action parameters. Anything non-linear is the plugin's own code. Conformance is checked by the SDK at build and by the core at load, and a plugin that fails an interface just doesn't get it.
+- **Mismatches between a control and a device are the user's to bridge, in the open:** an encoder driving a camera that only takes positions goes through a `position` reducer on the binding, where `why` can follow it.
+- **Rejected:**
+  - *Fixed targets:* force copying the layer per camera.
+  - *Duck typing on action names:* names and parameters don't line up across plugins, and nothing checks they mean the same.
+  - *An aggregator plugin per show:* hand-written each time, and hides the real target from the journal. (Composites do this in the open: composition §6.)
+  - *One interface per kind of device:* it has to pick one control model, and every camera that works another way gets emulated inside its plugin, out of sight.
+  - *General conversions in the mapping:* a second dataflow language inside manifests.
+  - *Interfaces defined by plugins:* several incompatible "camera" interfaces.
+
+### 13.10 Distribution: registry, signing, offline install, pinning (not built)
+- **Decided:** a `.cvplugin` archive holds the manifest, bundled code with every dependency vendored, the licence, simulator files and a checksum. It's signed by the publisher and countersigned by the registry, and the core checks both before installing (Sigstore or minisign/ed25519, to choose). The registry is a public index with versions, declared permissions, and badges for "has simulator", CI status and verified publisher; start with a static signed index file before a service. Install offline by dropping a `.cvplugin` into the UI, or inside a `.covalence` bundle. **Projects pin exact plugin versions**: updates are proposed, never automatic, and the review shows the changelog and any permission changes. Several versions can be installed side by side. Install shows the plugin's permissions in words ("can connect to {config.host}:{config.port}").
+- **Why:** show machines are often offline, an update must never change behaviour mid-show, and plugins come from strangers. Vendoring makes packages larger but reproducible offline.

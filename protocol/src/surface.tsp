@@ -5,7 +5,7 @@ using TypeSpec.JsonSchema;
 
 /**
  * Surfaces: two-way devices whose controls' input the core keeps as state
- * and whose outputs it sets. Spec §8 (ADR 0024, ADR 0025).
+ * and whose outputs it sets. Spec §8 (surfaces spec §11.2, plugin protocol spec §13.6).
  *
  * From the plugin host, the envelope's `conn` names the connection that
  * provides the surface, and `surface` is the host's own key for it.

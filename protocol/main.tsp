@@ -1,4 +1,4 @@
-// Plugin protocol schema: the single source of truth (ADR 0002, ADR 0016).
+// Plugin protocol schema: the single source of truth (plugin protocol spec §13.1, §13.2).
 // Covers the Milestone 1 subset; see docs/specs/plugin-protocol.md for the full protocol.
 import "@typespec/json-schema";
 import "./src/envelope.tsp";

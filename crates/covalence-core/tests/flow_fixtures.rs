@@ -1,4 +1,4 @@
-//! The shared flow fixtures (`fixtures/flows/`, ADR 0020): valid flows parse,
+//! The shared flow fixtures (`fixtures/flows/`, overview spec: project entities): valid flows parse,
 //! validate cleanly and round-trip; the others report exactly the expected
 //! problems.
 

@@ -1,4 +1,4 @@
-//! Milestone 5 Phase 3: surfaces, layers and control bindings over HTTP, and
+//! Surfaces, layers and control bindings over HTTP, and
 //! the web surface's WebSocket, against the real server, the real Deno
 //! plugin host and two Videohubs in simulate mode. Needs `deno` on the PATH.
 
@@ -920,7 +920,7 @@ async fn run_flow(server: &Server, flow: &Value) -> Value {
         .await
 }
 
-/// M6 Phase 4: flows navigate the deck and press its keys with `core`
+/// Flows navigate the deck and press its keys with `core`
 /// actions, on a fixed target and on one held in `vars`, in simulate mode;
 /// and cancel and disable another flow.
 #[tokio::test(flavor = "multi_thread")]
@@ -1104,7 +1104,7 @@ async fn flows_drive_the_deck_and_other_flows_through_core() {
     server.stop().await;
 }
 
-/// ADR 0035: a surface-scoped helper gets a cell on a surface the first time
+/// surfaces spec §11.4: a surface-scoped helper gets a cell on a surface the first time
 /// it shows the helper's layer, moves with the surface's slug, and goes when
 /// the surface is deleted.
 #[tokio::test(flavor = "multi_thread")]

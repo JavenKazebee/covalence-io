@@ -1,5 +1,5 @@
 // Generates TypeScript types for packages/protocol from the bundled JSON Schema
-// that TypeSpec emits (ADR 0016).
+// that TypeSpec emits (plugin protocol spec §13.2).
 import { readFileSync, writeFileSync } from "node:fs";
 import { compile } from "json-schema-to-typescript";
 

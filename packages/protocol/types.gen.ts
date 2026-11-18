@@ -104,7 +104,7 @@ export type ErrorCode =
 export type HostKind = "deno-shared" | "deno-isolated" | "orbital" | "wasm" | "external";
 export type Capability = "workers" | "permissions" | "surfaces" | "transports" | "simulate" | "computerControl";
 /**
- * Policy for standby nodes (ADR 0008).
+ * Policy for standby nodes (state spec §7.4).
  */
 export type ConnectionPolicy = "multiple" | "single";
 export type DeviceKind = "hid" | "serial" | "midi";
@@ -247,13 +247,13 @@ export interface HostWelcome {
   protocol: string;
   session: string;
   /**
-   * Leadership term (ADR 0008).
+   * Leadership term (state spec §7.4).
    */
   term: number;
   coreId: string;
 }
 /**
- * A JSON Schema document. Opaque to the protocol (ADR 0016).
+ * A JSON Schema document. Opaque to the protocol (plugin protocol spec §13.2).
  */
 export interface JsonSchemaDoc {
   [k: string]: unknown | undefined;
@@ -336,7 +336,7 @@ export interface ConfigDef {
     [k: string]: unknown | undefined;
   };
   /**
-   * Config schema version (ADR 0006).
+   * Config schema version (state spec §7.2).
    */
   version: number;
 }

@@ -1,8 +1,8 @@
-//! Display bindings (bindings spec §1–§4, ADR 0023): how a control looks,
+//! Display bindings (bindings spec §1–§4, §9.2): how a control looks,
 //! kept in step with state.
 //!
 //! A [`ControlBinding`] binds properties of one control on one layer. Each
-//! property's binding is a [`Source`] (ADR 0026): a literal, a state path,
+//! property's binding is a [`Source`] (dataflow spec §10.1): a literal, a state path,
 //! an expression or a stateless transform ([`crate::transform`]). Paths and
 //! transforms are evaluated natively; expressions run on QuickJS. The worker
 //! in [`worker`] keeps the bindings of shown layers evaluated and draws what
@@ -46,7 +46,7 @@ pub struct ControlBinding {
     pub gestures: Option<Gestures>,
 }
 
-/// Gesture timing for one control (bindings §1, ADR 0035). Each is a
+/// Gesture timing for one control (bindings §1, surfaces spec §11.4). Each is a
 /// duration (`400ms`) or a number of milliseconds, read when it's needed:
 /// `longAfter` and `holdEvery` when the control goes down, `doubleWindow`
 /// at the next press. A failure, or a value that isn't a duration, gives
@@ -203,13 +203,13 @@ pub fn helper_cell_id(binding: &str, key: &str) -> String {
     format!("helper:{binding}/{key}")
 }
 
-/// A surface-scoped helper's cell identity: one per surface (ADR 0035).
+/// A surface-scoped helper's cell identity: one per surface (surfaces spec §11.4).
 pub fn surface_helper_cell_id(binding: &str, key: &str, surface: &str) -> String {
     format!("helper:{binding}/{key}@{surface}")
 }
 
 /// A property of a control: the three a key image needs, and `value` for a
-/// `level` output (ADR 0035). In the order of their names, as JSON objects
+/// `level` output (surfaces spec §11.4). In the order of their names, as JSON objects
 /// are written.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -350,7 +350,7 @@ impl ControlBinding {
             .any(|h| h.scope == HelperScope::Surface)
     }
 
-    /// Its surface-scoped helpers' cells on one surface (ADR 0035):
+    /// Its surface-scoped helpers' cells on one surface (surfaces spec §11.4):
     /// `surface.<slug>.controls.<id>.helpers.<name>`, whose `on` defaults to
     /// the control's events on that surface. Only input that arrived while
     /// the binding's layer controlled the control steps them.
@@ -497,7 +497,7 @@ pub(crate) fn deserialize<T: serde::de::DeserializeOwned>(
     })
 }
 
-/// Refs through a target (ADR 0019) wait for dynamic targets.
+/// Refs through a target (plugin protocol spec §13.9) wait for dynamic targets.
 fn find_targets(json: &Json, here: &mut Path, out: &mut Vec<Problem>) {
     match json {
         Json::Object(map) => {

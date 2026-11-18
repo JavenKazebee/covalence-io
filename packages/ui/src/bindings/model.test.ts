@@ -15,7 +15,7 @@ import {
   type ControlBinding,
 } from "./model";
 
-// The fixtures the Rust tests use too (ADR 0020): valid bindings, as stored and served.
+// The fixtures the Rust tests use too (overview spec: project entities): valid bindings, as stored and served.
 const fixtures = import.meta.glob<ControlBinding>("../../../../crates/covalence-core/fixtures/bindings/*.json", {
   eager: true,
   import: "default",

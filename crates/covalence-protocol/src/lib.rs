@@ -1,7 +1,7 @@
 //! Plugin protocol types and framing.
 //!
 //! The schema in `protocol/` is the source of truth. These types are written by
-//! hand to mirror it (ADR 0016); the golden vectors in `protocol/fixtures/` keep
+//! hand to mirror it (plugin protocol spec §13.2); the golden vectors in `protocol/fixtures/` keep
 //! the two in step.
 
 pub mod action;

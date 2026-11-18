@@ -1,5 +1,5 @@
 /**
- * State paths. On the wire a path is an array of segments (ADR 0017); plugin
+ * State paths. On the wire a path is an array of segments (plugin protocol spec §13.3); plugin
  * code may also write the text form people use:
  *
  * - `outputs[3].source` → `["outputs", 3, "source"]`

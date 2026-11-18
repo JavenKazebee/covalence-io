@@ -1,4 +1,4 @@
-//! Draws key images (ADR 0023): a control's resolved look, at its native
+//! Draws key images (bindings spec §9.2): a control's resolved look, at its native
 //! size and format.
 //!
 //! Text is shaped and rasterised with `cosmic-text`, from one embedded font
@@ -268,7 +268,7 @@ fn encode_jpeg(
 }
 
 /// Encodes RGB as PNG, compressed for speed: an image goes out once, over
-/// a LAN, and the default level is most of a key's drawing time (ADR 0023).
+/// a LAN, and the default level is most of a key's drawing time (bindings spec §9.2).
 fn encode_png(rgb: &[u8], width: u32, height: u32) -> Result<Vec<u8>, png::EncodingError> {
     let mut out = Vec::new();
     let mut encoder = png::Encoder::new(&mut out, width, height);

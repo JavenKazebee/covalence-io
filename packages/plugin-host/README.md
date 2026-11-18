@@ -1,14 +1,15 @@
 # @covalence-io/plugin-host
 
 The `deno-shared` plugin host
-([ADR 0003](../../docs/adr/0003-plugin-runtime-deno.md)). One Deno process runs
-every non-isolated connection, each in its own worker. It speaks the
-[plugin protocol](../../docs/specs/plugin-protocol.md) with the core on stdio.
+([plugin protocol §13.4](../../docs/specs/plugin-protocol.md#134-one-shared-deno-host-a-worker-per-connection)).
+One Deno process runs every non-isolated connection, each in its own worker. It
+speaks the [plugin protocol](../../docs/specs/plugin-protocol.md) with the core
+on stdio.
 
 ## Launching (for the core's host supervisor)
 
 Run it with this coarse, process-level allowlist
-([ADR 0015](../../docs/adr/0015-defer-plugin-permission-enforcement.md)).
+([plugin protocol §13.5](../../docs/specs/plugin-protocol.md#135-permissions-are-declared-now-enforced-later)).
 `<root>` is the repository (later: the install directory).
 
 ```sh
@@ -30,7 +31,8 @@ deno run --no-prompt \
 
 Not granted: `--allow-write`, `--allow-run`, `--allow-ffi`, `--allow-sys`, and
 other environment variables. Workers inherit these permissions; `conn.create`'s
-`permissions` are not applied yet (ADR 0015).
+`permissions` are not applied yet
+([plugin protocol spec §13.5](../../docs/specs/plugin-protocol.md#135-permissions-are-declared-now-enforced-later)).
 
 `plugin.load`'s `bundle` is an absolute path or a URL. For now it is the
 plugin's `mod.ts` (for example `<root>/plugins/videohub/mod.ts`); its default

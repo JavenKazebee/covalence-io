@@ -1,4 +1,4 @@
-//! Key image snapshots (ADR 0023). Each look is drawn and compared pixel for
+//! Key image snapshots (bindings spec §9.2). Each look is drawn and compared pixel for
 //! pixel with `tests/snapshots/keys/<name>.png`. Run with
 //! `UPDATE_SNAPSHOTS=1` to write them again, then look at the images.
 

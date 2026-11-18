@@ -1,11 +1,11 @@
 # Spec: Bindings
 
-- **Status:** Draft v0.3. [M5](../milestones/m5-surfaces-and-bindings.md) implements display bindings (§1–§4) for `label`, `textColor` and `background`, and [M8](../milestones/m8-dataflow.md) `value` ([ADR 0035](../adr/0035-level-outputs-echoes-and-control-settings.md)). [ADR 0024](../adr/0024-surfaces-as-two-way-devices.md) replaces value mappings with helpers (§5). [ADR 0026](../adr/0026-sources-and-selectors.md) makes every binding a `Source` and the binding kinds stateless transforms (§2); [ADR 0029](../adr/0029-dataflow-sources-transforms-sinks.md) makes helpers reducers (§5). Its markers follow the [surfaces spec](surfaces.md): **(Now)** is [M5 Phase 5](../milestones/m5-surfaces-and-bindings.md), and implemented; **(M6)**, **(M8)** and **(M9)** are those milestones; **(Later)** has no milestone yet.
-- **Related:** [ADR 0018](../adr/0018-flows-as-step-trees.md), [ADR 0024](../adr/0024-surfaces-as-two-way-devices.md), [ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md), [ADR 0004](../adr/0004-javascript-expressions-and-scripts.md), [ADR 0026](../adr/0026-sources-and-selectors.md), [ADR 0029](../adr/0029-dataflow-sources-transforms-sinks.md), [ADR 0031](../adr/0031-templates-instances-and-components.md), [dataflow](dataflow.md), [composition](composition.md), [state and event log](state-and-event-log.md), [plugin protocol §8](plugin-protocol.md), [flows](flows.md)
+- **Status:** Draft v0.3. [M5](../milestones/m5-surfaces-and-bindings.md) implements display bindings (§1–§4) for `label`, `textColor` and `background`, and [M8](../milestones/m8-dataflow.md) `value` ([surfaces §11.4](surfaces.md#114-level-outputs-echoes-gesture-timing-and-per-surface-helpers)). [surfaces §11.2](surfaces.md#112-surfaces-are-two-way-devices-and-control-input-is-state) replaces value mappings with helpers (§5). [dataflow §10.1](dataflow.md#101-one-way-to-give-a-value-one-way-to-pick-things) makes every binding a `Source` and the binding kinds stateless transforms (§2); [dataflow §10.3](dataflow.md#103-sources-transforms-and-sinks-helpers-are-transforms) makes helpers reducers (§5). Its markers follow the [surfaces spec](surfaces.md): **(Now)** is [M5 Phase 5](../milestones/m5-surfaces-and-bindings.md), and implemented; **(M6)**, **(M8)** and **(M9)** are those milestones; **(Later)** has no milestone yet.
+- **Related:** [dataflow](dataflow.md), [composition](composition.md), [state and event log](state-and-event-log.md), [plugin protocol §8](plugin-protocol.md), [flows](flows.md)
 
-Bindings are where Covalence's **dataflow** ([dataflow spec](dataflow.md)) meets a control. Flows do things in order; bindings keep something continuously in step with state. Every binding is a `Source` and evaluates as a JS expression ([ADR 0004](../adr/0004-javascript-expressions-and-scripts.md)), but users only write code when they choose to.
+Bindings are where Covalence's **dataflow** ([dataflow spec](dataflow.md)) meets a control. Flows do things in order; bindings keep something continuously in step with state. Every binding is a `Source` and evaluates as a JS expression ([flows §11.2](flows.md#112-expressions-and-scripts-one-language-sandboxed-by-where-code-runs)), but users only write code when they choose to.
 
-A `control_binding` covers both directions of one control, since a surface is a two-way device ([ADR 0024](../adr/0024-surfaces-as-two-way-devices.md)):
+A `control_binding` covers both directions of one control, since a surface is a two-way device ([surfaces §11.2](surfaces.md#112-surfaces-are-two-way-devices-and-control-input-is-state)):
 - **Display bindings** (§1–§4): sources → the control's outputs (image, LED, level, text). Each property is a sink (dataflow §7).
 - **Helpers** (§5): reducers over the control's input → cells with derived state and events. A derived value can be shown, sent to a variable or drive an action parameter. Derived events trigger flows through event triggers.
 
@@ -77,7 +77,7 @@ type Binding =
 
 type Ref =
   | { conn: string; path: Path }                     // fixed connection, ID form (state spec §1.1)
-  | { target: Ref; path: Path }                      // through a target held in state (ADR 0019)
+  | { target: Ref; path: Path }                      // through a target held in state (plugin protocol spec §13.9)
   | { root: "vars" | "sys" | "surface" | "layer" | "flow"; path: Path };   // (Now) `layer` replaces `page`
 
 type Condition = { path: Ref; op: "==" | "!=" | ">" | ">=" | "<" | "<=" | "truthy" | "falsy"; value?: Value };
@@ -97,7 +97,7 @@ type Format = "auto" | "mmss" | "hhmmss" | "percent" | "fixed1" | "fixed2" | "up
 The shapes above, with these rules, which the native evaluator and the compiled expression both follow (`covalence_core::binding`). **(M6)** The same rules define the `format`, `template`, `rules`, `compare` and `map` transforms (dataflow §4.1); only the shapes change.
 
 - **Properties:** `label`, `textColor` and `background`. The others are `unsupported`, as are refs through a `target`.
-- **`Path`s are segment arrays** ([ADR 0017](../adr/0017-wire-paths-as-segment-arrays.md)): `["outputs", 1, "source"]`.
+- **`Path`s are segment arrays** ([plugin protocol §13.3](plugin-protocol.md#133-paths-on-the-wire-are-segment-arrays)): `["outputs", 1, "source"]`.
 - **`value`:** `undefined` stays `undefined`, so the fallback applies; anything else is formatted.
 - **Formats:** `auto` is `String(v)` (formatting by the schema's `kind` comes later). `mmss` and `hhmmss` are the standard library's. `percent` is `Math.round(Number(v) * 100)` followed by `%`, for values from 0 to 1. `fixed1` and `fixed2` are `Number(v).toFixed(n)`. `upper` is `String(v).toUpperCase()`.
 - **`template`:** if any value in it is `undefined`, the whole template is, and the fallback applies.
@@ -130,13 +130,13 @@ The shapes above, with these rules, which the native evaluator and the compiled 
 
 ## 3. Evaluation
 
-- **Bindings are evaluated in the core.** `expr` bindings use QuickJS, the same engine as flows, on a thread of their own. `value`, `template`, `rules` and `map` are evaluated natively, with the same results as their compiled expressions ([ADR 0023](../adr/0023-key-rendering-and-binding-evaluation.md)). `expr` bindings have a 10 ms time limit.
-- **Dependencies are tracked at run time** ([ADR 0021](../adr/0021-expressions-as-sandboxed-snippets.md)). Each evaluation records the paths it reads, and the binding re-evaluates when any of them change. A binding that reads `vars.selectedCam` moves to the new camera's paths as soon as the variable changes.
+- **Bindings are evaluated in the core.** `expr` bindings use QuickJS, the same engine as flows, on a thread of their own. `value`, `template`, `rules` and `map` are evaluated natively, with the same results as their compiled expressions ([§9.2](#92-the-structured-kinds-are-evaluated-natively)). `expr` bindings have a 10 ms time limit.
+- **Dependencies are tracked at run time** ([flows §11.2](flows.md#112-expressions-and-scripts-one-language-sandboxed-by-where-code-runs)). Each evaluation records the paths it reads, and the binding re-evaluates when any of them change. A binding that reads `vars.selectedCam` moves to the new camera's paths as soon as the variable changes.
 - **Once per scheduler turn,** after patches are coalesced, so a binding never shows a half-applied turn.
 - **Only bindings on visible layers are evaluated:** a layer that controls at least one control on an attached surface. **(Later)** Armed layers, whose `when` reads input state, are evaluated too, so they can be drawn the moment they take over (surfaces §5.2). A layer that comes into view is evaluated in full before it's drawn.
-- **Missing values read as `undefined`** ([ADR 0004](../adr/0004-javascript-expressions-and-scripts.md)). If the result is `undefined` or the evaluation throws, the property uses `fallback`, then the control's default. Errors are reported in the editor and the log, rate-limited, and never stop other bindings.
+- **Missing values read as `undefined`** ([flows §11.2](flows.md#112-expressions-and-scripts-one-language-sandboxed-by-where-code-runs)). If the result is `undefined` or the evaluation throws, the property uses `fallback`, then the control's default. Errors are reported in the editor and the log, rate-limited, and never stop other bindings.
 - **Stale values are shown as stale.** If any value a binding read has `quality: stale` ([state spec §1.3](state-and-event-log.md)), the control is dimmed and marked automatically. A binding can opt out with `showStale: false`.
-- **Budget:** a state change to a re-rendered key image in under 16 ms ([architecture](../architecture.md#performance-budgets-targets-to-test-against)).
+- **Budget:** a state change to a re-rendered key image in under 16 ms ([overview](overview.md#performance-budgets-targets-to-test-against)).
 - **(M8) Bindings are consumers in the dataflow graph** (dataflow §5.3). They're evaluated after the turn's cells have settled, so a binding that reads a helper or a computed variable never shows a half-updated value.
 
 ---
@@ -146,14 +146,14 @@ The shapes above, with these rules, which the native evaluator and the compiled 
 - The editor knows the type of every `Ref` from the state schema, plugin manifests and interfaces, and checks each kind against the property's expected type.
   - `rules`: each `value` must match the property type, and each `Condition.value` must match the type at `path`.
   - `map`: `path` must be a number.
-  - `expr`: checked with the generated TypeScript definitions (ADR 0004).
+  - `expr`: checked with the generated TypeScript definitions ([flows spec §11.2](flows.md#112-expressions-and-scripts-one-language-sandboxed-by-where-code-runs)).
 - **Type errors block publishing. Warnings don't**, the same rule as [flows §4](flows.md).
 
 ---
 
 ## 5. Helpers (M8)
 
-A helper turns a control's input into derived state, events, or both (surfaces §4.3). **A helper is a reducer** (dataflow §4.2) whose `on` and `input` default to its control, and whose value is a cell under the layer or the surface ([ADR 0029](../adr/0029-dataflow-sources-transforms-sinks.md)). Helpers replace value mappings ([ADR 0024](../adr/0024-surfaces-as-two-way-devices.md)). A fader or encoder driving a mixer volume or a camera's zoom speed is a helper with a `to` sink.
+A helper turns a control's input into derived state, events, or both (surfaces §4.3). **A helper is a reducer** (dataflow §4.2) whose `on` and `input` default to its control, and whose value is a cell under the layer or the surface ([dataflow §10.3](dataflow.md#103-sources-transforms-and-sinks-helpers-are-transforms)). Helpers replace value mappings ([surfaces §11.2](surfaces.md#112-surfaces-are-two-way-devices-and-control-input-is-state)). A fader or encoder driving a mixer volume or a camera's zoom speed is a helper with a `to` sink.
 
 ```ts
 type Helper = ReducerSource & {                 // {use: "toggle" | "position" | …, …options}, dataflow §4.2
@@ -192,8 +192,8 @@ type Helper = ReducerSource & {                 // {use: "toggle" | "position" |
 
 ## 6. Layer parameters and templates (M9)
 
-- **A layer can declare parameters:** `params: { camera: { kind: "target", interface: "ptz.speed@1" } }`. Their values live at `layer.<slug>.params.<name>`, and the layer's own bindings, helpers and owned flows read them as `params.<name>` (dataflow §8). Nothing reads them implicitly from another layer or from a free-standing flow ([ADR 0031](../adr/0031-templates-instances-and-components.md), [ADR 0032](../adr/0032-one-template-primitive.md)).
-- **One layer, a selector row.** The layer's `camera` parameter defaults to `{ref: vars.selectedCam}`, and buttons at the top set that variable. Every binding and action on the layer that uses `params.camera` follows the selection. This is the main "control any camera" layout ([ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md)).
+- **A layer can declare parameters:** `params: { camera: { kind: "target", interface: "ptz.speed@1" } }`. Their values live at `layer.<slug>.params.<name>`, and the layer's own bindings, helpers and owned flows read them as `params.<name>` (dataflow §8). Nothing reads them implicitly from another layer or from a free-standing flow ([composition §11.1](composition.md#111-reuse-is-by-parameters-never-by-copying-or-overriding), [composition §11.2](composition.md#112-one-template-primitive-for-four-kinds)).
+- **One layer, a selector row.** The layer's `camera` parameter defaults to `{ref: vars.selectedCam}`, and buttons at the top set that variable. Every binding and action on the layer that uses `params.camera` follows the selection. This is the main "control any camera" layout ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-and-interfaces-proposed)).
 - **Or instances.** "Create from template" makes an **instance** ([composition §7](composition.md)), and one instance with `forEach: {targets: {interface: "ptz.speed@1"}}` makes a layer per camera, including cameras added during the show ([composition §4](composition.md)). Instances follow their template: there are no copies to drift. To spread a list over the controls of one layer, a control group (surfaces §6) does it instead.
 
 ---
@@ -207,6 +207,34 @@ Manifest `presets` ([plugin protocol §4](plugin-protocol.md#4-manifest)) become
 ## 8. Open questions
 
 1. ~~Should bindings on hidden pages keep evaluating when the page is shown on another surface or a web panel?~~ Decided for M5: "visible" means shown on any attached surface, and a layer's bindings are evaluated once for all of them.
-2. ~~Should the `rules` kind allow combining conditions with AND/OR, or should more complex logic go to `expr`?~~ Decided by [ADR 0026](../adr/0026-sources-and-selectors.md): a rule's `when` is a `Source<boolean>`, so `all`, `any` and `not` combine conditions.
+2. ~~Should the `rules` kind allow combining conditions with AND/OR, or should more complex logic go to `expr`?~~ Decided by [dataflow §10.1](dataflow.md#101-one-way-to-give-a-value-one-way-to-pick-things): a rule's `when` is a `Source<boolean>`, so `all`, `any` and `not` combine conditions.
 3. Is a visual editor for helpers (curves, ranges, acceleration) needed for v1, or are the form fields enough?
-4. ~~Should value mappings support two-way, such as an encoder that changes a value and also shows it, as one entity?~~ Decided by [ADR 0024](../adr/0024-surfaces-as-two-way-devices.md): one `control_binding` holds the control's helpers and its display bindings, and `follow` keeps the input side in step with state.
+4. ~~Should value mappings support two-way, such as an encoder that changes a value and also shows it, as one entity?~~ Decided by [surfaces §11.2](surfaces.md#112-surfaces-are-two-way-devices-and-control-input-is-state): one `control_binding` holds the control's helpers and its display bindings, and `follow` keeps the input side in step with state.
+
+---
+
+## 9. Decisions
+
+Why bindings are evaluated and drawn this way, and what was rejected. Keep these notes when the sections above change.
+
+### 9.1 Structured kinds that compile to expressions
+- **Decided:** a binding is stored in a structured form (`value`, `template`, `rules`, `map`) or as `expr`. Every structured form compiles to an expression, which the editor shows, and converting to `expr` is one-way (§2).
+- **Why:** forms keep the common cases editable without code, while one semantics covers all of them.
+- **Rejected:** storing bindings only as expressions and having the UI recognise patterns; recognition over arbitrary JS breaks after one hand edit.
+
+### 9.2 The structured kinds are evaluated natively
+- **Decided:** `value`, `template`, `rules` and `map` (stateless transforms since M6, dataflow §4.1) are evaluated in Rust, reading the state tree directly, with read sets known when they're saved. `expr` bindings use QuickJS on the turn thread with a 10 ms limit; over it, the binding keeps its fallback and reports `exprTimeout`. Tests evaluate every binding fixture both ways and require the same result, `format`s included, so a new `format` or condition `op` must land in both evaluators.
+- **Why:** the budget from a state change to a redrawn key is 16 ms. M4 measured an expression at ~265 µs in a fresh context, ~190 µs of it parsing the prelude, so a 32-key layer whose bindings all changed would spend ~8.5 ms before drawing anything. Native kinds cost microseconds, leaving the budget for `expr` bindings and drawing.
+- **Rejected:**
+  - *Every kind through QuickJS:* simpler, but spends the budget on the bindings that need it least.
+  - *A bytecode prelude:* halves every evaluation, but needs an `unsafe` exception in the core. Still an option for `expr` if it misses the budget.
+  - *A frozen, reused context:* the fastest, but only safe with every built-in locked down; one missed lets one binding change what another sees. (Reuse may come later on the turn thread, state spec §7.3.)
+
+### 9.3 Keys are rendered in the core
+- **Decided:** the core draws with `tiny-skia` and lays out text with `cosmic-text`, both pure Rust, with one embedded font, Inter (OFL). It encodes each output's native format (PNG, JPEG, raw RGB) and rotation, on the drawing thread, and sends only the controls whose resolved look changed. The default key is a black background with a white label that wraps to three lines and shrinks before it's truncated; an unbound key is blank; a stale one is drawn at half brightness with a marker in its top corner (§3).
+- **Why:** hardware needs images from the core anyway, so the web surface uses the same renderer and shows exactly what a deck would. `cosmic-text` gives shaping, wrapping and fallback for non-Latin labels; it's the core's largest dependency, which matters on a Raspberry Pi 5.
+- **Known gap:** no emoji or icon fonts. An emoji draws Inter's missing-glyph box until icons arrive with assets.
+- **Rejected:**
+  - *Rendering in the browser* (send the look, not the image): two renderers would draw keys differently.
+  - *`fontdue` or `ab_glyph`:* smaller, but no shaping or fallback, so Arabic, Hindi or combining marks draw wrongly.
+  - *Skia or a system graphics library:* better text, but a C++ build in a pure-Rust core and a harder cross-compile to ARM.

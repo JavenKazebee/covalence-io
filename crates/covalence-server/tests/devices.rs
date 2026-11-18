@@ -1,4 +1,4 @@
-//! Milestone 7 Phase 1: the device layer in the server, against pretend
+//! The device layer in the server, against pretend
 //! devices and the real Deno plugin host. Needs `deno` on the PATH.
 
 use std::path::{Path, PathBuf};

@@ -1,4 +1,4 @@
-//! Surfaces: two-way devices (spec §8, ADR 0024, ADR 0025). From the plugin
+//! Surfaces: two-way devices (spec §8, surfaces spec §11.2, plugin protocol spec §13.6). From the plugin
 //! host, the envelope's `conn` names the connection that provides the
 //! surface, and `surface` is the host's own key for it.
 

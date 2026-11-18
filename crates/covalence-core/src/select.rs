@@ -1,4 +1,4 @@
-//! Selectors (dataflow spec §2, ADR 0026): the one shape for picking things.
+//! Selectors (dataflow spec §2, §10.1): the one shape for picking things.
 //!
 //! A [`Selector<D>`] is an ID, a list of IDs, `{expr}`, the combinators
 //! `{any}`, `{all}` and `{not}`, or one of its domain's own forms. Three
@@ -516,7 +516,7 @@ fn order_key(c: &ControlView, i: usize) -> (bool, u32, u32, usize) {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Targets;
 
-/// A connection, or an item within one (ADR 0019). A string is a connection ID.
+/// A connection, or an item within one (plugin protocol spec §13.9). A string is a connection ID.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Target {
     pub conn: ConnId,
@@ -598,7 +598,7 @@ pub struct TargetView {
 
 impl Selector<Targets> {
     /// The connections it picks, by connection ID. Items within a
-    /// connection (`key`) wait for ADR 0019's targets, so a target with a
+    /// connection (`key`) wait for plugin protocol spec §13.9's targets, so a target with a
     /// key resolves to nothing.
     pub fn resolve(
         &self,

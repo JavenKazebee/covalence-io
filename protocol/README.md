@@ -1,18 +1,18 @@
 # Protocol schema
 
-The single source of truth for the plugin protocol ([ADR 0002](../docs/adr/0002-protocol-first-plugins.md), [ADR 0016](../docs/adr/0016-protocol-schema-tooling.md)).
+The single source of truth for the plugin protocol ([plugin protocol §13.1](../docs/specs/plugin-protocol.md#131-protocol-first), [plugin protocol §13.2](../docs/specs/plugin-protocol.md#132-schema-tooling-typespec--json-schema)).
 
 | Path | Contents |
 |---|---|
 | `main.tsp`, `src/*.tsp` | TypeSpec source |
 | `json-schema/` | Emitted JSON Schema. Generated, but committed, so other-language SDKs don't need TypeSpec |
 | `scripts/gen-ts.mjs` | Generates `packages/protocol/types.gen.ts` from the JSON Schema |
-| `interfaces/*.json` | Interfaces (ADR 0019): `surface@1` and `flow@1`, which the core connection implements (core actions spec) |
+| `interfaces/*.json` | Interfaces ([plugin protocol spec §13.9](../docs/specs/plugin-protocol.md#139-dynamic-targets-and-interfaces-proposed)): `surface@1` and `flow@1`, which the core connection implements (core actions spec) |
 | `fixtures/messages.json` | Golden messages: every message type, with every optional field filled |
 | `fixtures/invalid.json` | Messages both sides must reject |
 | `fixtures/encoded/` | MessagePack frames produced by each side; each side's tests decode the other's |
 
-Rust types in `crates/covalence-protocol` are written by hand (ADR 0016 fallback). The fixtures keep them in step with the schema.
+Rust types in `crates/covalence-protocol` are written by hand ([plugin protocol spec §13.2](../docs/specs/plugin-protocol.md#132-schema-tooling-typespec--json-schema) fallback). The fixtures keep them in step with the schema.
 
 ## Changing the protocol
 

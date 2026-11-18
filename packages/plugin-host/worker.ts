@@ -1,7 +1,7 @@
 /**
- * A connection worker: runs one connection of one plugin (ADR 0003) with the
+ * A connection worker: runs one connection of one plugin (plugin protocol spec §13.4) with the
  * SDK's connection runtime. Permissions are inherited from the host process
- * (ADR 0015: no per-worker narrowing yet).
+ * (plugin protocol spec §13.5: no per-worker narrowing yet).
  *
  * @module
  */

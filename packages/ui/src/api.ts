@@ -125,7 +125,7 @@ export interface DeviceList {
   scanError?: { code: string; message: string; hint?: string };
 }
 
-/** One traffic entry (ADR 0025): the first 512 bytes in hex, or a note on the handle's state. */
+/** One traffic entry (plugin protocol spec §13.6): the first 512 bytes in hex, or a note on the handle's state. */
 export interface TrafficEntry {
   /** Milliseconds since the epoch. */
   ts: number;

@@ -1,4 +1,4 @@
-//! Surfaces that plugins provide (plugin protocol §8, M7): a connection's
+//! Surfaces that plugins provide (plugin protocol §8): a connection's
 //! `surface.attach`, `surface.input` and `surface.detach` reach the core's
 //! surface module the way the web surface's do, and its draws go back as
 //! `surface.draw`, images as binary.

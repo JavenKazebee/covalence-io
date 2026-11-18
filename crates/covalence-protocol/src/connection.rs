@@ -17,7 +17,7 @@ pub struct ConnCreate {
     pub alias: String,
     pub config: Object,
     pub secrets: BTreeMap<String, String>,
-    /// Resolved from the manifest templates and the config. Not yet enforced (ADR 0015).
+    /// Resolved from the manifest templates and the config. Not yet enforced (plugin protocol spec §13.5).
     pub permissions: Permissions,
     pub mode: ConnMode,
     pub isolate: bool,

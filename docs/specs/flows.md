@@ -1,9 +1,9 @@
 # Spec: Flows
 
 - **Status:** Draft v0.2
-- **Related:** [ADR 0018](../adr/0018-flows-as-step-trees.md), [ADR 0020](../adr/0020-project-entity-types-in-the-core.md), [ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md), [ADR 0004](../adr/0004-javascript-expressions-and-scripts.md), [ADR 0008](../adr/0008-redundancy-and-failover.md), [ADR 0014](../adr/0014-time-sources-and-scheduling.md), [ADR 0026](../adr/0026-sources-and-selectors.md), [ADR 0027](../adr/0027-events-addressed-by-path.md), [ADR 0028](../adr/0028-the-core-is-a-connection.md), [ADR 0030](../adr/0030-composite-connections.md), [ADR 0032](../adr/0032-one-template-primitive.md), [dataflow](dataflow.md), [core actions](core-actions.md), [composition](composition.md), [state and event log](state-and-event-log.md), [bindings](bindings.md)
+- **Related:** [dataflow](dataflow.md), [core actions](core-actions.md), [composition](composition.md), [state and event log](state-and-event-log.md), [bindings](bindings.md)
 
-A flow is the single unit of automation: triggers, optional conditions, and a body of steps. Button action lists, rules and node graphs are all flows. Flows are **control flow only**. Values move through expressions, not edges ([ADR 0018](../adr/0018-flows-as-step-trees.md)). Keeping something continuously in step with state is dataflow, not a flow ([dataflow spec](dataflow.md)).
+A flow is the single unit of automation: triggers, optional conditions, and a body of steps. Button action lists, rules and node graphs are all flows. Flows are **control flow only**. Values move through expressions, not edges (§11.1). Keeping something continuously in step with state is dataflow, not a flow ([dataflow spec](dataflow.md)).
 
 **Markers** in §1–§7 follow the [dataflow spec](dataflow.md): **(M6)**, **(M8)** and **(M9)** name the milestone that implements a rule. §8 lists what's implemented.
 
@@ -23,7 +23,7 @@ interface Flow {
   triggers: Trigger[];                // any one fires the flow
   conditions?: Expr[];                // all must be true when a trigger fires
   concurrency: "parallel" | "queue" | "restart" | "ignore";
-  failover: "abort" | "resume" | "restart";       // ADR 0008
+  failover: "abort" | "resume" | "restart";       // state spec §7.4
 
   inputs?: { [name: string]: ParamDef };          // (M9) bound per run: call-flow, API, OSC and composite actions
   outputs?: { [name: string]: StateSchemaNode };  // (M9) returned by `stop` (§2.3) to a caller
@@ -37,7 +37,7 @@ interface Flow {
   editor?: EditorMeta;                // view-only metadata (§6); ignored by the runtime
 }
 
-type Expr = string;                   // JS expression source (ADR 0004)
+type Expr = string;                   // JS expression source (§11.2)
 ```
 
 - `concurrency` decides what happens when a trigger fires while a run is already active:
@@ -54,17 +54,17 @@ type Expr = string;                   // JS expression source (ADR 0004)
 | `event` | `from: EventSource`, `event: string \| string[]`, `filter?: Expr`, `echo?` ([dataflow §3.1](dataflow.md)) | `{path, event, payload, captures?, source?, surface?, layer?, control?, item?, index?}`, with `payload` typed by the event's definition |
 | `state` | `when: Expr \| Source<boolean>`, `edge: rising \| falling \| change` | `{value, previous}` |
 | `state` with `match` | `match: PathPattern`, `when?: Expr`, `edge` | `{path, captures, value, previous, ts}` |
-| `schedule` | per [ADR 0014](../adr/0014-time-sources-and-scheduling.md) | `{scheduled, fired}` |
+| `schedule` | per [state spec §7.7](state-and-event-log.md#77-time-sources-and-scheduling-proposed) | `{scheduled, fired}` |
 | `call` | none; any flow may call this one | `{caller: {flow, run}}` |
 | `api` / `osc` | `address?` for OSC | `{args}` |
 | `action` **(M9)** | none: set by a composite whose action names this flow ([composition §6.2](composition.md)) | `{conn, call}`; the action's params are `input`, and `params` are the composite instance's |
 
-- **(M6) One trigger kind for every event** ([ADR 0027](../adr/0027-events-addressed-by-path.md)). Events happen at a node in the state tree and have a name (`pp:timerEnded`, `surface.deck.controls.k3:press`, `flow.preService:finished`, `sys:startup`). `from` picks the nodes with a path selector, a target selector, a layer or surface with a control selector, a group, or a component slot. The M5 `control` and the planned `startup` kinds are event triggers now: `{from: {layer, controls}, event: "press"}` and `{from: {path: "sys"}, event: "startup"}`.
-- An `event` trigger can listen to an interface instead of one connection. `from: {target: {interface: "tally@1"}}` fires for any camera with tally, composites included, and `trigger.source` says which ([ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md)).
+- **(M6) One trigger kind for every event** ([dataflow §10.2](dataflow.md#102-events-are-addressed-by-state-path)). Events happen at a node in the state tree and have a name (`pp:timerEnded`, `surface.deck.controls.k3:press`, `flow.preService:finished`, `sys:startup`). `from` picks the nodes with a path selector, a target selector, a layer or surface with a control selector, a group, or a component slot. The M5 `control` and the planned `startup` kinds are event triggers now: `{from: {layer, controls}, event: "press"}` and `{from: {path: "sys"}, event: "startup"}`.
+- An `event` trigger can listen to an interface instead of one connection. `from: {target: {interface: "tally@1"}}` fires for any camera with tally, composites included, and `trigger.source` says which ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-and-interfaces-proposed)).
 - `state` triggers are edge-triggered. Their dependencies are tracked at run time, like bindings. **(M6)** `when` can be a structured source (`{use: "compare", …}`), as well as an expression string.
-- **A control's input is state, and its events are derived from that state** ([ADR 0024](../adr/0024-surfaces-as-two-way-devices.md), [surfaces spec §4](surfaces.md)). An event trigger is the quick way in for them: a press, a double, a turn. A layer source matches per surface, on whichever surfaces that layer controls the control.
+- **A control's input is state, and its events are derived from that state** ([surfaces §11.2](surfaces.md#112-surfaces-are-two-way-devices-and-control-input-is-state), [surfaces spec §4](surfaces.md)). An event trigger is the quick way in for them: a press, a double, a turn. A layer source matches per surface, on whichever surfaces that layer controls the control.
 - **(M6) Flows emit events** at `flow.<slug>`: `started`, `finished` and `failed`, with `{run, status, error?}`. "When that flow finishes" is an event trigger.
-- **(M9) `params`** is the flow's own instance's parameters, or for an owned flow its owner instance's ([composition §2](composition.md)). A free-standing flow triggered by a control event doesn't get the layer's: it gets `trigger.layer` and `trigger.instance`, and a flow that should handle every instance of a layer template is owned by it ([ADR 0032](../adr/0032-one-template-primitive.md)).
+- **(M9) `params`** is the flow's own instance's parameters, or for an owned flow its owner instance's ([composition §2](composition.md)). A free-standing flow triggered by a control event doesn't get the layer's: it gets `trigger.layer` and `trigger.instance`, and a flow that should handle every instance of a layer template is owned by it ([composition §11.2](composition.md#112-one-template-primitive-for-four-kinds)).
 - **`state` triggers cover conditions and combinations** over input state: a press that only counts while armed, a shift key, a helper's position crossing a threshold.
 - **A `state` trigger with `match`** fires for each path matching the pattern, with `*` matching one segment: `surface.*.controls.*.pressed`. `trigger.path` is the path that changed, and `trigger.captures` the segments `*` matched. `when` is optional, and sees `trigger.value`. It works on any state, so a GPIO contact from a plugin and a key on a surface can drive the same flow.
 
@@ -106,7 +106,7 @@ type Duration = string;  // "500ms", "2s", "1m30s"
 | `break` / `continue` | none | only inside a `loop` |
 
 ```ts
-type Target = { conn: string; key?: PathSegment };          // ADR 0019
+type Target = { conn: string; key?: PathSegment };          // plugin protocol spec §13.9
 
 // (M6) An action step's target is a Source (dataflow §1): a literal Target is fixed;
 // a ref or an expression is dynamic, and then `constraint` is required.
@@ -151,12 +151,12 @@ Steps read data through expressions. These names are in scope:
 | `<as>`, `index` | The current loop item and index, inside `forEach` | no |
 | `error` | The error, inside a `catch` | no |
 | state roots | `<alias>`, `vars`, `sys`, `surface`, `layer` (M5: `page`), `flow` ([state spec §1.1](state-and-event-log.md)) | `vars` via `set` and scripts |
-| `target(t)` | A target's state ([ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md)) | no |
+| `target(t)` | A target's state ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-and-interfaces-proposed)) | no |
 | `params` **(M9)** | The flow instance's parameters, or its owner instance's for an owned flow: a layer's, a composite's or a placement's ([composition §2](composition.md)) | no |
 
-- **Steps in a branch that didn't run are absent** from `steps`. Reading them gives `undefined`, like any missing value ([ADR 0004](../adr/0004-javascript-expressions-and-scripts.md)).
+- **Steps in a branch that didn't run are absent** from `steps`. Reading them gives `undefined`, like any missing value ([§11.2](#112-expressions-and-scripts-one-language-sandboxed-by-where-code-runs)).
 - **Inside a `parallel` block,** a branch can only see its own steps and those that finished before the block started. Other branches' steps become visible after the join.
-- **Scripts** get the same scopes as globals, plus the host API from ADR 0004. `setLocal(name, value)` joins `setVar`.
+- **Scripts** get the same scopes as globals, plus the host API from [§11.2](#112-expressions-and-scripts-one-language-sandboxed-by-where-code-runs). `setLocal(name, value)` joins `setVar`.
 
 ---
 
@@ -169,10 +169,10 @@ Types are checked **when editing**. Values stay dynamic at runtime.
   - the flow's `inputs`
   - each action's `result` schema, for `steps.<id>.result`
   - `local` names, inferred from `set` steps. A `local` may also be declared with a schema in `editor.locals`
-  - the state schema and plugin manifests, as in ADR 0004
+  - the state schema and plugin manifests, as in [§11.2](#112-expressions-and-scripts-one-language-sandboxed-by-where-code-runs)
   - interface schemas, for dynamic targets
 - Action `params` are checked against the action's schema, or against the interface's when the target is an interface.
-- **Errors block publishing. Warnings don't.** Drafts can be saved with errors ([ADR 0009](../adr/0009-multi-user-editing.md)).
+- **Errors block publishing. Warnings don't.** Drafts can be saved with errors ([state spec §7.5](state-and-event-log.md#75-multi-user-editing-designed-not-built)).
   - Errors: unknown action, missing required parameter, type mismatch, a `break` outside a loop, a reference to a step ID that doesn't exist.
   - Warnings: a state path that isn't in the schema yet (it may appear after a connection connects), and possibly-`undefined` reads.
 
@@ -191,7 +191,7 @@ Types are checked **when editing**. Values stay dynamic at runtime.
 
 ### 5.3 Journaling
 - Each step logs `run.step` `started`, then `done`, `failed` or `skipped`. `detail` carries the step's position and, on failure, the error.
-- Actions log `action.requested` with `cause` → the `run.step` entry. A dynamic target also records the resolved `conn`, `key` and `via` ([ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md)).
+- Actions log `action.requested` with `cause` → the `run.step` entry. A dynamic target also records the resolved `conn`, `key` and `via` ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-and-interfaces-proposed)).
 - `retry` attempts each journal a `run.step` entry, with `attempt` in `detail`.
 
 ### 5.4 Flow status in state
@@ -211,7 +211,7 @@ The three views are three ways of showing the same tree.
 | **Rule** | One trigger, and a body that is either the Button shape or a single `branch` whose arms have that shape | Conditions show as the "if" card |
 | **Flow** | Any flow | Blocks are nested regions. Edges show order only |
 
-- **A key's flows.** A control's binding holds its look and its helpers; what happens when it's used lives in flows ([ADR 0024](../adr/0024-surfaces-as-two-way-devices.md)). **(Later)** Selecting a key in the surface editor lists every flow that references it (by layer, control group or region), with each flow's other triggers, and opens them in the Button view.
+- **A key's flows.** A control's binding holds its look and its helpers; what happens when it's used lives in flows ([surfaces §11.2](surfaces.md#112-surfaces-are-two-way-devices-and-control-input-is-state)). **(Later)** Selecting a key in the surface editor lists every flow that references it (by layer, control group or region), with each flow's other triggers, and opens them in the Button view.
 - "Open as flow" is always possible. Going back down is offered when the tree matches the simpler shape.
 - `editor` holds view-only data: node positions, collapsed blocks, colours and comments. It's exported, so a layout survives a round trip, but it never affects a run and its changes are left out of the diff summary.
 - Without saved positions, the Flow view lays the tree out automatically from top to bottom.
@@ -220,7 +220,7 @@ The three views are three ways of showing the same tree.
 
 ## 7. Text export
 
-Flows export as YAML ([ADR 0006](../adr/0006-project-storage-and-versioning.md)), one file per flow. Connections are stored as IDs and shown with their alias as a comment.
+Flows export as YAML ([state spec §7.2](state-and-event-log.md#72-storage-sqlite-a-text-export-migrations)), one file per flow. Connections are stored as IDs and shown with their alias as a comment.
 
 ```yaml
 id: 01JBZ8X4M2K9Q7N3T5V6W8Y0A1
@@ -263,10 +263,10 @@ Keys appear in a fixed order. Fields that are always expressions (`when`, `until
 This section is what the core accepts today.
 - [Milestone 3](../milestones/m3-first-flows.md) implemented the Button-view shape (§6) without expressions.
 - [Milestone 4](../milestones/m4-expressions.md) adds expressions (§8.7), `state` triggers, `event` filters, flow conditions, and the `branch`, `waitUntil` and `set` steps. Rules that M4 adds or changes are marked **(M4)**.
-- [Milestone 5](../milestones/m5-surfaces-and-bindings.md) adds `gesture` triggers, marked **(M5)**. M5 Phase 5 replaced them with `control` triggers on input events ([ADR 0024](../adr/0024-surfaces-as-two-way-devices.md)), marked **(Now)** and implemented; the **(M5)** `gesture` rows describe what's gone. Rules marked **(Later)** have no milestone yet.
+- [Milestone 5](../milestones/m5-surfaces-and-bindings.md) adds `gesture` triggers, marked **(M5)**. M5 Phase 5 replaced them with `control` triggers on input events ([surfaces §11.2](surfaces.md#112-surfaces-are-two-way-devices-and-control-input-is-state)), marked **(Now)** and implemented; the **(M5)** `gesture` rows describe what's gone. Rules marked **(Later)** have no milestone yet.
 - [Milestone 6](../milestones/m6-primitives.md) replaces `control` triggers with `event` triggers whose `from` is an event source, adds pattern `state` triggers and flow events, and makes action targets and parameters `Source`s. Rules it adds or changes are marked **(M6)**, and aren't implemented yet.
 
-**Anything outside this section is rejected on save with an error, never stored and ignored.** Types live in `covalence_core::flow` ([ADR 0020](../adr/0020-project-entity-types-in-the-core.md)).
+**Anything outside this section is rejected on save with an error, never stored and ignored.** Types live in `covalence_core::flow` ([overview: project entities](overview.md#project-entities-are-rust-types)).
 
 ### 8.1 Flow fields
 
@@ -368,7 +368,7 @@ Errors block the save; warnings don't. There are no drafts yet.
   - **(M4)** a `waitUntil` without a `timeout`
 - **(M4) What the core doesn't check.**
   - **Parameter schemas, for any parameter that is an expression.** Its value is checked at run time, along with the rest of `params`.
-  - **References to steps** (`steps.route9`). The editor warns about those, and at run time they read as `undefined` ([ADR 0021](../adr/0021-expressions-as-sandboxed-snippets.md)).
+  - **References to steps** (`steps.route9`). The editor warns about those, and at run time they read as `undefined` ([§11.2](#112-expressions-and-scripts-one-language-sandboxed-by-where-code-runs)).
 - **Problem shape.** Each problem is `{path, code, message, at?}`.
   - `path` is a segment array into the flow, e.g. `["body", 1, "params", "input"]`.
   - **(M4)** For an expression that doesn't compile, the code is `exprSyntax` and `at` is `{line, column}` within the expression's source.
@@ -376,7 +376,7 @@ Errors block the save; warnings don't. There are no drafts yet.
 
 ### 8.5 Runs
 
-- **A run** has a ULID, a status (`queued`, `running`, `ok`, `failed`, `cancelled`), and a copy of the flow taken when it started. Editing or disabling a flow doesn't touch runs already active. Deleting it cancels them. **(M9, proposed)** `run.started` records the flow's revision, and a published changeset never changes a run already active ([ADR 0034](../adr/0034-live-edits.md)).
+- **A run** has a ULID, a status (`queued`, `running`, `ok`, `failed`, `cancelled`), and a copy of the flow taken when it started. Editing or disabling a flow doesn't touch runs already active. Deleting it cancels them. **(M9, proposed)** `run.started` records the flow's revision, and a published changeset never changes a run already active ([state spec §7.6](state-and-event-log.md#76-editing-a-running-show-proposed-kept-state-settled-in-m8)).
 - **Concurrency.**
   - `queue`: a queued trigger gets its run ID straight away but journals nothing more until it starts. The queue holds at most 16 runs. Past that, the trigger is blocked with reason `queueFull` (§10 question 2).
   - `restart`: cancels the active run and starts the new one once the old run has journaled `run.finished`.
@@ -415,7 +415,7 @@ A flow that listens to an event on a connection and also acts on that connection
 
 ### 8.7 Expressions (M4)
 
-The language and sandbox are set by [ADR 0004](../adr/0004-javascript-expressions-and-scripts.md) and [ADR 0021](../adr/0021-expressions-as-sandboxed-snippets.md).
+Why the language and sandbox are this way: §11.2.
 
 **Where they appear:** `{expr}` action parameters, `wait.for`, `event` `filter`, flow `conditions`, `state` `when`, `waitUntil` `until`, `set` `value`, and `branch` `when`.
 
@@ -438,13 +438,13 @@ return names[vh.outputs[1].source] ?? "Unknown";
 | `steps.<id>` | `{status, result?, error?, startedAt, durationMs}` for steps that have finished in this run. Steps that haven't run, or are still running, read as `undefined` |
 | `<alias>` | A connection's state |
 | `vars`, `sys`, `flow` | User variables, core state, flow status ([state spec](state-and-event-log.md) §1.1) |
-| the standard library | `mmss`, `hhmmss`, `clamp`, `round`, `pad`, `lerp`, `rgb`, `hsl`, `mix` ([ADR 0004](../adr/0004-javascript-expressions-and-scripts.md)) |
+| the standard library | `mmss`, `hhmmss`, `clamp`, `round`, `pad`, `lerp`, `rgb`, `hsl`, `mix` ([§11.2](#112-expressions-and-scripts-one-language-sandboxed-by-where-code-runs)) |
 
 - **Scope outside a run.** In filters, conditions and `state` triggers there's no run, so `local` and `steps` are empty.
 - **Missing values.** Paths that don't exist read as `undefined` and never throw.
 - **Truthiness** is JavaScript's, wherever an expression decides something: filters, conditions, `when`, `until`.
 
-**Sandbox** ([ADR 0021](../adr/0021-expressions-as-sandboxed-snippets.md)).
+**Sandbox** ([§11.2](#112-expressions-and-scripts-one-language-sandboxed-by-where-code-runs)).
 - Everything in scope is read-only, and writing to it throws.
 - There is no host API.
 - No state carries over between evaluations.
@@ -526,3 +526,46 @@ interface Run {
 3. Is a dedicated state-machine flow type needed for v1, or are loops, variables and separate flows enough? Collect real show flows before deciding.
 4. Should called flows run inside the caller's run (shared cancellation, one timeline entry), or as linked runs? Proposal: a linked run, with cancellation passed down.
 5. Step-level `retry` on blocks: allow it, or keep it on leaf steps only, to avoid re-running parts of a block that already took effect?
+
+---
+
+## 11. Decisions
+
+Why flows and expressions are the way they are, and what was rejected. Keep these notes when the sections above change.
+
+### 11.1 Flows are structured step trees, and control flow only
+- **Decided:** a flow is stored as a tree of blocks (sequence, branch, loop, parallel, group with catch and finally) and leaf steps, each with a stable ID unique in its flow. No goto: retrying, early exit and loop control are steps or policies. The node-graph view draws the tree, with blocks as nested regions and edges meaning "then"; node positions are editor-only metadata the runtime ignores. Data inside a run moves through expressions (§3), not wires. Types are checked when editing (§4), and values stay dynamic at run time. Continuous dataflow (a label showing a timer, a fader driving a volume) is bindings and dataflow, not flows.
+- **Why:** for control flow a free graph and a structured tree are equally expressive, and the tree is what the other requirements want:
+  - a flat sequence *is* a Button-view flow, so moving down a view is a shape check, not graph analysis (§6)
+  - a run's position is a path of step IDs, so a checkpoint is that plus the locals, and `resume` on failover stays simple
+  - parallel blocks own their children, so "wait for all" and "first wins" are well defined, and the fork/join bug (a join waiting for a path that went elsewhere) can't happen
+  - cancellation and error handling follow the nesting: a group's `catch` covers exactly its steps
+  - the YAML export nests like code and diffs cleanly
+
+  Free-graph tools are mostly dataflow tools (TouchDesigner, Max, Node-RED). Flows are the cue-list model of QLab, Companion action lists and Home Assistant scripts.
+- **Costs:** state machines and jump-back logic need a loop, a variable, separate flows or a script (open question 3). The Flow view needs a nested-block editor with auto-layout of our own; Vue Flow can still render it.
+- **Rejected:**
+  - *A free graph of nodes and edges:* the cheapest editor, but view round-tripping, checkpoints, parallel joins and diffs get harder, with validation for unreachable nodes, dangling edges and cycles.
+  - *A free graph limited to structured shapes:* "this connection isn't allowed" errors that are hard to explain, and a tree underneath anyway.
+  - *Mixed control and data edges,* as in Unreal Blueprints: known for unreadable graphs, and duplicates expressions.
+
+### 11.2 Expressions and scripts: one language, sandboxed by where code runs
+- **Decided:** JavaScript/TypeScript everywhere, on QuickJS-ng in the core (`rquickjs`), with no difference in syntax between levels. **Code that computes is an expression and may run anywhere, any number of times. Code that acts is a script step and runs once, inside a run.**
+
+  | | Expression | Script step |
+  |---|---|---|
+  | Used in | Action params, `wait.for`, filters, conditions, `when`, `waitUntil`, `branch`, `set` values, bindings, sources, the editor's preview | One `script` step |
+  | Runs | Whenever the core decides: on state changes, on the standby, in preview | Once, at a known point in a run |
+  | Syntax | One expression, or a function body that `return`s | Full JS/TS, `async/await` |
+  | Can act | No | `action()`, `setVar()`, `setLocal()`, `emit()`, `wait()`, `waitUntil()`, `log` |
+  | Time and randomness | None: read `sys.time.now` | `now()` and `random()`, journaled as `nondet` |
+
+  Expressions are **pure by sandbox, not syntax** (§8.7): every name is a read-only proxy, no host API, no memory between evaluations, no `Date.now()`, `Math.random()` or async. Nothing in the core has file, network or process access: side effects go through `action()` and the output gate. Limits per evaluation: 50 ms (interrupt hook) and 16 MB by default, scripts with their step's `timeout`; the turn thread uses tighter ones (state spec §7.3). An expression that fails fails its step (`exprError`, `exprTimeout`, `exprMemory`); in a trigger, filter or condition it counts as false and is logged. **Dependencies are tracked at run time:** each evaluation records the paths it reads, and consumers re-subscribe to that read set, once per turn. User variables are the `vars` root, since `var` is a keyword. `oxc` stays out of the core until script steps need TypeScript stripped; until then QuickJS reports syntax errors, and unknown step IDs are editor warnings that read as `undefined` at run time.
+- **Planned with script steps:** a small standard library (`mmss`, `hhmmss`, `clamp`, `round`, `pad`, `lerp`, `rgb`, `hsl`, `mix`); generated TypeScript definitions from the live state tree and manifests, with CodeMirror 6 for inline fields and Monaco for scripts; missing or offline values read as `undefined`, with fallbacks on bindings.
+- **Why:** one language that carries from a label to a script to a plugin, and one engine, so code behaves the same wherever it runs. Scripts run next to the state: no IPC, cancellation at any instruction, compatible with standby shadowing and replay. Syntax was a poor proxy for side effects: a lookup table or a small loop changes nothing, while what can actually act is whatever the host hands in, which is ours to control. Static path extraction can't follow dynamic reads (`vh.outputs[vars.n].source`), and runtime read sets can. QuickJS is 20–50× slower than V8 on heavy computation, which doesn't matter for glue logic; heavy work belongs in a plugin.
+- **Rejected:**
+  - *Expression-only syntax checked by `oxc`:* forbids harmless code, adds a large dependency, and enforces purity in the wrong place. Checking only in the editor would let flows from the API or files carry side effects.
+  - *The full host API in expressions:* their evaluation count is an implementation detail, so a repaint or a keystroke in the preview could fire an action with no run to belong to.
+  - *No sandbox for scripts, since editors are trusted:* direct I/O bypasses the gate, so a standby would send commands twice, replay would touch devices, and a `while (true)` would freeze the core mid-show.
+  - *Running scripts in the Deno host:* IPC, a crash domain shared with plugins, and harder failover.
+  - *Other languages:* CEL is safe but unfamiliar, with strict number types (the fallback if JS proves too costly). Luau was strongest (speed, sandboxing, familiar from lighting consoles), but it's a second language next to TS plugins, fits JSON-shaped state badly (1-based arrays, `nil` holes) and has weaker browser tooling. Rhai, Rune, Lua, Starlark, JSONata or a custom syntax had the same problem or worse. A custom JS-subset evaluator would drift from real JS.

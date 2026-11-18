@@ -2,7 +2,7 @@
 //! and step on events or on their input changing.
 //!
 //! The definitions in `transforms/` are the specification. These are their
-//! native implementations, for the turn's budget (ADR 0033); each follows
+//! native implementations, for the turn's budget (state spec §7.3); each follows
 //! its definition operation by operation, so floating point agrees, and the
 //! conformance suite ([`super::conformance`]) holds them to it. `script` has
 //! no native implementation: it runs in the sandbox.

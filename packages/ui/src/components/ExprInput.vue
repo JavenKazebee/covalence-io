@@ -6,7 +6,7 @@ import { stepWarnings } from "../flows/expr";
 import type { Evaluated, ShownProblem } from "../flows/model";
 
 /**
- * A JavaScript expression field (flow spec §8.7, ADR 0004): one line that
+ * A JavaScript expression field (flow spec §8.7, §11.2): one line that
  * grows as you type, with a live preview from `POST /expressions/evaluate`,
  * the server's problems, and warnings for `steps.<id>` that won't be there.
  */

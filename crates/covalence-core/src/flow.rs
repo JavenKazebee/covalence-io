@@ -1,7 +1,7 @@
 //! Flows: the implemented subset of the flow spec (docs/specs/flows.md §8).
 //!
 //! These types are the source of truth for storage and the HTTP API
-//! (ADR 0020). Field names follow the spec, so the JSON stored in the
+//! (overview spec: project entities). Field names follow the spec, so the JSON stored in the
 //! `entities` table is the JSON the API sends and the YAML export will use.
 //! Anything outside the subset is rejected by [`Flow::parse`], never stored
 //! and ignored.
@@ -71,7 +71,7 @@ pub enum Concurrency {
     Ignore,
 }
 
-/// What a standby node does with this flow's runs on failover (ADR 0008).
+/// What a standby node does with this flow's runs on failover (state spec §7.4).
 /// M3 has only `abort`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -201,7 +201,7 @@ pub enum Edge {
     Change,
 }
 
-/// A target: a connection, or an item within one (ADR 0019). M6 has items
+/// A target: a connection, or an item within one (plugin protocol spec §13.9). M6 has items
 /// only on `core`: its surfaces and flows.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -220,7 +220,7 @@ impl ConnRef {
     }
 }
 
-/// What a target that follows state must be (ADR 0019): M6 checks the
+/// What a target that follows state must be (plugin protocol spec §13.9): M6 checks the
 /// interface, and only `core`'s (`surface@1`, `flow@1`) run.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

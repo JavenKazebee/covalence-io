@@ -1,4 +1,4 @@
-//! Selectors (M6 Phase 2, dataflow spec §2): each domain's forms, the
+//! Selectors (dataflow spec §2): each domain's forms, the
 //! combinators, stable order, `expr` that follows state, and validation.
 
 use std::collections::BTreeMap;

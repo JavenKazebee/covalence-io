@@ -1,5 +1,5 @@
 //! The flow runtime on a paused clock, with a stand-in for the core that
-//! journals actions the way the core does (M3 Phase 2).
+//! journals actions the way the core does.
 
 use std::collections::BTreeSet;
 use std::future::Future;
@@ -707,7 +707,7 @@ async fn shutdown_cancels_active_runs() {
 }
 
 // ---------------------------------------------------------------------------
-// Expressions (M4 Phase 2)
+// Expressions
 
 impl World {
     /// Sets a state leaf the way a plugin's patch does: journaled, then applied.
@@ -1105,7 +1105,7 @@ async fn cancelling_during_wait_until_stops_the_run() {
 }
 
 // ---------------------------------------------------------------------------
-// Events by path (M6 Phase 3)
+// Events by path
 
 fn flow_with(id: &str, triggers: serde_json::Value) -> serde_json::Value {
     json!({
@@ -1443,7 +1443,7 @@ async fn a_target_held_in_vars_is_checked_against_its_constraint() {
     assert_eq!((r.conn.as_str(), r.key.as_deref()), ("core", Some("S1")));
 }
 
-/// A `state` trigger on a computed variable (M8 Phase 2): it sees the cell
+/// A `state` trigger on a computed variable: it sees the cell
 /// in the same turn as its input, and `why` passes through the cell's patch.
 #[tokio::test(start_paused = true)]
 async fn a_state_trigger_reads_a_cell_in_the_turn_of_its_input() {

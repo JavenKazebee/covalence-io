@@ -1,7 +1,7 @@
 /**
  * Surfaces a plugin provides (plugin protocol §8): a device with controls
  * the core reads and draws on. The plugin translates; the core interprets
- * (ADR 0025). It reports what each control did, with the device's time, and
+ * (plugin protocol spec §13.6). It reports what each control did, with the device's time, and
  * shows the images the core renders.
  *
  * ```ts
@@ -15,7 +15,7 @@
  *
  * A motor fader takes its level with `onLevel`, and reports its motor's own
  * movement with `echo`, so nothing reacts to the device moving itself
- * (ADR 0035):
+ * (surfaces spec §11.4):
  *
  * ```ts
  * desk.onLevel(({ control, value }) => device.moveFader(control, value));

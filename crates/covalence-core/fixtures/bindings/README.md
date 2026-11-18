@@ -1,6 +1,6 @@
 # Binding fixtures
 
-Example control bindings shared by the Rust tests (`crates/covalence-core/tests/bindings.rs`) and, from M5 Phase 4, the UI's tests (ADR 0020).
+Example control bindings shared by the Rust tests (`crates/covalence-core/tests/bindings.rs`) and, from M5 Phase 4, the UI's tests ([overview spec: project entities](../../../../docs/specs/overview.md#project-entities-are-rust-types)).
 
 - `*.json`: valid bindings, exactly as stored and as the API sends them. Each must parse, validate with no errors, round-trip unchanged, and give the same result evaluated natively and as its compiled expression.
 - `problems/*.json`: `{binding, errors}`, where `errors` lists the expected `{path, code}` of each problem, in the order validation reports them.

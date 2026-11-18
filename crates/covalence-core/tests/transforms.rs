@@ -97,7 +97,7 @@ fn a_reducer_is_a_source_with_options_that_are_sources() {
     assert!(Source::<Json>::from_json(json!({ "use": "not@1", "input": true })).is_ok());
 }
 
-/// The benchmark that decides which reducers are native (M8 Phase 1): a
+/// The benchmark that decides which reducers are native: a
 /// step through the sandbox against a native step. Printed, not asserted:
 /// the turn's budget is checked end to end in M8's acceptance.
 #[test]

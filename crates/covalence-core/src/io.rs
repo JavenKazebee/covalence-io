@@ -1,5 +1,5 @@
 //! Host transports: the I/O the core performs for connections (plugin
-//! protocol §7, §7.1, ADR 0025).
+//! protocol §7, §7.1, plugin protocol spec §13.6).
 //!
 //! - `hid` and `serial` go through the device layer (`covalence-devices`).
 //!   Their handles outlive a plugin host: when the host goes, the device stays
@@ -12,7 +12,7 @@
 //!   up to [`CLOSED_KEPT`] per connection.
 //!
 //! The connection is always the envelope's `conn`, and a connection can use
-//! only its own handles. Permissions aren't checked yet (ADR 0015).
+//! only its own handles. Permissions aren't checked yet (plugin protocol spec §13.5).
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};

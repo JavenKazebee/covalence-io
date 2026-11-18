@@ -1,7 +1,7 @@
 // The browser's virtual deck as a surface (surfaces spec §4): it attaches
 // over `GET /surface/{id}`, sends input with the browser's timestamps, and
 // shows the key images and levels the core sets. Besides its keys it can
-// have encoders and faders (ADR 0035).
+// have encoders and faders (surfaces spec §11.4).
 
 import type { Socket } from "../live/client";
 import { deckControls, type Model, type VirtualLayout } from "./model";

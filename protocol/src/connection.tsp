@@ -18,7 +18,7 @@ model ConnCreate {
   config: Record<unknown>;
   secrets: Record<string>;
 
-  /** Resolved from the manifest templates and the config. Not yet enforced (ADR 0015). */
+  /** Resolved from the manifest templates and the config. Not yet enforced (plugin protocol spec §13.5). */
   permissions: Permissions;
 
   mode: ConnMode;

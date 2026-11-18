@@ -64,7 +64,7 @@ pub struct HostWelcome {
     /// The protocol version chosen for this session.
     pub protocol: String,
     pub session: String,
-    /// Leadership term (ADR 0008).
+    /// Leadership term (state spec §7.4).
     pub term: u32,
     pub core_id: String,
 }

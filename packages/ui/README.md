@@ -1,6 +1,6 @@
 # ui
 
-The Covalence IO web UI: Vue 3, TypeScript, Vite and Pinia ([ADR 0005](../../docs/adr/0005-web-ui-vue-tauri-shell.md)).
+The Covalence IO web UI: Vue 3, TypeScript, Vite and Pinia ([overview: the UI](../../docs/specs/overview.md#the-ui-vue-3-served-by-the-core-with-an-optional-tauri-shell)).
 
 ```sh
 cargo run -p covalence-server   # API on :7680
@@ -38,7 +38,7 @@ over `GET /journal`, and refetches any gap.
 Flows (`#/flows`, `#/flows/<id>`) are edited as drafts (`src/flows/model.ts`)
 whose types mirror `covalence_core::flow` by hand; `src/flows/model.test.ts`
 checks them against the shared fixtures in `crates/covalence-core/fixtures/flows/`
-(ADR 0020). Run status is live state under `flow`; the runs table follows the
+([overview spec: project entities](../../docs/specs/overview.md#project-entities-are-rust-types)). Run status is live state under `flow`; the runs table follows the
 journal tail for the flow's `trigger.matched` and `run.*` entries.
 
 Surfaces (`#/surfaces`) and their layers (`#/surfaces/layers/<id>`) are in `src/surfaces/` and

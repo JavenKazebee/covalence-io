@@ -1,7 +1,7 @@
 /**
  * Plugin protocol types and framing.
  *
- * Types are generated from the schema in `protocol/` (ADR 0016).
+ * Types are generated from the schema in `protocol/` (plugin protocol spec §13.2).
  *
  * @module
  */

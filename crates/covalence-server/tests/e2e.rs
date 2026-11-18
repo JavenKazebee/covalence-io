@@ -13,7 +13,7 @@ use serde_json::json;
 mod common;
 use common::{Server, encode};
 
-/// The restart budget from docs/architecture.md.
+/// The restart budget from docs/specs/overview.md.
 const RESTART_BUDGET: Duration = Duration::from_secs(3);
 
 #[tokio::test(flavor = "multi_thread")]

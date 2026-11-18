@@ -1,4 +1,4 @@
-//! The core's device layer (plugin protocol §7.1, ADR 0025).
+//! The core's device layer (plugin protocol §7.1, plugin protocol spec §13.6).
 //!
 //! It enumerates HID and serial devices, watches for hotplug, gives each
 //! device a stable ID, matches devices to plugins' `devices`, and performs

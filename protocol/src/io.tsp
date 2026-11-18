@@ -4,7 +4,7 @@ using TypeSpec.JsonSchema;
 
 /**
  * Host transports and devices: I/O the core performs for a connection.
- * Spec §7 and §7.1 (ADR 0025).
+ * Spec §7 and §7.1 (plugin protocol spec §13.6).
  *
  * The connection is the envelope's `conn`. Bytes are `bin` in MessagePack,
  * and an array of byte values in JSON.

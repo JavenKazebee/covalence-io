@@ -1,4 +1,4 @@
-//! Surfaces and layers (surfaces spec, ADR 0022).
+//! Surfaces and layers (surfaces spec, surfaces spec §11.1).
 //!
 //! [`Surfaces`] holds the `surface` and `layer` entities and the surfaces
 //! attached right now. It doesn't know how a surface is connected: a
@@ -89,7 +89,7 @@ pub struct Surface {
     /// (plugin protocol §8).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
-    /// A virtual surface's encoders and faders, beside its 15 keys (ADR 0035).
+    /// A virtual surface's encoders and faders, beside its 15 keys (surfaces spec §11.4).
     #[serde(default, rename = "virtual", skip_serializing_if = "Option::is_none")]
     pub virtual_layout: Option<VirtualLayout>,
 }
@@ -101,7 +101,7 @@ pub const MAX_VIRTUAL: u8 = 4;
 /// The virtual deck's key images, in pixels a side.
 const VIRTUAL_KEY: u32 = 144;
 
-/// What a virtual surface has besides its keys (ADR 0035).
+/// What a virtual surface has besides its keys (surfaces spec §11.4).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct VirtualLayout {
@@ -133,7 +133,7 @@ impl Default for VirtualLayout {
 }
 
 /// The controls the browser's virtual deck attaches with (surfaces spec §8,
-/// ADR 0035): keys `k0`…`k14` in 5 × 3, then the layout's encoders and
+/// surfaces spec §11.4): keys `k0`…`k14` in 5 × 3, then the layout's encoders and
 /// faders. The UI builds the same list (`packages/ui/src/surfaces/model.ts`).
 pub fn virtual_controls(layout: Option<&VirtualLayout>) -> Vec<ControlDef> {
     let layout = layout.copied().unwrap_or_default();
@@ -451,7 +451,7 @@ pub struct Input {
     /// The host's timestamp, in milliseconds on its own clock.
     pub ts: f64,
     /// The host says the device moved itself: a motor fader following what
-    /// it was sent (ADR 0035). It updates input state and gives no events.
+    /// it was sent (surfaces spec §11.4). It updates input state and gives no events.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub echo: bool,
 }
@@ -478,7 +478,7 @@ pub struct Draw {
     pub image: Vec<u8>,
 }
 
-/// What the core sets on a control (ADR 0035): `surface.draw` for an image,
+/// What the core sets on a control (surfaces spec §11.4): `surface.draw` for an image,
 /// `surface.level` for a level. One channel keeps them in order.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Output {
@@ -1502,7 +1502,7 @@ impl Task {
                 layer
             }
         };
-        // A press reads its control's timing, and keeps it (ADR 0035).
+        // A press reads its control's timing, and keeps it (surfaces spec §11.4).
         let timing = match write.change {
             Change::Pressed(true) => self.inner.press_timing(layer.as_deref(), &input.control),
             _ => self.inner.timing,
@@ -1637,7 +1637,7 @@ impl Inner {
         lock(&self.book)
     }
 
-    /// A control's gesture timing at a press (ADR 0035): from the binding on
+    /// A control's gesture timing at a press (surfaces spec §11.4): from the binding on
     /// the layer controlling it, each setting read now, or the default. A
     /// setting that fails is reported as the binding's problem.
     fn press_timing(&self, layer: Option<&str>, control: &str) -> Timing {
@@ -1758,7 +1758,7 @@ impl Inner {
     /// A fresh attach's input state (surfaces spec §4.1): every control
     /// released, untouched and at 0 detents, with no `value` until the
     /// device sends one, and nothing requested. Helpers with `scope:
-    /// "surface"` keep their values (ADR 0035).
+    /// "surface"` keep their values (surfaces spec §11.4).
     fn input_reset(&self, book: &Book, surface: &str) -> Vec<(StatePath, Option<Value>)> {
         let (Some(entity), Some(attached)) =
             (book.surfaces.get(surface), book.attached.get(surface))

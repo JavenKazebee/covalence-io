@@ -1,7 +1,7 @@
 /**
  * The `deno-shared` host: speaks the plugin protocol with the core over a
  * byte stream (stdio in production) and runs one worker per connection
- * (ADR 0003).
+ * (plugin protocol spec §13.4).
  *
  * The main thread routes on the envelope's `conn` and passes params through
  * to the worker. The only params it reads are `action.invoke`'s `term`
@@ -348,7 +348,7 @@ export class Host {
     if (this.#conns.has(id)) {
       throw new RequestFailed("invalid_request", `connection ${id} exists`);
     }
-    // ADR 0015: p.permissions is not applied; workers inherit the host's.
+    // plugin protocol spec §13.5: p.permissions is not applied; workers inherit the host's.
     const conn = new Connection(
       id,
       (m, params) => this.#send({ t: "ntf", m, conn: id, p: params }),

@@ -1,4 +1,4 @@
-// The sandbox around every expression (flow spec §8.7, ADR 0021). Evaluated in
+// The sandbox around every expression (flow spec §8.7, §11.2). Evaluated in
 // each fresh context; it returns `setup`, which Rust calls once with the
 // natives and the scope, and which returns `out`, the result converter.
 //
@@ -45,7 +45,7 @@
   // An expression returns its value straight away; waiting is for steps.
   delete g.Promise;
 
-  // The standard library (ADR 0004).
+  // The standard library (flows spec §11.2).
   const two = (n) => String(n).padStart(2, "0");
   const clock = (seconds, withHours) => {
     const sign = seconds < 0 ? "-" : "";

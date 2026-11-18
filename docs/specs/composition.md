@@ -1,7 +1,7 @@
 # Spec: Composition
 
 - **Status:** Draft v0.2
-- **Related:** [ADR 0032](../adr/0032-one-template-primitive.md), [ADR 0030](../adr/0030-composite-connections.md), [ADR 0031](../adr/0031-templates-instances-and-components.md), [ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md), [dataflow](dataflow.md), [surfaces](surfaces.md), [bindings](bindings.md), [flows](flows.md)
+- **Related:** [dataflow](dataflow.md), [surfaces](surfaces.md), [bindings](bindings.md), [flows](flows.md)
 
 Users build bigger things out of smaller ones, and reuse them by giving them parameters, never by copying and editing. There is **one way to do that**: a **template** declares `params`, and an **instance** binds them (§1). It works the same for four kinds of entity:
 
@@ -45,7 +45,7 @@ interface InstanceFields {            // on a layer, a connection, a placement, 
 - **An entity is a template or an instance, never both.** A template can't derive from another template (`templateIsInstance`). It can contain instances (§3).
 - **A template is usable itself where its kind can be** (a layer is shown, a composite connects, a flow runs), with its params' defaults. One with a `required` param and no default is **abstract**: it can only be used through instances, and using it directly is `unboundParam`. A component is always abstract, since it needs controls.
 - **Params are sources** ([dataflow §1](dataflow.md)), evaluated reactively in the placer's scope, so an instance can follow state: `camera: {ref: {root: "vars", path: ["selectedCam"]}}`. A param's value is state at `<home>.params.<name>`, where `<home>` is the instance's home (§1.1).
-- **(Proposed) Edits that span a template and its instances are published together** as one changeset, and cells keep their values through an edit when they still fit ([ADR 0034](../adr/0034-live-edits.md)).
+- **(Proposed) Edits that span a template and its instances are published together** as one changeset, and cells keep their values through an edit when they still fit ([state spec §7.6](state-and-event-log.md#76-editing-a-running-show-proposed-kept-state-settled-in-m8)).
 - **Editing a template changes every instance at once.** A change an instance can no longer satisfy (a new required param, a type an existing binding doesn't match, a slot that no longer fits) is refused with `badInstance`, listing the instances.
 - **One module, `covalence_core::compose`,** binds, validates and evaluates instances of every kind. The UI shows one "instance of X, with these params" panel for all of them.
 
@@ -148,7 +148,7 @@ type ForEach = (
   type InstanceChain = { template: string; instance: string; key?: PathSegment }[];   // outermost first
   ```
 
-  Runs, steps, actions, cells' patches and events made inside an instance all carry it, and an event's `trigger.instance` is it. It replaces the separate `placement` field, the `<component>/<flow>` run identity and the layer-as-instance of ADR 0031. The timeline filters by it, and `why` shows it: "Tally key, camera = Cam B, in Cameras[camB]".
+  Runs, steps, actions, cells' patches and events made inside an instance all carry it, and an event's `trigger.instance` is it. It replaces the separate `placement` field, the `<component>/<flow>` run identity and the layer-as-instance of [§11.1](#111-reuse-is-by-parameters-never-by-copying-or-overriding). The timeline filters by it, and `why` shows it: "Tally key, camera = Cam B, in Cameras[camB]".
 - **Validation** (errors block saving):
   - `badInstance`: a required param unbound, a binding whose type doesn't match the `ParamDef`, a placement whose controls don't fit its slots. When a template is saved, every instance of it at every depth is checked, and the error lists the ones that fail.
   - `unknownTemplate`, `templateIsInstance`, `recursiveTemplate`, `tooDeep`.
@@ -177,7 +177,7 @@ interface CompositeDef extends TemplateFields {
   connected?: Source<boolean>;        // default: true while every connection it reads is connected
   actions?: { [id: string]: CompositeAction };
   events?: { [id: string]: CompositeEvent };
-  implements?: InterfaceImpls;        // as a plugin manifest's (ADR 0019)
+  implements?: InterfaceImpls;        // as a plugin manifest's (plugin protocol spec §13.9)
   delegate?: { interface: string; to: Source<Target> }[];   // §6.5: whole interfaces passed through
 }
 
@@ -217,13 +217,13 @@ interface CompositeEvent {
 
 ### 6.4 Collections
 - **A composite with `forEach` is one connection with a collection.** Each item is a target, `{conn, key: ["items", <key>]}`, with its state at `<alias>.items[<key>]`.
-- **Its interfaces are implemented per item,** through `at: ["items"]` ([ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md)), so `{interface: "ptz.speed@1"}` selects each item like a real camera.
+- **Its interfaces are implemented per item,** through `at: ["items"]` ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-and-interfaces-proposed)), so `{interface: "ptz.speed@1"}` selects each item like a real camera.
 - **Actions and events are per item:** an action on an item's target runs with that item's `params`, and an item's events carry its key in `instance`.
 
 ### 6.5 Interfaces
 - `implements` maps the composite's members to an interface's, as a plugin manifest does. Conformance is checked when the composite is saved, with the same rules as a plugin's at load.
 - A composite with `implements: {"tally@1": {}}` is selected by `{interface: "tally@1"}` like a real camera.
-- **`delegate`** passes whole interfaces through to another target ([ADR 0030](../adr/0030-composite-connections.md)): `[{interface, to: Source<Target>}]`. Every member of the interface on `to` becomes the composite's, and the composite implements it. `to`'s constraint must include the interface (checked on save), and a delegated member can't also be defined (`duplicateMember`). Delegated actions are `internal` and cause the target's `action.requested`, with `via`.
+- **`delegate`** passes whole interfaces through to another target ([§11.4](#114-composite-connections)): `[{interface, to: Source<Target>}]`. Every member of the interface on `to` becomes the composite's, and the composite implements it. `to`'s constraint must include the interface (checked on save), and a delegated member can't also be defined (`duplicateMember`). Delegated actions are `internal` and cause the target's `action.requested`, with `via`.
 - **Delegate what you pass through, define what you add.** A camera built from a PTZ head and a switcher delegates the `ptz.*` interfaces to the head and defines `tally@1` itself.
 
 ### 6.6 Limits
@@ -294,7 +294,7 @@ interface Layer {                     // surfaces §1, with:
 
 ## 8. Components
 
-A **component** is a reusable control: what it looks like, how its input is shaped, and what it does, for one control or a few, with parameters. It's always a template, and its instances are **placements**. Plugins ship them as content with no code ([ADR 0025](../adr/0025-device-drivers-are-plugins.md)), replacing manifest `presets`.
+A **component** is a reusable control: what it looks like, how its input is shaped, and what it does, for one control or a few, with parameters. It's always a template, and its instances are **placements**. Plugins ship them as content with no code ([plugin protocol §13.6](plugin-protocol.md#136-device-drivers-are-plugins-the-core-performs-hardware-io)), replacing manifest `presets`.
 
 ```ts
 interface Component extends TemplateFields {   // project entity `component`, or manifest `components`
@@ -406,9 +406,47 @@ bindings:
 
 ## 10. Open questions
 
-1. ~~Should components nest?~~ Decided by [ADR 0032](../adr/0032-one-template-primitive.md): yes, as `parts`, with params bound in the outer component's scope.
-2. ~~Should an instance be allowed to add bindings to controls its template leaves unbound?~~ Decided by [ADR 0032](../adr/0032-one-template-primitive.md): no. A layer stacked over it does that.
+1. ~~Should components nest?~~ Decided: yes, as `parts`, with params bound in the outer component's scope.
+2. ~~Should an instance be allowed to add bindings to controls its template leaves unbound?~~ Decided: no. A layer stacked over it does that.
 3. Do composites need their own run history and traffic view in the UI, or is the journal, filtered by `instance`, enough?
 4. Should surfaces, control groups, variables and sources become template kinds? A **source template** (a `Source` with `params`) would let a configured chain, such as "audio taper with a dead zone" or "seconds remaining → `MM:SS`, amber under 60 s", be named and reused without writing a project transform in JS. Or are layers, composites, components and flows enough until real projects ask?
 5. Is 256 the right `forEach` limit, or should it follow the turn budget, as dataflow open question 4 asks for cell depth?
 6. **Params that hold a template.** Should a `ParamDef` be able to hold a component, a flow or a source, so a template declares where it can vary? A camera strip with a `recordKey: component` param, defaulting to the standard one, lets one camera differ without Detach, which today is the only way out and cuts the instance off from every later fix to its template.
+
+---
+
+## 11. Decisions
+
+Why composition works this way, and what was rejected. This is one proposed design, accepted when M9's Phase 0 closes. Keep these notes when the sections above change.
+
+### 11.1 Reuse is by parameters, never by copying or overriding
+- **Decided:** templates declare `params`, instances bind them (§1), and instances can't change, add to or remove anything in their template. Detach is the way out. `params` is always the own container's: nothing is inherited, and a value passes down one visible binding at a time, like arguments into a function call (§3).
+- **Why:** "Create from template" stamped out copies that drifted: a fix to one camera's layer didn't reach the others, and nothing recorded that they were ever the same. What a key did was spread across a binding, flows and the layer's parameters. The goal is composition over inheritance, so "what does this do?" and "where does this value come from?" are answered in one hop per level. It costs more typing than inheritance; the editor fills the common case.
+- **Rejected:**
+  - *Copies:* drift is guaranteed, and "these are all the same" isn't recorded anywhere.
+  - *Instances with overrides:* what most tools do, but every instance becomes a partial copy, and finding a value means walking a chain.
+  - *Lexical inheritance of `params`* (down the layer tree, or into nested templates): values arrive from places the user can't see, and moving a layer changes its meaning.
+  - *Templates derived from templates:* each level becomes a partial override, and the chain comes back.
+  - *Components as plain flows and bindings with a naming convention:* nothing ties them together, so neither the editor nor a plugin can treat them as one thing.
+
+### 11.2 One template primitive for four kinds
+- **Decided:** layers, composites, components and flows are all templates the same way, and one module binds, validates and evaluates instances of every kind, with one identity in the journal (`instance` chains), one `badInstance`, one Detach and one UI panel. Owned flows run per instance with its params, and free-standing flows see only their own. Flows keep `inputs` beside `params`: params are bound where an instance is placed and follow state; inputs are bound per invocation, and a run isn't an instance.
+- **Why:** M9 had planned four mechanisms (layer templates, component placements, composite templates, flows with inputs) that would each build their own binding, scope, evaluation, identity, validation and Detach. That's the problem sources and selectors fixed for values (dataflow §10.1): the copies drift, and users learn four editors for one idea. Built once, nesting and per-item instances work for every kind, and a new kind only needs its body defined.
+- **Rejected:**
+  - *Four mechanisms:* each simpler alone, every later improvement built four times.
+  - *A single `template` entity with kind-specific payloads:* each kind has its own store, API and editor, and an instance must be its kind's entity anyway to appear where that kind does.
+  - *Merging flow `inputs` into `params`:* every call would create an instance with a state home and a lifetime, for something that already has a run.
+
+### 11.3 One instance per item of a live list
+- **Decided:** `forEach` makes one instance per item of a list or target selector (§4), keyed so a reorder doesn't reset them, created and removed with the list and journaled with `cause`, at most 256. A composite with `forEach` is a connection with a collection. A control group is the `forEach` of placements.
+- **Why:** lists that change while the show runs were handled in one place only (control groups). A composite per camera, a layer per deck or a watchdog flow per recorder would otherwise need a copy per item. Per-item instances are never saved: the entity is the one `forEach` instance and its items come from state, so the core still never edits the project.
+- **Rejected:** per-item copies made by the editor; copies don't follow the list while the show runs.
+
+### 11.4 Composite connections
+- **Decided:** a composite is a connection (plugin `core.composite`) defined in the project, with params, state as cells, actions that run a flow or forward to another target, re-emitted events, `implements`, and `delegate` to pass whole interfaces through (§6). Nothing downstream knows it's composite. Causation runs through it, so `why` reaches the real device, and its actions are `internal` while the actions they cause are gated themselves.
+- **Why:** a "camera" on a show is several devices: PTZ from one connection, tally from the switcher, record state from a recorder, an iris from a CCU. Interfaces let a layer control any camera, but one connection at a time. A composite makes "Camera A" one target, selectable by interfaces like a real camera, and lets users adapt a device to an interface its plugin doesn't implement without writing a plugin. With `delegate`, adding tally doesn't mean forwarding every PTZ action by hand. A composite's state is only as fresh as what it reads.
+- **Rejected:**
+  - *Aggregator plugins:* hand-written per combination, and the journal sees only the aggregator.
+  - *Standalone interface implementations* (an entity mapping a connection onto an interface): with capability-sized interfaces and `range`, it would only rename and convert, which is the plugin author's job. Revisit if real projects wrap the same plugin over and over.
+  - *Targets spanning several connections* (`{conn: [a, b]}`): every place that resolves a target would merge state and route actions.
+  - *Layer parameters only:* every layer, binding and flow repeats the wiring, and nothing can select "a camera" as one thing.

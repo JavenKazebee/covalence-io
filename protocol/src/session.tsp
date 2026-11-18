@@ -63,7 +63,7 @@ model HostWelcome {
 
   session: string;
 
-  /** Leadership term (ADR 0008). */
+  /** Leadership term (state spec §7.4). */
   term: uint32;
 
   coreId: string;

@@ -1,4 +1,4 @@
-//! The binding worker (bindings spec §3, ADR 0023): a thread of its own
+//! The binding worker (bindings spec §3, §9.2): a thread of its own
 //! that keeps the bindings of shown layers evaluated and draws what changes.
 //!
 //! One turn takes every state change waiting on the feed, re-evaluates the
@@ -6,7 +6,7 @@
 //! redraws each control whose resolved look differs from what that surface
 //! last got. A layer that comes into view is evaluated in full first.
 //!
-//! A `value` property drives a `level` output (ADR 0035). Each level sent is
+//! A `value` property drives a `level` output (surfaces spec §11.4). Each level sent is
 //! written to `surface.<slug>.controls.<id>.requested.level`, with `cause` →
 //! the latest change among what the property read.
 //! `expr` bindings run on the worker's own QuickJS, so bindings and flows
@@ -31,7 +31,7 @@ use crate::surface::{
     ControlDef, Draw, LayerId, OutputCap, OutputCapKind, SurfaceId, requested_level_path,
 };
 
-/// An `expr` binding's time limit (ADR 0023).
+/// An `expr` binding's time limit (bindings spec §9.2).
 pub const EXPR_TIME: Duration = Duration::from_millis(10);
 
 /// The last error of each binding property, by binding ID and the

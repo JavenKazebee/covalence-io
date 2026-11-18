@@ -1,4 +1,4 @@
-//! The core connection (core actions spec, ADR 0028): everything Covalence
+//! The core connection (core actions spec, core actions spec §6.1): everything Covalence
 //! itself can do, as actions on a built-in connection `core`.
 //!
 //! Its actions are those of the interfaces it implements, kept in
@@ -20,7 +20,7 @@ use crate::journal::{Origin, Seq};
 /// The core connection's ID and alias. Reserved: no connection can take it.
 pub const CORE: &str = "core";
 
-/// An interface: a named set of actions (ADR 0019).
+/// An interface: a named set of actions (plugin protocol spec §13.9).
 #[derive(Clone, Debug, Deserialize)]
 pub struct Interface {
     pub id: String,

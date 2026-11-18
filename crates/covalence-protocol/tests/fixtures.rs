@@ -1,4 +1,4 @@
-//! Golden vectors shared with the TypeScript side (ADR 0016).
+//! Golden vectors shared with the TypeScript side (plugin protocol spec §13.2).
 //!
 //! `protocol/fixtures/encoded/rust.json` holds the frames this crate produces;
 //! regenerate it with `COVALENCE_UPDATE_FIXTURES=1 cargo test`. The TypeScript

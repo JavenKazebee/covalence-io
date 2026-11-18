@@ -201,7 +201,7 @@ impl Config {
     }
 
     /// The Deno plugin host, with the coarse allowlist from
-    /// `packages/plugin-host/README.md` (ADR 0015).
+    /// `packages/plugin-host/README.md` (plugin protocol spec §13.5).
     fn host_config(&self) -> HostConfig {
         let root = self.root.display();
         let mut config = HostConfig::new(&self.deno);
@@ -246,7 +246,7 @@ pub struct Connection {
     pub alias: String,
     pub config: serde_json::Map<String, serde_json::Value>,
     pub mode: ConnMode,
-    /// Resolved from the manifest's templates. Not enforced yet (ADR 0015).
+    /// Resolved from the manifest's templates. Not enforced yet (plugin protocol spec §13.5).
     pub permissions: Permissions,
 }
 
@@ -295,7 +295,7 @@ pub struct App {
     /// Computed variables' cells and their sinks (dataflow §5).
     dataflow: Dataflow,
     /// The surfaces each layer has been shown on, which have its bindings'
-    /// surface-scoped helpers (ADR 0035).
+    /// surface-scoped helpers (surfaces spec §11.4).
     shown_on: Mutex<BTreeMap<LayerId, BTreeSet<SurfaceId>>>,
 }
 
@@ -536,7 +536,7 @@ impl App {
 
     /// A surface shows a layer: the first time, its bindings' surface-scoped
     /// helpers get a cell on that surface, kept until the binding or the
-    /// surface is deleted (ADR 0035). Called with the surfaces locked.
+    /// surface is deleted (surfaces spec §11.4). Called with the surfaces locked.
     fn shown_on_surface(&self, surface: &str, layer: &str) {
         let new = self
             .shown_on
@@ -868,7 +868,7 @@ fn alias_map(conns: &BTreeMap<ConnId, Connection>) -> BTreeMap<String, ConnId> {
 }
 
 /// Connections as target selectors see them. No plugin declares interfaces
-/// yet (ADR 0019), so `{interface}` picks none of them.
+/// yet (plugin protocol spec §13.9), so `{interface}` picks none of them.
 fn target_views(conns: &BTreeMap<ConnId, Connection>) -> Vec<TargetView> {
     conns
         .values()

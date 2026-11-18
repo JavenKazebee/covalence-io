@@ -1,4 +1,4 @@
-//! Cells and the graph (dataflow spec §5, ADR 0033).
+//! Cells and the graph (dataflow spec §5, state spec §7.3).
 //!
 //! A **cell** is a source with a home in the state tree: a variable's value
 //! or a control's helper. The graph keeps every cell up to date within the
@@ -56,7 +56,7 @@ use crate::transform::Transform;
 use crate::transform::definition::{Definition, Sandbox, StepCtx, StepEvent, Stepped};
 use crate::transform::reducer::{Native, Reducer, native};
 
-/// An evaluation's time limit on the turn (ADR 0033). An unoptimised
+/// An evaluation's time limit on the turn (state spec §7.3). An unoptimised
 /// build spends more than that building a context, so it gets longer.
 pub const EVAL_TIME: Duration = if cfg!(debug_assertions) {
     Duration::from_millis(50)
@@ -97,7 +97,7 @@ pub struct ControlContext {
     /// The reducer has no `input` of its own: the control's `turn` and
     /// `change` events move it (bindings §5).
     pub input: bool,
-    /// The surface of a helper with `scope: "surface"` (ADR 0035): its
+    /// The surface of a helper with `scope: "surface"` (surfaces spec §11.4): its
     /// events carry it, and only input that arrived while `layer` controlled
     /// the control steps it.
     pub surface: Option<String>,
@@ -136,7 +136,7 @@ pub enum Sink {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ActionSink {
     pub target: Source<Target>,
-    /// When the target isn't a literal (ADR 0019).
+    /// When the target isn't a literal (plugin protocol spec §13.9).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub constraint: Option<Json>,
     pub action: String,
@@ -610,7 +610,7 @@ impl Graph {
 struct Inner {
     cells: BTreeMap<CellId, Cell>,
     aliases: Arc<BTreeMap<String, ConnId>>,
-    /// The turn's own runtime (ADR 0033).
+    /// The turn's own runtime (state spec §7.3).
     evaluator: QuickJs,
     /// For reducers with no native implementation.
     sandbox: Sandbox,

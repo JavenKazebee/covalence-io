@@ -1,7 +1,7 @@
 {
   "name": "ui",
   "private": true,
-  "description": "Covalence IO web UI (ADR 0005)",
+  "description": "Covalence IO web UI",
   "type": "module",
   "scripts": {
     "dev": "vite",

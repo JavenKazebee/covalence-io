@@ -2,12 +2,12 @@
 
 - **Status:** Planned, after [M8](m8-dataflow.md)
 
-Users build bigger things out of smaller ones, and reuse them by parameters, never by copying ([ADR 0030](../adr/0030-composite-connections.md), [ADR 0031](../adr/0031-templates-instances-and-components.md), [ADR 0032](../adr/0032-one-template-primitive.md)):
+Users build bigger things out of smaller ones, and reuse them by parameters, never by copying ([composition §11.4](../specs/composition.md#114-composite-connections), [composition §11.1](../specs/composition.md#111-reuse-is-by-parameters-never-by-copying-or-overriding), [composition §11.2](../specs/composition.md#112-one-template-primitive-for-four-kinds)):
 - **One template primitive.** Layers, composite connections, components and flows declare `params`, and instances bind them. Binding, scope, identity, validation and Detach are built once, for all four.
 - **Composite connections** make "Camera A" one target out of a PTZ head, a switcher's tally and a recorder.
 - **Templates nest,** so a camera strip is made of tally keys, and **`forEach`** makes one instance per item of a live list: a composite per camera, a watchdog flow per recorder.
 - **Components** package a control's look, helpers and flows with parameters. Plugins ship them in place of presets.
-- **Transforms from plugins and projects** run in the core's sandbox beside the built-ins ([ADR 0029](../adr/0029-dataflow-sources-transforms-sinks.md)).
+- **Transforms from plugins and projects** run in the core's sandbox beside the built-ins ([dataflow §10.3](../specs/dataflow.md#103-sources-transforms-and-sinks-helpers-are-transforms)).
 
 ## Done when
 
@@ -28,12 +28,13 @@ Users build bigger things out of smaller ones, and reuse them by parameters, nev
 ## Phases
 
 ### Phase 0: Decisions and docs
-- [x] [ADR 0030](../adr/0030-composite-connections.md), [ADR 0031](../adr/0031-templates-instances-and-components.md); [composition spec](../specs/composition.md); [dataflow §8](../specs/dataflow.md) scope.
-- [x] [ADR 0032](../adr/0032-one-template-primitive.md): one template primitive, owned flows, nesting, `forEach`, the `instance` chain. Composition spec v0.2.
-- [x] Interfaces are capability-sized, with units, ranges and device-published options, and composites get `delegate` ([ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md), [ADR 0030](../adr/0030-composite-connections.md), revised in place).
-- [ ] Interfaces: ship the first ones from real plugins (`ptz.speed@1`, `ptz.position@1`, `ptz.presets@1`, `tally@1`, `switcher@1`, `recorder@1`), since composites and components are only as useful as the interfaces they implement. Each is checked for member names that collide with the rest of the set. ADR 0019's dynamic targets must be built by now; if not, they come first in this milestone.
-- [ ] **Changesets** ([ADR 0034](../adr/0034-live-edits.md)): drafts across entities, published as one operation and validated as a whole; runs record the revision they started on.
+- [x] Composites and reuse by parameters drafted in the [composition spec](../specs/composition.md) (§11.1, §11.4), and scope in [dataflow §8](../specs/dataflow.md).
+- [x] One template primitive ([composition §11.2](../specs/composition.md#112-one-template-primitive-for-four-kinds)): owned flows, nesting, `forEach`, the `instance` chain. Composition spec v0.2.
+- [x] Interfaces are capability-sized, with units, ranges and device-published options, and composites get `delegate` ([plugin protocol §13.9](../specs/plugin-protocol.md#139-dynamic-targets-and-interfaces-proposed), [composition §11.4](../specs/composition.md#114-composite-connections), revised in place).
+- [ ] Interfaces: ship the first ones from real plugins (`ptz.speed@1`, `ptz.position@1`, `ptz.presets@1`, `tally@1`, `switcher@1`, `recorder@1`), since composites and components are only as useful as the interfaces they implement. Each is checked for member names that collide with the rest of the set. [plugin protocol spec §13.9](../specs/plugin-protocol.md#139-dynamic-targets-and-interfaces-proposed)'s dynamic targets must be built by now; if not, they come first in this milestone.
+- [ ] **Changesets** ([state spec §7.6](../specs/state-and-event-log.md#76-editing-a-running-show-proposed-kept-state-settled-in-m8)): drafts across entities, published as one operation and validated as a whole; runs record the revision they started on.
 - [ ] The `instance` chain's API shape: how the timeline, `why` and the runs list show and filter it.
+- [ ] Accept the composition design ([composition §11](../specs/composition.md#11-decisions)) and live edits ([state spec §7.6](../specs/state-and-event-log.md#76-editing-a-running-show-proposed-kept-state-settled-in-m8)): drop "proposed" from their headings.
 
 ### Phase 1: Flow inputs and outputs (Rust)
 - [ ] `inputs` (as `ParamDef`s) and `outputs` on flows, `stop` with outputs, and the `call` step with `wait`. Composite actions need them.

@@ -1,7 +1,7 @@
 {
   "name": "@covalence-io/protocol-schema",
   "private": true,
-  "description": "TypeSpec source for the plugin protocol (ADR 0016)",
+  "description": "TypeSpec source for the plugin protocol",
   "scripts": {
     "build": "tsp compile . && node scripts/gen-ts.mjs json-schema/covalence-protocol.json ../packages/protocol/types.gen.ts"
   },

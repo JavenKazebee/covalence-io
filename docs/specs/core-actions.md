@@ -1,7 +1,7 @@
 # Spec: The core connection
 
 - **Status:** Draft v0.1
-- **Related:** [ADR 0028](../adr/0028-the-core-is-a-connection.md), [ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md), [surfaces](surfaces.md), [flows](flows.md), [plugin protocol §4](plugin-protocol.md), [dataflow](dataflow.md)
+- **Related:** [surfaces](surfaces.md), [flows](flows.md), [plugin protocol §4](plugin-protocol.md), [dataflow](dataflow.md)
 
 Everything Covalence itself can do (navigate a surface, inject input, cancel a flow) is an action on a built-in connection, `core`. Flows, sinks, composites and the API use it exactly as they use a plugin's actions, with the same gate, journal, `why`, typing and dynamic targets.
 
@@ -58,3 +58,15 @@ Running another flow is the `call` step, not an action: it can wait for the call
 
 1. Should `navigate` accept a selector of surfaces (every deck showing the layer), or is a `forEach` loop over `core` targets enough?
 2. Should project edits (`setEnabled`) be possible from flows at all while a show lock is on?
+
+---
+
+## 6. Decisions
+
+### 6.1 The core is a connection
+- **Decided:** a built-in connection, ID and alias `core`, always present and connected, owns everything Covalence itself can do. Its collections are targets with interfaces (`surface@1`, `flow@1`), its state is the core's roots (with `core` reserved as a root), and `ActionDef.effect` (`internal` or `device`) lets simulate mode suppress only device effects, so a rehearsal still navigates decks. No new step kinds: `call`, `set`, `wait` and the blocks stay steps because they're about the run itself.
+- **Why:** actions already have typed parameters and results, journaling, the output gate, simulate mode, idempotency and dynamic targets. So flows navigate, inject and cancel with the step they already have, "navigate the selected deck" uses a target in state, and sinks and composites can drive core actions (an encoder `select` reducer paging through layers).
+- **Rejected:**
+  - *New step kinds* (`navigate`, `inject`): each a one-off with its own editor, typing and gate rules, and none works with dynamic targets.
+  - *A `core` target that isn't a connection:* a special case everywhere connections are listed, manifests checked or interfaces resolved.
+  - *One connection per surface:* surfaces already have a provider connection, and two for one device would confuse the UI.

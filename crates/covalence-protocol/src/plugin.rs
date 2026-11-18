@@ -41,7 +41,7 @@ pub struct Manifest {
     pub config: ConfigDef,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub secrets: Option<BTreeMap<String, SecretDef>>,
-    /// Declared, but not yet enforced (ADR 0015).
+    /// Declared, but not yet enforced (plugin protocol spec §13.5).
     pub permissions: Permissions,
     pub connections: ConnectionPolicy,
     pub actions: Vec<ActionDef>,
@@ -74,7 +74,7 @@ pub struct ConfigDef {
     pub schema: Object,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ui: Option<Object>,
-    /// Config schema version (ADR 0006).
+    /// Config schema version (state spec §7.2).
     pub version: u32,
 }
 
@@ -98,7 +98,7 @@ pub struct Permissions {
     pub env: Option<Vec<String>>,
 }
 
-/// Policy for standby nodes (ADR 0008).
+/// Policy for standby nodes (state spec §7.4).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ConnectionPolicy {

@@ -1,4 +1,4 @@
-//! Variables over HTTP (dataflow spec §6): M8 Phase 3. Needs `deno`.
+//! Variables over HTTP (dataflow spec §6). Needs `deno`.
 
 use std::path::PathBuf;
 use std::time::Duration;

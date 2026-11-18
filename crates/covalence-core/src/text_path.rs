@@ -1,5 +1,5 @@
 //! The text form of state paths, for people: expressions, the API, logs
-//! (ADR 0017, state spec §1.1).
+//! (plugin protocol spec §13.3, state spec §1.1).
 //!
 //! `vh.outputs[1].source`, `vh.outputs["SDI 4"].source`. A key that is an
 //! identifier is written `.key`; an integer key `[1]`; any other key as a

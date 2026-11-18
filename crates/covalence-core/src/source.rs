@@ -1,4 +1,4 @@
-//! Sources (dataflow spec §1, ADR 0026): the one shape for a value that may
+//! Sources (dataflow spec §1, §10.1): the one shape for a value that may
 //! follow state.
 //!
 //! A [`Source<T>`] is a literal `T`, `{ref}` (one state path), `{expr}` (a
@@ -38,7 +38,7 @@ pub enum Source<T> {
     Literal(T),
     /// One state path.
     Ref { at: Ref, fallback: Option<T> },
-    /// A sandboxed expression (ADR 0021).
+    /// A sandboxed expression (flows spec §11.2).
     Expr { expr: String, fallback: Option<T> },
     /// A transform over other sources (dataflow §4).
     Use {

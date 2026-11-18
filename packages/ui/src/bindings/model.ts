@@ -1,6 +1,6 @@
 // Control bindings (bindings spec §1, §2): each property is a source.
 // Mirrors `covalence_core::binding` by hand; the shared fixtures in
-// crates/covalence-core/fixtures/bindings/ catch drift (ADR 0020).
+// crates/covalence-core/fixtures/bindings/ catch drift (overview spec: project entities).
 
 import type { Problem } from "../flows/model";
 import {
@@ -32,7 +32,7 @@ export const propNames: Record<Prop, string> = {
 /** What a property takes: text, or a `#rrggbb` / `#rgb` colour. */
 export const propType = (prop: Prop): "text" | "color" => (prop === "label" ? "text" : "color");
 
-/** The look of a key with nothing bound, as the renderer draws it (ADR 0023). */
+/** The look of a key with nothing bound, as the renderer draws it (bindings spec §9.2). */
 export const defaults: Record<Prop, string> = { label: "", textColor: "#ffffff", background: "#000000" };
 
 export {

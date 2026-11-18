@@ -3,7 +3,7 @@
  *
  * - Live mode talks the Videohub Ethernet protocol over TCP (port 9990).
  * - Simulate mode uses a state-level simulator: a 12×12 router.
- * - `./fake-server` is a protocol-level fake Videohub for tests (ADR 0012).
+ * - `./fake-server` is a protocol-level fake Videohub for tests (overview spec: simulated devices).
  *
  * State (paths relative to the connection):
  *

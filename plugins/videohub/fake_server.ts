@@ -1,5 +1,5 @@
 /**
- * A protocol-level fake Videohub (ADR 0012): a TCP server that speaks the
+ * A protocol-level fake Videohub (overview spec: simulated devices): a TCP server that speaks the
  * Videohub Ethernet protocol, so the real plugin code can be tested without
  * hardware.
  *

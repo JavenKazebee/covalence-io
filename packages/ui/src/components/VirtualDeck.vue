@@ -4,10 +4,10 @@ import { DeckClient, faderPosition, newDeckState } from "../surfaces/deck";
 import { deckControls, models, type ControlDef, type Surface } from "../surfaces/model";
 
 /**
- * A virtual Stream Deck (ADR 0012): attached to the core while it's on
+ * A virtual Stream Deck (overview spec: simulated devices): attached to the core while it's on
  * screen, showing the key images the core draws and sending key down and up
  * with the browser's timestamps. Leaving the screen detaches it. It can also
- * have encoders and faders (ADR 0035): an encoder turns by dragging up and
+ * have encoders and faders (surfaces spec §11.4): an encoder turns by dragging up and
  * down, the wheel or the arrow keys and presses like a key; a fader reports
  * where it's dragged, and a motorised one glides to the level it's sent.
  */

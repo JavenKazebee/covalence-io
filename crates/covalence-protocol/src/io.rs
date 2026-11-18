@@ -1,5 +1,5 @@
 //! Host transports and devices: I/O the core performs for a connection
-//! (spec §7, §7.1, ADR 0025). The connection is the envelope's `conn`.
+//! (spec §7, §7.1, plugin protocol spec §13.6). The connection is the envelope's `conn`.
 
 use serde::{Deserialize, Serialize};
 

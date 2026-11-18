@@ -7,7 +7,7 @@ using TypeSpec.JsonSchema;
 @jsonSchema
 namespace Covalence.Protocol;
 
-/** A JSON Schema document. Opaque to the protocol (ADR 0016). */
+/** A JSON Schema document. Opaque to the protocol (plugin protocol spec §13.2). */
 model JsonSchemaDoc is Record<unknown>;
 
 /** `plugin.load` params (core → host, req). Result: `PluginLoaded`. */
@@ -48,7 +48,7 @@ model Manifest {
   config: ConfigDef;
   secrets?: Record<SecretDef>;
 
-  /** Declared, but not yet enforced (ADR 0015). */
+  /** Declared, but not yet enforced (plugin protocol spec §13.5). */
   permissions: Permissions;
 
   connections: ConnectionPolicy;
@@ -76,7 +76,7 @@ model ConfigDef {
   /** Field order, groups, help, conditional visibility. */
   ui?: Record<unknown>;
 
-  /** Config schema version (ADR 0006). */
+  /** Config schema version (state spec §7.2). */
   version: uint32;
 }
 
@@ -94,7 +94,7 @@ model Permissions {
   env?: string[];
 }
 
-/** Policy for standby nodes (ADR 0008). */
+/** Policy for standby nodes (state spec §7.4). */
 union ConnectionPolicy {
   "multiple",
   "single",

@@ -1,4 +1,4 @@
-// Golden vectors shared with the Rust side (ADR 0016).
+// Golden vectors shared with the Rust side (plugin protocol spec §13.2).
 //
 // `protocol/fixtures/encoded/ts.json` holds the frames this package produces;
 // regenerate it with `COVALENCE_UPDATE_FIXTURES=1 deno task test`. The Rust

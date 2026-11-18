@@ -79,7 +79,7 @@ struct Down {
     at: Instant,
     /// `hold`s fired so far. The first comes with `long`.
     holds: i64,
-    /// The timing it started with, kept for the whole press (ADR 0035).
+    /// The timing it started with, kept for the whole press (surfaces spec §11.4).
     timing: Timing,
 }
 
@@ -137,7 +137,7 @@ impl Recogniser {
     }
 
     /// [`change`](Self::change) with the control's own timing, read when it
-    /// was pressed (ADR 0035): a press uses it for `double` and keeps it for
+    /// was pressed (surfaces spec §11.4): a press uses it for `double` and keeps it for
     /// its `long` and `hold`s.
     pub fn change_timed(
         &mut self,

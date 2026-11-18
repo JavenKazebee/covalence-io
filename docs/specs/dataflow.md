@@ -1,7 +1,7 @@
 # Spec: Dataflow
 
 - **Status:** Draft v0.1
-- **Related:** [ADR 0026](../adr/0026-sources-and-selectors.md), [ADR 0027](../adr/0027-events-addressed-by-path.md), [ADR 0029](../adr/0029-dataflow-sources-transforms-sinks.md), [ADR 0031](../adr/0031-templates-instances-and-components.md), [ADR 0032](../adr/0032-one-template-primitive.md), [bindings](bindings.md), [surfaces](surfaces.md), [flows](flows.md), [state and event log](state-and-event-log.md), [composition](composition.md)
+- **Related:** [bindings](bindings.md), [surfaces](surfaces.md), [flows](flows.md), [state and event log](state-and-event-log.md), [composition](composition.md)
 
 This spec defines the small set of primitives that everything reactive in Covalence is built from. Bindings, helpers, layer fields, state triggers, variables and composite connections are all combinations of them.
 
@@ -17,7 +17,7 @@ This spec defines the small set of primitives that everything reactive in Covale
 
 **Flows do things in order; dataflow keeps things in step.** Anything with order, waits, conditions or retries is a flow ([flows spec](flows.md)). Anything that should continuously follow state is dataflow. A sink never runs steps, and a flow never keeps something in step by polling.
 
-Shapes use TypeScript notation. The source of truth is the Rust types in `covalence-core` ([ADR 0020](../adr/0020-project-entity-types-in-the-core.md)).
+Shapes use TypeScript notation. The source of truth is the Rust types in `covalence-core` ([overview: project entities](overview.md#project-entities-are-rust-types)).
 
 **Markers.** **(M6)**, **(M8)** and **(M9)** name the milestone that implements a rule: [M6](../milestones/m6-primitives.md), [M8](../milestones/m8-dataflow.md), [M9](../milestones/m9-composition.md). **(Later)** has no milestone yet.
 
@@ -32,17 +32,17 @@ type Source<T> =
   | T                                         // a literal
   | { value: T }                              // a literal that would otherwise read as a source
   | { ref: Ref; fallback?: T }                // one state path
-  | { expr: Expr; fallback?: T }              // a sandboxed expression (ADR 0021)
+  | { expr: Expr; fallback?: T }              // a sandboxed expression (flows spec §11.2)
   | { use: string; fallback?: T; [option: string]: unknown };   // a transform (§4)
 
 type Ref =
   | { conn: string; path: Path }              // a connection's state, ID form (state spec §1.1)
-  | { target: Source<Target>; path: Path }    // through a target (ADR 0019)
+  | { target: Source<Target>; path: Path }    // through a target (plugin protocol spec §13.9)
   | { root: "vars" | "sys" | "surface" | "layer" | "flow"; path: Path }
   | { scope: string; path: Path };            // (M9) a scope name (§8): params, item, self
 
 type Expr = string;
-type Path = PathSegment[];                    // ADR 0017
+type Path = PathSegment[];                    // plugin protocol spec §13.3
 ```
 
 ### 1.1 Recognising a source
@@ -55,7 +55,7 @@ type Path = PathSegment[];                    // ADR 0017
 
 ### 1.2 Evaluation
 - **One evaluator for every source.** Reactive positions (display bindings, layer fields, state triggers, cells) re-evaluate when their reads change (§5.3). One-shot positions (an action step's parameters, `wait.for`) evaluate once, when the step starts. The result is the same either way.
-- **Reads are tracked at run time** ([ADR 0021](../adr/0021-expressions-as-sandboxed-snippets.md)), through `ref`, `expr`, `target()` and every transform's own sources.
+- **Reads are tracked at run time** ([flows §11.2](flows.md#112-expressions-and-scripts-one-language-sandboxed-by-where-code-runs)), through `ref`, `expr`, `target()` and every transform's own sources.
 - **`undefined` or a failure gives `fallback`,** then the position's default. Failures are reported with the position's path (`["props", "label"]`) and rate-limited, as for bindings now.
 - **Literals cost nothing:** a literal is never evaluated, read-tracked or journaled.
 - **Typing.** The editor checks each source against `T`: a literal directly, a `ref` by the state schema, a transform by its declared result type, an `expr` with the generated TypeScript definitions ([flows §4](flows.md)).
@@ -97,7 +97,7 @@ type Selector<Id> =
 | **Entities** | an entity ID | `{tag: string}` (Later) | every entity of the type |
 
 - **Controls are resolved per surface.** A layer's `controls: {region}` covers whatever controls lie in the rectangle on each surface (surfaces §2). `has` filters by capability: `{has: {inputs: ["relative"]}}` is every encoder.
-- **`{interface}` resolves to every target implementing it,** including items through `at` ([ADR 0019](../adr/0019-dynamic-action-targets-and-interfaces.md)) and composites that declare it, or each of their items (composition §6).
+- **`{interface}` resolves to every target implementing it,** including items through `at` ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-and-interfaces-proposed)) and composites that declare it, or each of their items (composition §6).
 - **`PathPattern`** is a text path where `*` matches one segment: `surface.*.controls.*.pressed`. The segments it matched are its **captures**, in order.
 - **Reactive selectors re-resolve** when their reads change, or when the domain changes: a control attaches, a connection is created, an interface gets a new implementer.
 - **Order is stable:** a selector's result is in the domain's order (controls by `at`, row-major; targets and entities by ID), so a control group's items line up the same way every time.
@@ -171,7 +171,7 @@ A **stateless** transform computes a value from its sources and nothing else. Th
 | `not` | `input: Source<boolean>` | boolean |
 | `map` | `input: Source<number>`, `from`, `to`, `curve?`, `clamp?` | a number, or an item of a list |
 
-- **Each has a compiled expression,** shown in the editor and used as its specification ([ADR 0023](../adr/0023-key-rendering-and-binding-evaluation.md)): `rules` compiles to a chain of `?:`. They're evaluated natively in Rust, with tests that require the native result to equal the expression's.
+- **Each has a compiled expression,** shown in the editor and used as its specification ([bindings §9.2](bindings.md#92-the-structured-kinds-are-evaluated-natively)): `rules` compiles to a chain of `?:`. They're evaluated natively in Rust, with tests that require the native result to equal the expression's.
 - **The rules of [bindings §2.1](bindings.md)** (strict `==`, JavaScript relational comparison, `map`'s formula) carry over unchanged.
 - **"Edit as expression" is one-way,** as now.
 
@@ -209,11 +209,11 @@ interface ReducerOptions {
 
 - **`follow`** sets the value from a source whenever the source changes, so input continues from where the device is rather than jumping. It pauses while the control is `touched`, and for `holdoff` after the last input.
 - **`pickup`** (`absolute` only) ignores input until it crosses the followed value.
-- These are the rules [ADR 0024](../adr/0024-surfaces-as-two-way-devices.md) gave helpers, unchanged.
+- These are the rules [surfaces §11.2](surfaces.md#112-surfaces-are-two-way-devices-and-control-input-is-state) gave helpers, unchanged.
 
 ### 4.4 Transform definitions (M8; others' in M9)
 
-Every transform has a **definition**: a pure JavaScript module run in the core's sandbox ([ADR 0021](../adr/0021-expressions-as-sandboxed-snippets.md)). The built-in transforms are defined this way first ([ADR 0029](../adr/0029-dataflow-sources-transforms-sinks.md)), and plugins and projects add their own with the same format (M9).
+Every transform has a **definition**: a pure JavaScript module run in the core's sandbox ([flows §11.2](flows.md#112-expressions-and-scripts-one-language-sandboxed-by-where-code-runs)). The built-in transforms are defined this way first ([§10.3](#103-sources-transforms-and-sinks-helpers-are-transforms)), and plugins and projects add their own with the same format (M9).
 
 ```js
 export default defineTransform({
@@ -261,8 +261,8 @@ A **cell** is a source with a home in the state tree. It's how a computed or acc
 - **A reducer's state travels with its value.** `step` returns a `state` and a `value`, and they aren't always the same: `select` over `items` keeps an index and gives the item, `velocity` keeps recent samples and gives a rate, `absolute` with `pickup` keeps whether it has picked up. A cell's `state.patch` op carries both: `{path, value, reducer: {state, wakeAt?}}`. `reducer.state` is left out when it equals `value`, which covers `toggle`, `counter` and `latch`. `wakeAt` is the pending wake (§4.4), in scheduler time. The op's `reducer` also names the definition, `transform: "toggle@1"`, so a cell resuming from its leaf can apply the kept-state rule (§5.4). The tree keeps `reducer` as metadata on the cell's leaf (state spec §1.3). Expressions don't see it, and `GET /state` shows it only with `?reducers=true`.
 - **Stateless cells** are recomputed from current state after a restart or a failover.
 - **Reducers restart from `init`,** unless their home is a variable with `persist: true` (§6). A persisted variable keeps its value and its `reducer` metadata in `state_cache`, and both are restored before any trigger is armed. The kept-state rule (§5.4) decides whether they still fit the definition that loads.
-- **On failover, the replicated patches are enough to resume; there is no separate checkpoint** ([ADR 0033](../adr/0033-execution-model.md)). The standby applies cell patches as it applies any other, and never steps a reducer. On promotion (state spec §4):
-  - each reducer resumes from its leaf's `reducer.state`, or its value when there's none, and its `wakeAt` is re-armed. Both nodes share the time source ([ADR 0008](../adr/0008-redundancy-and-failover.md)), so a wake that's already past fires in the first turn.
+- **On failover, the replicated patches are enough to resume; there is no separate checkpoint** ([state spec §7.3](state-and-event-log.md#73-execution-model-one-turn-thread-writes-state)). The standby applies cell patches as it applies any other, and never steps a reducer. On promotion (state spec §4):
+  - each reducer resumes from its leaf's `reducer.state`, or its value when there's none, and its `wakeAt` is re-armed. Both nodes share the time source ([state spec §7.4](state-and-event-log.md#74-redundancy-and-failover-in-three-levels-designed-not-built)), so a wake that's already past fires in the first turn.
   - stateless cells are evaluated once against the replicated state. A difference is journaled like any change, with `cause` → the `node.role` entry.
   - `follow` and `holdoff` start clear. Control input starts released (state spec §4), so nothing is `touched`, and a hold-off that was running is treated as over.
   - **sinks don't fire on promotion,** as they don't at load (§7). The new leader's first action from a sink is for the first change after it took over.
@@ -280,7 +280,7 @@ A **cell** is a source with a home in the state tree. It's how a computed or acc
 - **Where it runs (M8 Phase 2).** The graph settles inside the state tree's turn: a writer's patch and the cells it moves are published as one dirty set, so bindings, triggers and `waitUntil` never see a cell lag its input. Events, wakes and edits start turns of their own.
 
 ### 5.4 Kept state through edits
-How [ADR 0034](../adr/0034-live-edits.md)'s rule applies to cells. It's the same rule when a persisted variable is restored after a restart.
+How [state spec §7.6](state-and-event-log.md#76-editing-a-running-show-proposed-kept-state-settled-in-m8)'s rule applies to cells. It's the same rule when a persisted variable is restored after a restart.
 
 - **A cell is identified by its entity, never by its path:** a variable by its ID, and a helper by its control binding's ID and its key in `helpers`. Renaming a variable's slug, or moving a binding to another control or layer, keeps the cell. Renaming a helper's key, or deleting and recreating its binding, makes a new one.
 - **The cell keeps its value and state** when both of these hold after the edit:
@@ -359,7 +359,7 @@ What an expression or `{scope}` ref can name depends on where it's evaluated. **
 | `item`, `index`, `key` | an instance's `params` and placement fields, when it has `forEach` | the item this instance is for ([composition §4](composition.md)). Not inside the body |
 
 - **`params` replaces the `layer.params.<name>` shorthand** of [bindings §6](bindings.md), which collided with a layer whose slug is `params`. The absolute path is `layer.<slug>.params.<name>`.
-- **Placing binds parameters in the placer's scope.** A component placed on a layer gets `params: {camera: {ref: {scope: "params", path: ["camera"]}}}`, which reads the layer's `camera`; inside the component, `params.camera` is its own. The same holds at every level of nesting, and for every template kind ([ADR 0032](../adr/0032-one-template-primitive.md)).
+- **Placing binds parameters in the placer's scope.** A component placed on a layer gets `params: {camera: {ref: {scope: "params", path: ["camera"]}}}`, which reads the layer's `camera`; inside the component, `params.camera` is its own. The same holds at every level of nesting, and for every template kind ([composition §11.2](composition.md#112-one-template-primitive-for-four-kinds)).
 
 ---
 
@@ -369,3 +369,39 @@ What an expression or `{scope}` ref can name depends on where it's evaluated. **
 2. Should `Selector<Entities>` get tags (`{tag: "foh"}`) for surfaces and layers, and are tags their own entity?
 3. Should sinks support `when` (only send while armed), or is a `rules` source that gives `undefined` (which sends nothing) enough?
 4. Is 16 levels of cell depth a sensible limit, or should depth only be bounded by the turn budget?
+
+---
+
+## 10. Decisions
+
+Why dataflow has these primitives, and what was rejected. Keep these notes when the sections above change.
+
+### 10.1 One way to give a value, one way to pick things
+- **Decided:** `Source<T>` (§1) is the one shape for a value that may follow state, with one serde type, one evaluator with run-time read tracking, one typing rule and one editor widget. Sources are recognised by shape, only where the schema says so, and a reserved key commits an object to being one (§1.1). `Selector<Id>` (§2) is the one shape for picking things, resolved by one module. A dynamic target is `target: Source<Target>` plus a constraint. The old binding kinds became stateless transforms, so conditions combine with `all`, `any` and `not`.
+- **Why:** "a literal, a state path or an expression" had been defined six times (binding kinds, helper options, `{expr}` parameters, `wait.for`, layer fields, targets) and "which things" four times, each a little differently. Every new form would have had to be added to each copy, and users met a different widget for the same idea in each place. Now a new selector form or transform is available everywhere at once.
+- **Rejected:**
+  - *Keeping each shape local:* every form built and documented several times, and the copies drift.
+  - *Expressions only:* code for everything, no forms or literal type checks in the editor, and no native fast path.
+  - *A `kind` tag on every source* (`{kind: "literal", value: 3}`): every literal in every project wrapped, and noisy hand-written YAML.
+
+### 10.2 Events are addressed by state path
+- **Decided:** every event happens at a node in the state tree and has a name: `<path>:<name>` (§3), such as `surface.deck.controls.k3:press` or `flow.preService:finished`. There's one journal kind, `event`; one trigger kind, `event`, whose `EventSource` forms all reduce to a path pattern plus a context filter, served by one indexed matcher; and one payload shape. Plugins emit at a node (`at`), and flows emit `started`, `finished` and `failed`.
+- **Why:** events had reached flows three ways (connection `event`, surface `control` and planned pattern triggers), each with its own matcher, journal kind and payload, and other occurrences (a flow finishing, startup, a helper's `select`) would each have needed another trigger kind. A GPIO contact and a deck key should drive the same flow. State is already addressed by path, and selectors, `why`, the timeline and subscriptions understand paths.
+- **Rejected:**
+  - *Separate trigger kinds plus pattern triggers:* three matchers, payloads and editors, and a fourth for each new source.
+  - *Events as state* (a counter per event): payloads don't fit, and "the last press" isn't "a press".
+  - *Addressing by entity ID:* IDs don't nest, so patterns over collections (`vh.outputs.*`) are impossible. The journal stores paths in ID form anyway.
+
+### 10.3 Sources, transforms and sinks; helpers are transforms
+- **Decided:** three primitives: sources, transforms (stateless, and reducers that keep a value and step on events or input changes) and sinks (a control output, a writable variable, or one action parameter, rate-limited with the latest value winning). A **cell** is a source with a home in the state tree; a reducer can only be a cell's source. Cells are evaluated in dependency order within one turn, before layer resolution, bindings, triggers and sinks see settled state; a cell evaluated twice in a turn is on a cycle and keeps its previous value with `cycle`. Variables are declared entities that can be computed. **A helper is a reducer on a control's binding**, and its `to` is any cell's sinks.
+- **Sinks keep things in step; flows do things in order.** A sink never runs steps. "When X, do A then B" stays a flow.
+- **Why:** bindings, helpers, layer `when` and `rank`, `state` triggers and `follow` were each planned with their own evaluator, options and validation, and they're the same idea: a value computed from state, sometimes with memory, sent somewhere. Helpers existed only on controls, so a GPIO contact, an OSC fader or a MIDI note couldn't use a `toggle` or a `position`, and variables could only be written by flows. Now any state can latch or drive a speed, computed variables replace "copy this into a variable" flows and show `why`, and one evaluator, graph and cycle rule replace four. The costs: the 16 ms budget covers cells between a change and a key, and every cell change is a journal patch (sampling bounds the high-rate ones).
+- **Rejected:**
+  - *Helpers only on controls:* a workaround for every other input, and value mappings back as a second entity.
+  - *Flows for everything continuous* (`state` trigger → `set`): a run per fader movement, no rate limiting, and nothing in the state tree to say a value is computed.
+  - *A node-graph dataflow with wires:* flows already chose expressions over wires for readability (flows §11.1), and sources name what they read.
+
+### 10.4 Transforms are sandboxed definitions
+- **Decided:** every transform has a definition (§4.4): a pure JavaScript module (`defineTransform`) with options, result type and events, and `compute` or `init` and `step`, run in the core's QuickJS under the bindings' limits, with time passed in and no host API. The built-ins are written this way first, so the definition is the specification; a native implementation is allowed when the conformance suite shows the same states, values and events. Plugins ship transforms in their manifest and projects define their own (M9). They run in the core, so timing, replay and `why` are unaffected.
+- **Why:** keeping helpers out of plugins protected timing, replay and `why`, but meant every new curve or accumulator needed a core release. Running plugin-shipped definitions in the core's sandbox keeps those guarantees.
+- **Rejected:** plugin-defined helpers in the plugin host; every input would cross IPC, and timing would depend on the host (plugin protocol §13.6).

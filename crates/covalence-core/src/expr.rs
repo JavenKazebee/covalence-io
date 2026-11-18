@@ -1,4 +1,4 @@
-//! Expressions (flow spec §8.7, ADR 0021): sandboxed JavaScript snippets that
+//! Expressions (flow spec §8.7, §11.2): sandboxed JavaScript snippets that
 //! compute a value from state and never change anything.
 //!
 //! The flow runtime talks to the [`Evaluator`] trait, so it can be tested
@@ -92,7 +92,7 @@ pub fn is_taken_name(name: &str) -> bool {
             .contains(name)
 }
 
-/// Per-evaluation limits (ADR 0021).
+/// Per-evaluation limits (flows spec §11.2).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Limits {
     pub time: Duration,

@@ -1,4 +1,4 @@
-//! Flows are stored as `flow` entities and survive a restart (M3 Phase 1).
+//! Flows are stored as `flow` entities and survive a restart.
 //! Starts the real server, so it needs `deno` on the PATH like the others.
 
 use std::path::{Path, PathBuf};

@@ -1,4 +1,4 @@
-//! Project entity types, handled one way (M8 Phase 0).
+//! Project entity types, handled one way.
 //!
 //! Each type implements [`EntityKind`]: how to parse it, check it against
 //! the project, apply it to the running core and take it out again, and

@@ -1,6 +1,6 @@
 /**
  * `@elgato-stream-deck/core`'s `HIDDevice` over `ctx.hid`: the core does the
- * HID I/O, and the library drives the deck (ADR 0025).
+ * HID I/O, and the library drives the deck (plugin protocol spec §13.6).
  *
  * @module
  */

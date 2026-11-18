@@ -1,4 +1,4 @@
-//! Milestone 7 Phase 4: the Stream Deck plugin, end to end, against a
+//! The Stream Deck plugin, end to end, against a
 //! simulated MK.2 at the level of its HID reports, the real Deno plugin host
 //! and `@elgato-stream-deck/core`. Needs `deno` on the PATH, and the npm
 //! package (fetched on first use).

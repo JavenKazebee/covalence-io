@@ -17,7 +17,7 @@ import {
 } from "./model";
 import { flowStatuses } from "./status";
 
-// The fixtures the Rust tests use too (ADR 0020): valid flows, as stored and served.
+// The fixtures the Rust tests use too (overview spec: project entities): valid flows, as stored and served.
 const fixtures = import.meta.glob<Flow>("../../../../crates/covalence-core/fixtures/flows/*.json", {
   eager: true,
   import: "default",

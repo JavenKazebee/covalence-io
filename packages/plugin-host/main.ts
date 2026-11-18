@@ -1,6 +1,6 @@
 /**
  * Deno plugin host: runs plugins for the core, one worker per connection
- * (ADR 0003). Speaks the plugin protocol on stdio; see README.md for how the
+ * (plugin protocol spec §13.4). Speaks the plugin protocol on stdio; see README.md for how the
  * core launches it.
  *
  * @module

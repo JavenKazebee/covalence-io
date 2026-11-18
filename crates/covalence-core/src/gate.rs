@@ -1,9 +1,9 @@
-//! The output gate (state spec §3, ADR 0007).
+//! The output gate (state spec §3, §7.1).
 //!
 //! Every side effect passes here after its `action.requested` entry. The
 //! checks run in the spec's order and the first failure wins:
 //!
-//! 1. node role: a pass-through stub until redundancy lands (ADR 0008)
+//! 1. node role: a pass-through stub until redundancy lands (state spec §7.4)
 //! 2. simulate mode
 //! 3. show lock and permissions: a pass-through stub
 //! 4. term fencing
@@ -83,7 +83,7 @@ impl OutputGate {
         Verdict::Dispatch
     }
 
-    /// Stub: a single node is always active. Redundancy (ADR 0008) will return
+    /// Stub: a single node is always active. Redundancy (state spec §7.4) will return
     /// `Standby` here when `self.role` is not active.
     fn check_role(&self) -> Option<SuppressReason> {
         let _ = self.role;

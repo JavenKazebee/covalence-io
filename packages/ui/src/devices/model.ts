@@ -1,4 +1,4 @@
-// Devices and their traffic (plugin protocol §7, ADR 0025), as the UI shows them.
+// Devices and their traffic (plugin protocol §7, plugin protocol spec §13.6), as the UI shows them.
 
 import type { DeviceEntry, JsonSchema, TrafficEntry } from "../api";
 

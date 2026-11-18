@@ -352,7 +352,7 @@ pub fn test_deck(path: &str, serial: Option<&str>) -> DeviceInfo {
 }
 
 /// A Stream Deck MK.2, at the level of its HID reports: what
-/// `@elgato-stream-deck/core` reads and writes (M7 Phase 4).
+/// `@elgato-stream-deck/core` reads and writes.
 ///
 /// - Feature report 6 answers the serial number, and 5 the firmware.
 /// - [`Mk2::press`] and [`Mk2::release`] send key reports:

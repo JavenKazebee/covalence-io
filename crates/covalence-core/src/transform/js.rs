@@ -1,5 +1,5 @@
 //! The few JavaScript rules the native binding kinds need, so they give the
-//! same result as their compiled expressions (ADR 0023): `String(v)`,
+//! same result as their compiled expressions (bindings spec §9.2): `String(v)`,
 //! `Number(v)`, `toFixed`, `Math.round`, `===` and `<`.
 //!
 //! Values are JSON, as they reach JavaScript ([`crate::expr::to_json`]);

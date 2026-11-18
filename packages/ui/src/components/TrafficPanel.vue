@@ -6,7 +6,7 @@ import { hrefOf } from "../nav";
 import { useCatalogStore } from "../stores/catalog";
 
 /**
- * A connection's traffic (ADR 0025): what went in and out of each handle the
+ * A connection's traffic (plugin protocol spec §13.6): what went in and out of each handle the
  * core opened for it, newest first. The core keeps the last 500 entries of
  * each and the first 512 bytes of each message. Looks again every second
  * unless paused.

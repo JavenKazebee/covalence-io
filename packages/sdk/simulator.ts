@@ -1,5 +1,5 @@
 /**
- * Toolkit for protocol-level simulators (ADR 0012): fake device servers that
+ * Toolkit for protocol-level simulators (overview spec: simulated devices): fake device servers that
  * the real plugin code connects to. They double as the plugin's test suite.
  *
  * ```ts

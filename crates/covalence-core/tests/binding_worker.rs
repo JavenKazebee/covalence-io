@@ -1,4 +1,4 @@
-//! The binding worker (M5 Phase 2): keys show their bindings, redraw when
+//! The binding worker: keys show their bindings, redraw when
 //! what they read changes and only then, fall back when a binding has no
 //! value, and dim when a value is stale.
 
@@ -713,7 +713,7 @@ fn levels(link: &mut Link) -> Vec<(String, f64)> {
     out
 }
 
-/// ADR 0035: a `value` binding drives a `level` output. Each level sent is
+/// surfaces spec §11.4: a `value` binding drives a `level` output. Each level sent is
 /// written to `requested.level`, with `cause` → what the binding read; an
 /// unchanged or `undefined` value sends nothing.
 #[tokio::test]
@@ -836,7 +836,7 @@ fn a_value_needs_a_level_output_and_a_number() {
     );
 }
 
-/// ADR 0035: a helper with `scope: "surface"` has a cell on each surface,
+/// surfaces spec §11.4: a helper with `scope: "surface"` has a cell on each surface,
 /// stepped only by that surface's input while its layer controls the
 /// control, and keeps its value while the surface shows another layer.
 #[tokio::test]

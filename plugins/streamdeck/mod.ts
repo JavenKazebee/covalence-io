@@ -1,5 +1,5 @@
 /**
- * Elgato Stream Deck plugin: a deck, through the core (ADR 0025).
+ * Elgato Stream Deck plugin: a deck, through the core (plugin protocol spec §13.6).
  *
  * - The core finds the deck (`devices`), opens it, and makes a connection
  *   for it without asking. This plugin opens it through `ctx.hid` and drives

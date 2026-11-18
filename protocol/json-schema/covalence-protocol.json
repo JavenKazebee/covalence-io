@@ -378,7 +378,7 @@
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 4294967295,
-                    "description": "Leadership term (ADR 0008)."
+                    "description": "Leadership term (state spec §7.4)."
                 },
                 "coreId": {
                     "type": "string"
@@ -398,7 +398,7 @@
             "type": "object",
             "properties": {},
             "unevaluatedProperties": {},
-            "description": "A JSON Schema document. Opaque to the protocol (ADR 0016)."
+            "description": "A JSON Schema document. Opaque to the protocol (plugin protocol spec §13.2)."
         },
         "PluginLoad": {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -494,7 +494,7 @@
                 },
                 "permissions": {
                     "$ref": "Permissions.json",
-                    "description": "Declared, but not yet enforced (ADR 0015)."
+                    "description": "Declared, but not yet enforced (plugin protocol spec §13.5)."
                 },
                 "connections": {
                     "$ref": "ConnectionPolicy.json"
@@ -586,7 +586,7 @@
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 4294967295,
-                    "description": "Config schema version (ADR 0006)."
+                    "description": "Config schema version (state spec §7.2)."
                 }
             },
             "required": [
@@ -656,7 +656,7 @@
                     "const": "single"
                 }
             ],
-            "description": "Policy for standby nodes (ADR 0008)."
+            "description": "Policy for standby nodes (state spec §7.4)."
         },
         "ActionDef": {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1182,7 +1182,7 @@
                 },
                 "permissions": {
                     "$ref": "Permissions.json",
-                    "description": "Resolved from the manifest templates and the config. Not yet enforced (ADR 0015)."
+                    "description": "Resolved from the manifest templates and the config. Not yet enforced (plugin protocol spec §13.5)."
                 },
                 "mode": {
                     "$ref": "ConnMode.json"

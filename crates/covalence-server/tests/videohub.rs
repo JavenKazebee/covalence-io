@@ -1,4 +1,4 @@
-//! Milestone 7 Phase 5: the Videohub plugin live, on the core's `tcp`
+//! The Videohub plugin live, on the core's `tcp`
 //! transport, against a fake Videohub; and `directNetwork` on a connection.
 //! Needs `deno` on the PATH.
 

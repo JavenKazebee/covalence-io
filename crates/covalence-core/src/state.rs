@@ -1,7 +1,7 @@
 //! The state tree (state spec §1).
 //!
 //! Values live at leaves. A path is stored in ID form, `{conn, path}`, with the
-//! path a segment array (ADR 0017). Setting a map value flattens it into one
+//! path a segment array (plugin protocol spec §13.3). Setting a map value flattens it into one
 //! leaf per entry, so every leaf carries its own metadata; arrays, scalars and
 //! empty maps are leaves. Every mutation returns the set of leaf paths it
 //! changed: the dirty set the binding evaluator will consume (§1.5).
