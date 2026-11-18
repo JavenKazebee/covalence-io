@@ -1426,6 +1426,81 @@ async fn a_core_action_takes_its_surface_from_state() {
     );
 }
 
+/// A target that follows state is checked against its constraint when the
+/// step runs (plugin protocol spec §13.9): by ID, by alias, or `no_target`.
+#[tokio::test(start_paused = true)]
+async fn a_target_held_in_vars_is_checked_against_its_plugin() {
+    let world = World::new();
+    world.runtime.set_targets(vec![
+        TargetView {
+            conn: VH.into(),
+            plugin: "videohub".into(),
+        },
+        TargetView {
+            conn: VH2.into(),
+            plugin: "atem".into(),
+        },
+    ]);
+    world
+        .runtime
+        .set_aliases([("vh".to_owned(), VH.to_owned())].into());
+    world.add(api_flow(
+        "route",
+        "parallel",
+        json!([{
+            "id": "route", "kind": "action",
+            "target": { "ref": { "root": "vars", "path": ["router"] } },
+            "constraint": { "plugin": "videohub" },
+            "action": "route", "params": { "output": 1, "input": 2 },
+        }]),
+    ));
+    let requests = || {
+        world
+            .entries()
+            .iter()
+            .filter_map(|e| match &e.record {
+                Record::ActionRequested(r) => Some(r.conn.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let run = world.start("route");
+    let e = world.finished(&run).await.error.unwrap();
+    assert_eq!(
+        (e.code.as_str(), e.message.as_str()),
+        ("no_target", "the target is undefined")
+    );
+    for (held, error) in [
+        (json!(VH2), "isn't one of plugin videohub's"),
+        (json!("nope"), "no connection"),
+        (json!({ "conn": VH, "key": "1" }), "isn't a target"),
+    ] {
+        world.set_state(
+            "vars",
+            &["router"],
+            covalence_core::expr::json_to_value(&held),
+        );
+        let run = world.start("route");
+        let e = world.finished(&run).await.error.unwrap();
+        assert_eq!(e.code, "no_target", "{held}");
+        assert!(e.message.contains(error), "{held}: {}", e.message);
+    }
+    assert!(requests().is_empty(), "nothing is dispatched");
+
+    // Its ID, as state holds it, `{conn}`, or its alias.
+    for held in [json!(VH), json!({ "conn": VH }), json!("vh")] {
+        world.set_state(
+            "vars",
+            &["router"],
+            covalence_core::expr::json_to_value(&held),
+        );
+        let run = world.start("route");
+        assert_eq!(world.finished(&run).await.status, RunPhase::Ok, "{held}");
+    }
+    assert_eq!(requests(), [VH, VH, VH]);
+}
+
 /// A `state` trigger on a computed variable: it sees the cell
 /// in the same turn as its input, and `why` passes through the cell's patch.
 #[tokio::test(start_paused = true)]

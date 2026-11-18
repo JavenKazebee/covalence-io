@@ -43,10 +43,13 @@ const catalog = useCatalogStore();
 const flows = useFlowsStore();
 const surfaces = useSurfacesStore();
 
-const schemaOf = paramsSchemaFrom((connId) => {
-  const conn = catalog.connections.find((c) => c.id === connId);
-  return conn === undefined ? null : catalog.manifest(conn.plugin);
-});
+const schemaOf = paramsSchemaFrom(
+  (connId) => {
+    const conn = catalog.connections.find((c) => c.id === connId);
+    return conn === undefined ? null : catalog.manifest(conn.plugin);
+  },
+  (plugin) => catalog.manifest(plugin),
+);
 
 const isNew = computed(() => props.id === "new");
 const stored = computed(() => (isNew.value ? undefined : flows.get(props.id)));

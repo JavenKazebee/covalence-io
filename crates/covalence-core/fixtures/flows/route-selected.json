@@ -1,0 +1,19 @@
+{
+  "id": "01JC0000000000000000000005",
+  "name": "Route the selected router",
+  "slug": "routeSelected",
+  "enabled": true,
+  "triggers": [{ "kind": "api" }],
+  "concurrency": "ignore",
+  "failover": "abort",
+  "body": [
+    {
+      "id": "route1",
+      "kind": "action",
+      "target": { "ref": { "root": "vars", "path": ["lastPick"] } },
+      "constraint": { "plugin": "io.covalence.videohub" },
+      "action": "route",
+      "params": { "output": 1, "input": 3 }
+    }
+  ]
+}

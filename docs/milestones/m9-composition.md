@@ -32,7 +32,7 @@ Users build bigger things out of smaller ones, and reuse them by parameters, nev
 - [x] One template primitive ([composition §11.2](../specs/composition.md#112-one-template-primitive-for-four-kinds)): owned flows, nesting, `forEach`, the `instance` chain. Composition spec v0.2.
 - [x] Interfaces dropped for now, the core's included (they only named its collections), and composite templates are how devices from different plugins are controlled as one kind ([plugin protocol §13.9](../specs/plugin-protocol.md#139-dynamic-targets-proposed), [composition §6.5](../specs/composition.md#65-templates-as-contracts)).
 - [x] A target is a connection and nothing within it: `core`'s surfaces and flows became `surface` and `flow` parameters ([core actions §2](../specs/core-actions.md#2-surfaces-and-flows-are-parameters)), and plugins don't declare collections ([plugin protocol §13.9](../specs/plugin-protocol.md#139-dynamic-targets-proposed)).
-- [ ] Dynamic targets for plugins ([plugin protocol §13.9](../specs/plugin-protocol.md#139-dynamic-targets-proposed)): plugin constraints on steps and state, and `target(t)` with `.plugin` and `.supports`. These come first in this milestone.
+- [x] Dynamic targets for plugins ([plugin protocol §13.9](../specs/plugin-protocol.md#139-dynamic-targets-proposed)): a step's target can follow state with a `{plugin}` constraint, checked against the plugin's manifest on save and against the connection's plugin when the step runs. The step editor offers "the <plugin> in a variable".
 - [ ] **Changesets** ([state spec §7.6](../specs/state-and-event-log.md#76-editing-a-running-show-proposed-kept-state-settled-in-m8)): drafts across entities, published as one operation and validated as a whole; runs record the revision they started on.
 - [ ] The `instance` chain's API shape: how the timeline, `why` and the runs list show and filter it.
 - [ ] Accept the composition design ([composition §11](../specs/composition.md#11-decisions)) and live edits ([state spec §7.6](../specs/state-and-event-log.md#76-editing-a-running-show-proposed-kept-state-settled-in-m8)): drop "proposed" from their headings.
@@ -50,6 +50,7 @@ Users build bigger things out of smaller ones, and reuse them by parameters, nev
 - [ ] "Detach", for every kind.
 
 ### Phase 3: Template kinds (Rust)
+- [ ] `target(t)` in expressions (`.alias`, `.name`, `.plugin`, `.connected`, `.supports(action)` and the connection's state), `kind: "target"` in state schemas, and constraints on sinks' targets ([plugin protocol §13.9](../specs/plugin-protocol.md#139-dynamic-targets-proposed)). Composites read their parts through `target()`.
 - [ ] **Composites:** plugin `core.composite`: `params`, state cells, `connected`, `forward` and owned-flow actions, re-emitted events, `{template}` constraints and selectors. Causation through composite actions and events; `cycle`, the loop guard and `tooDeep`. Collections through `forEach`, each item accepted by `{template}`.
 - [ ] **Layers:** per-instance evaluation of bindings, helpers, groups and placements; `forEach` layers and `navigate` with `item`.
 - [ ] **Flows:** flow templates and instances, with `forEach`.

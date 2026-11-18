@@ -264,13 +264,6 @@ fn unsupported_steps(
             Some(kind) if LATER_STEPS.contains(&kind) => {
                 not_yet(at("kind"), &format!("{kind:?} steps"))
             }
-            Some("action") => {
-                let target = step.get("target");
-                if target.is_some_and(|t| ["expr", "ref", "use"].iter().any(|k| t.get(k).is_some()))
-                {
-                    not_yet(at("target"), "targets that follow state");
-                }
-            }
             Some("branch") => {
                 for (a, arm) in array(step.get("arms")) {
                     let arm_at = join(&here, &[key("arms"), index(a), key("steps")]);
@@ -697,6 +690,24 @@ impl<'a> Validation<'a> {
         }
     }
 
+    /// The manifest of a constraint's plugin, from any connection of it, or
+    /// None after reporting why it can't be checked.
+    fn manifest_of_plugin(&mut self, plugin: &str, at: Path) -> Option<&'a Manifest> {
+        if plugin == core_conn::CORE {
+            return Some(core_conn::manifest());
+        }
+        let conns: &'a BTreeMap<ConnId, Option<&'a Manifest>> = self.ctx.conns;
+        if let Some(manifest) = conns.values().flatten().find(|m| m.id == plugin) {
+            return Some(*manifest);
+        }
+        self.warn(
+            join(&at, &[key("plugin")]),
+            Code::Unchecked,
+            &format!("no connection of plugin {plugin:?} has loaded, so this wasn't checked"),
+        );
+        None
+    }
+
     fn steps(&mut self, steps: &[Step], base: &[PathSegment]) {
         for (i, step) in steps.iter().enumerate() {
             self.step(step, &join(base, &[index(i)]));
@@ -724,7 +735,7 @@ impl<'a> Validation<'a> {
         match &step.kind {
             StepKind::Action {
                 target,
-                constraint: _,
+                constraint,
                 action,
                 params,
             } => {
@@ -743,10 +754,22 @@ impl<'a> Validation<'a> {
                         };
                         manifest
                     }
-                    // `find_unsupported` reports targets that follow state.
+                    // It follows state: typed by its constraint (plugin protocol spec §13.9).
                     None => {
                         self.source(at("target"), target);
-                        return;
+                        let Some(c) = constraint else {
+                            self.error(
+                                at("constraint"),
+                                Code::Invalid,
+                                "a target that follows state needs a constraint: {plugin}".into(),
+                            );
+                            return;
+                        };
+                        let Some(manifest) = self.manifest_of_plugin(&c.plugin, at("constraint"))
+                        else {
+                            return;
+                        };
+                        manifest
                     }
                 };
                 let Some(def) = manifest.actions.iter().find(|a| &a.id == action) else {

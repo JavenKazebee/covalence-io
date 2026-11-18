@@ -327,7 +327,7 @@ type Sink =
   | { set: Ref }                                          // a writable variable
   | { action: {
       target: Source<Target>;
-      constraint?: TargetConstraint;                       // when the target isn't a literal
+      constraint?: TargetConstraint;                       // when the target isn't a literal; not checked yet
       action: string;
       param: string;                                       // the parameter that receives the value
       params?: { [k: string]: Source<Value> };             // the others

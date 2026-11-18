@@ -19,7 +19,7 @@
       {
         "id": "route1",
         "kind": "action",
-        "target": { "expr": "vars.router", "constraint": { "plugin": "io.covalence.videohub" } },
+        "target": { "conn": "01JBZ7P0D3F5G7H9J1K3L5M7N9" },
         "action": "route",
         "params": { "output": 1, "input": 2 },
         "retry": { "attempts": 2 }
@@ -44,7 +44,6 @@
     { "path": ["triggers", 2, "echo"], "code": "unsupported" },
     { "path": ["triggers", 3, "from"], "code": "unsupported" },
     { "path": ["body", 0, "retry"], "code": "unsupported" },
-    { "path": ["body", 0, "target"], "code": "unsupported" },
     { "path": ["body", 1, "kind"], "code": "unsupported" },
     { "path": ["body", 2, "arms", 0, "steps", 0, "kind"], "code": "unsupported" }
   ],

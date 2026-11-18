@@ -24,6 +24,7 @@ use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
 use super::{Cond, Edge, EventSource, Flow, FlowId, OnError, SetTarget, Step, StepKind, Trigger};
+use crate::core_conn;
 use crate::engine::{ActionRequest, Actions, CoreError};
 use crate::expr::{Evaluation, Evaluator, ExprError, Reads, Scope, truthy};
 use crate::gate::Verdict;
@@ -1865,7 +1866,7 @@ impl RunTask {
                     constraint,
                     action,
                     params,
-                } => match self.resolve_target(target, constraint.as_ref(), action) {
+                } => match self.resolve_target(target, constraint.as_ref()) {
                     Ok(target) => Ok(self
                         .action(id, &target, action, params, step_started, timeout)
                         .await),
@@ -1985,21 +1986,68 @@ impl RunTask {
         }
     }
 
-    /// An action step's target. Validation refuses one that follows state
-    /// (plugin protocol spec §13.9), so only a literal gets here.
+    /// An action step's target: its literal, or the connection its source
+    /// gives now, which must be one of the constraint's plugin (plugin protocol spec
+    /// §13.9). Anything else fails the step with `no_target` before a request is made.
     fn resolve_target(
         &self,
         target: &Source<super::ConnRef>,
-        _constraint: Option<&super::TargetConstraint>,
-        _action: &str,
+        constraint: Option<&super::TargetConstraint>,
     ) -> Result<super::ConnRef, RunError> {
-        match target {
-            Source::Literal(t) => Ok(t.clone()),
-            _ => Err(RunError::new(
-                "no_target",
-                "targets that follow state aren't supported yet",
-            )),
+        if let Source::Literal(t) = target {
+            return Ok(t.clone());
         }
+        let no_target = |why: String| RunError::new("no_target", why);
+        let value = match (self.eval_raw(target), target.fallback()) {
+            (Ok(Some(v)), _) => v,
+            (Err(e), _) if e.code == "cancelled" => return Err(e),
+            (_, Some(f)) => serde_json::to_value(f).expect("a target encodes as JSON"),
+            (Ok(None), None) => return Err(no_target("the target is undefined".into())),
+            (Err(e), None) => return Err(e),
+        };
+        let named = serde_json::from_value::<Target>(value.clone())
+            .map_err(|_| {
+                no_target(format!(
+                    "{value} isn't a target: a connection ID or {{conn}}"
+                ))
+            })?
+            .conn;
+        // In ID form, as state holds it; an alias, as an expression may write it.
+        let conn = if named == core_conn::CORE {
+            named
+        } else {
+            let targets = self
+                .inner
+                .targets
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
+            if targets.contains_key(&named) {
+                named
+            } else if let Some(id) = self.inner.aliases().get(&named) {
+                id.clone()
+            } else {
+                return Err(no_target(format!("no connection {named:?}")));
+            }
+        };
+        let plugin = if conn == core_conn::CORE {
+            Some(core_conn::CORE.to_owned())
+        } else {
+            self.inner
+                .targets
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&conn)
+                .map(|t| t.plugin.clone())
+        };
+        let wanted = constraint.map(|c| c.plugin.as_str());
+        if wanted.is_none() || plugin.as_deref() != wanted {
+            return Err(no_target(format!(
+                "connection {conn:?} isn't one of plugin {}'s",
+                wanted.unwrap_or("?")
+            )));
+        }
+        Ok(super::ConnRef { conn })
     }
 
     /// Sleeps, or returns `cancelled` when the run is cancelled.

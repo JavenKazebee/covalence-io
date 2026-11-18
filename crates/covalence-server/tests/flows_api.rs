@@ -640,3 +640,70 @@ async fn state_triggers_and_filters_over_http() {
 
     server.stop().await;
 }
+
+/// A target that follows state (plugin protocol spec §13.9): one flow routes on
+/// whichever Videohub a variable holds, and a connection of another plugin
+/// fails the step with `no_target` before anything is requested.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_step_routes_on_the_router_a_variable_holds() {
+    let server = Server::start_with(&["io.covalence.test.showsim@0.1.0=plugins/showsim/mod.ts"]);
+    let vh = videohub(&server, "vh").await;
+    let vh2 = videohub(&server, "vh2").await;
+    let (status, sim) = server
+        .post(
+            "/connections",
+            json!({ "plugin": "io.covalence.test.showsim", "alias": "sim", "config": {} }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{sim}");
+    let sim = sim["id"].as_str().unwrap().to_owned();
+    server
+        .eventually(WAIT, "sim's state", || server.value("sim.program"))
+        .await;
+
+    // Picks a router, as a key on a "which router" row would.
+    let mut picks = 0;
+    let mut route_on = async |conn: &str| {
+        picks += 1;
+        let flow = create(
+            &server,
+            json!({
+                "name": format!("Route {picks}"), "enabled": true, "triggers": [{ "kind": "api" }],
+                "concurrency": "queue",
+                "body": [
+                    { "id": "pick", "kind": "set", "path": "vars.router", "value": format!("'{conn}'") },
+                    {
+                        "id": "route1", "kind": "action",
+                        "target": { "ref": { "root": "vars", "path": ["router"] } },
+                        "constraint": { "plugin": "io.covalence.videohub" },
+                        "action": "route", "params": { "output": 2, "input": 7 },
+                    },
+                ],
+            }),
+        )
+        .await;
+        let run = start(&server, &flow).await;
+        (run.clone(), finished(&server, &run).await)
+    };
+
+    for (conn, alias) in [(vh.clone(), "vh"), (vh2.clone(), "vh2")] {
+        let (_, info) = route_on(&conn).await;
+        assert_eq!(info["status"], "ok", "{info}");
+        let path = format!("{alias}.outputs[2].source");
+        server
+            .eventually(WAIT, &path, || async {
+                (server.value(&path).await == Some(json!(7))).then_some(())
+            })
+            .await;
+    }
+
+    let (run, info) = route_on(&sim).await;
+    assert_eq!(info["error"]["code"], "no_target", "{info}");
+    assert!(
+        !run_entries(&server, &run)
+            .await
+            .contains(&"action.requested".to_owned())
+    );
+
+    server.stop().await;
+}

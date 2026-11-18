@@ -115,6 +115,7 @@ type TargetConstraint =
   | { template: string };             // (M9) every instance of a composite template (composition §6.5)
 ```
 
+- **A target that follows state is resolved when the step runs.** Its value is a connection ID or `{conn}`, as state holds it, or an alias, as an expression may write it. It has to be a connection of the constraint's plugin; anything else, or `undefined`, fails the step with `no_target` and nothing is requested. On save, the action and its literal parameters are checked against the plugin's manifest, from any of its connections that has loaded; with none loaded, that's an `unchecked` warning. A literal target with a constraint ignores the constraint.
 - **(M6) Parameters are `Source`s,** one per top-level parameter: a literal, `{ref}`, `{expr}` or a stateless transform. This generalises M4's `{expr}` parameters (§8.3), which are already in this shape.
 - **(M6) The core's own actions** (navigate a surface, inject input, cancel a flow's runs) are actions on the `core` connection ([core actions](core-actions.md)), with no step kinds of their own.
 

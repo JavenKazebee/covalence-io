@@ -1,0 +1,50 @@
+{
+  "flow": {
+    "name": "Selected targets",
+    "slug": "selectedTargets",
+    "enabled": true,
+    "triggers": [{ "kind": "api" }],
+    "concurrency": "ignore",
+    "body": [
+      {
+        "id": "free",
+        "kind": "action",
+        "target": { "ref": { "root": "vars", "path": ["lastPick"] } },
+        "action": "route",
+        "params": { "output": 1, "input": 3 }
+      },
+      {
+        "id": "typo",
+        "kind": "action",
+        "target": { "expr": "vars.lastPick" },
+        "constraint": { "plugin": "io.covalence.videohub" },
+        "action": "rout",
+        "params": {}
+      },
+      {
+        "id": "badParams",
+        "kind": "action",
+        "target": { "expr": "vars.lastPick" },
+        "constraint": { "plugin": "io.covalence.videohub" },
+        "action": "route",
+        "params": { "output": -1, "input": 3 }
+      },
+      {
+        "id": "notLoaded",
+        "kind": "action",
+        "target": { "expr": "vars.lastPick" },
+        "constraint": { "plugin": "io.example.ptz" },
+        "action": "recall",
+        "params": { "preset": 1 }
+      }
+    ]
+  },
+  "errors": [
+    { "path": ["body", 0, "constraint"], "code": "invalid" },
+    { "path": ["body", 1, "action"], "code": "unknownAction" },
+    { "path": ["body", 2, "params", "output"], "code": "badParams" }
+  ],
+  "warnings": [
+    { "path": ["body", 3, "constraint", "plugin"], "code": "unchecked" }
+  ]
+}

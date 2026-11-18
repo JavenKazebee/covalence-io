@@ -366,11 +366,19 @@ export function allSteps<S extends { arms: { steps: S[] }[]; otherwise: S[] | nu
 }
 
 /** The form fields for an action's params, or null when its manifest isn't known. */
-export type ParamsSchema = (conn: string, action: string) => JsonSchema | null;
+/** An action's params schema, from a connection's manifest, or a plugin's for a target that follows state. */
+export type ParamsSchema = (conn: string, action: string, plugin?: string) => JsonSchema | null;
 
-export function paramsSchemaFrom(manifestOf: (conn: string) => Manifest | null): ParamsSchema {
-  return (conn, action) => manifestOf(conn)?.actions.find((a) => a.id === action)?.params ?? null;
+export function paramsSchemaFrom(
+  manifestOf: (conn: string) => Manifest | null,
+  pluginManifest: (plugin: string) => Manifest | null = () => null,
+): ParamsSchema {
+  return (conn, action, plugin) =>
+    (plugin === undefined ? manifestOf(conn) : pluginManifest(plugin))?.actions.find((a) => a.id === action)?.params ?? null;
 }
+
+/** Where a step's actions come from: its connection, or for a target that follows state, its constraint's plugin. */
+const pluginOf = (d: StepDraft): string | undefined => (d.targetSource === null ? undefined : d.constraint);
 
 /** Stored literal params as input text: what `initialValues` gives for a fresh form. */
 export function valuesOf(fields: Field[], params: Record<string, Json>): Record<string, string | boolean> {
@@ -428,7 +436,7 @@ function stepToDraft(step: Step, schemaOf: ParamsSchema): StepDraft {
         else draft.sources[k] = copyJson(v);
       }
       // `core`'s params have a form of their own, which edits them as they are.
-      const schema = draft.conn === CORE ? null : schemaOf(draft.conn, step.action);
+      const schema = draft.conn === CORE ? null : schemaOf(draft.conn, step.action, pluginOf(draft));
       if (schema !== null) draft.values = valuesOf(fieldsOf(schema), draft.params);
       break;
     }
@@ -481,7 +489,7 @@ function stepFromDraft(d: StepDraft, schemaOf: ParamsSchema, errors: Map<number,
     }
     case "action": {
       let params: Record<string, Json> = d.params;
-      const schema = d.conn === CORE ? null : schemaOf(d.conn, d.action);
+      const schema = d.conn === CORE ? null : schemaOf(d.conn, d.action, pluginOf(d));
       if (schema !== null) {
         // Params that follow state are the server's to check, when the step runs.
         const literals = fieldsOf(schema).filter((f) => !(f.key in d.sources));

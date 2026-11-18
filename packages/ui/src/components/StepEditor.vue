@@ -46,7 +46,11 @@ const catalog = useCatalogStore();
 const surfaces = useSurfacesStore();
 const flows = useFlowsStore();
 const conn = computed(() => catalog.connections.find((c) => c.id === step.value.conn) ?? null);
-const manifest = computed(() => (conn.value === null ? null : catalog.manifest(conn.value.plugin)));
+/** A target that follows state, typed by its constraint's plugin (plugin protocol §13.9). */
+const held = computed(() => step.value.targetSource !== null);
+const manifest = computed(() =>
+  held.value ? catalog.manifest(step.value.constraint) : conn.value === null ? null : catalog.manifest(conn.value.plugin),
+);
 const actions = computed(() => manifest.value?.actions ?? []);
 const action = computed(() => actions.value.find((a) => a.id === step.value.action) ?? null);
 const fields = computed(() => (action.value === null ? [] : fieldsOf(action.value.params)));
@@ -97,19 +101,37 @@ function retarget(connId: string, actionId: string) {
   s.action = actionId;
   s.params = {};
   s.sources = {};
-  s.targetSource = null;
-  s.constraint = "";
-  const schema = catalog.connections.find((c) => c.id === connId);
-  const def = schema === undefined ? undefined : catalog.manifest(schema.plugin)?.actions.find((a) => a.id === actionId);
+  const plugin = s.targetSource !== null ? s.constraint : catalog.connections.find((c) => c.id === connId)?.plugin;
+  const def = plugin === undefined ? undefined : catalog.manifest(plugin)?.actions.find((a) => a.id === actionId);
   s.values = def === undefined || connId === CORE ? {} : initialValues(fieldsOf(def.params));
   if (connId === CORE) s.params = coreDefaults(actionId);
   if (generated && actionId !== "") s.id = freshStepId(actionId, [...props.ctx.all].filter((id) => id !== s.id));
 }
 
-function pickConn(connId: string) {
-  const plugin = catalog.connections.find((c) => c.id === connId)?.plugin;
+/** The `<select>` value for "any connection of this plugin, held in a variable". */
+const HELD = "\u0000held:";
+/** Plugins with a connection, for a target held in a variable; not `core`, whose actions take what they act on as a parameter. */
+const heldPlugins = computed(() => {
+  const ids = [...new Set(catalog.connections.filter((c) => c.id !== CORE).map((c) => c.plugin))];
+  return ids.map((id) => ({ id, name: catalog.manifest(id)?.name ?? id }));
+});
+
+function pickConn(value: string) {
+  const s = step.value;
+  let plugin: string | undefined;
+  let connId = value;
+  if (value.startsWith(HELD)) {
+    plugin = value.slice(HELD.length);
+    connId = "";
+    s.targetSource ??= { ref: { root: "vars", path: ["target"] } };
+    s.constraint = plugin;
+  } else {
+    plugin = catalog.connections.find((c) => c.id === value)?.plugin;
+    s.targetSource = null;
+    s.constraint = "";
+  }
   const list = plugin === undefined ? [] : (catalog.manifest(plugin)?.actions ?? []);
-  retarget(connId, list.some((a) => a.id === step.value.action) ? step.value.action : (list[0]?.id ?? ""));
+  retarget(connId, list.some((a) => a.id === s.action) ? s.action : (list[0]?.id ?? ""));
 }
 
 // ---- core: a surface or a flow, by parameter, and its action's own form ----
@@ -271,14 +293,14 @@ function toggleElse() {
           <label :for="`${prefix}-conn`">Connection</label>
           <select
             :id="`${prefix}-conn`"
-            :value="step.conn"
+            :value="held ? HELD + step.constraint : step.conn"
             @change="pickConn(($event.target as HTMLSelectElement).value)"
           >
             <option
-              v-if="conn === null"
-              :value="step.conn"
+              v-if="held ? !heldPlugins.some((p) => p.id === step.constraint) : conn === null"
+              :value="held ? HELD + step.constraint : step.conn"
             >
-              {{ step.conn || "Pick a connection" }}
+              {{ held ? `The ${step.constraint} in a variable` : step.conn || "Pick a connection" }}
             </option>
             <option
               v-for="c in catalog.connections"
@@ -287,7 +309,29 @@ function toggleElse() {
             >
               {{ c.alias }}
             </option>
+            <option
+              v-for="p in heldPlugins"
+              :key="p.id"
+              :value="HELD + p.id"
+            >
+              The {{ p.name }} in a variable…
+            </option>
           </select>
+        </div>
+        <div
+          v-if="step.targetSource !== null"
+          class="field"
+        >
+          <label>Held in</label>
+          <SourceInput
+            v-model="step.targetSource"
+            label="Target"
+            :forms="['ref', 'expr']"
+            :problems="at('target')"
+            :known="known"
+            :all="ctx.all"
+          />
+          <small class="hint">A connection of {{ manifest?.name ?? step.constraint }}, by ID.</small>
         </div>
         <div class="field">
           <label :for="`${prefix}-action`">Action</label>
