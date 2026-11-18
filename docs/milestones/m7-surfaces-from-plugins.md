@@ -1,6 +1,6 @@
 # Milestone 7: Surfaces from plugins
 
-- **Status:** In progress (Phases 0–6 done; Phase 7 waits on a real MK.2)
+- **Status:** Done, except the checks on hardware (Phase 7): a real MK.2, and the budgets on the Apple M3
 
 A real Stream Deck drives Covalence, through a plugin. The core gets a device layer: it enumerates HID and serial devices, watches hotplug, matches them to plugins' manifests and performs their I/O, so a plugin of plain TypeScript can drive hardware with no native add-ons ([ADR 0025](../adr/0025-device-drivers-are-plugins.md)). The plugin host carries the surface protocol ([plugin protocol §8](../specs/plugin-protocol.md)), and `io.covalence.streamdeck` translates between the deck's reports and M5's surface model. Network transports arrive too, and the Videohub plugin moves onto them. MIDI, Orbitals and controls beyond keys stay out.
 

@@ -20,19 +20,19 @@ deno run --no-prompt \
   <root>/packages/plugin-host/main.ts
 ```
 
-| Flag                                          | Why                                                                                                                    |
-| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `--no-prompt`                                 | A missing permission fails instead of blocking on a TTY prompt.                                                        |
-| `--config`                                    | Resolves the workspace packages (`@covalence-io/*`) wherever the core's working directory is.                          |
-| `--allow-read=<root>/packages,<root>/plugins` | The host imports `worker.ts` and the plugin bundles. Add any other plugin directory the core passes to `plugin.load`.  |
-| `--allow-net`                                 | For plugins that open sockets themselves (`directNetwork`), and the Videohub until it moves to `ctx.tcp` (M7 Phase 5). |
-| `--allow-env=COVALENCE_PROTOCOL_DEBUG`        | Set it to `json` for newline-delimited JSON instead of MessagePack.                                                    |
+| Flag                                          | Why                                                                                                                   |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `--no-prompt`                                 | A missing permission fails instead of blocking on a TTY prompt.                                                       |
+| `--config`                                    | Resolves the workspace packages (`@covalence-io/*`) wherever the core's working directory is.                         |
+| `--allow-read=<root>/packages,<root>/plugins` | The host imports `worker.ts` and the plugin bundles. Add any other plugin directory the core passes to `plugin.load`. |
+| `--allow-net`                                 | For plugins that open sockets themselves (`directNetwork`).                                                           |
+| `--allow-env=COVALENCE_PROTOCOL_DEBUG`        | Set it to `json` for newline-delimited JSON instead of MessagePack.                                                   |
 
 Not granted: `--allow-write`, `--allow-run`, `--allow-ffi`, `--allow-sys`, and
 other environment variables. Workers inherit these permissions; `conn.create`'s
 `permissions` are not applied yet (ADR 0015).
 
-`plugin.load`'s `bundle` is an absolute path or a URL. For Milestone 1 it is the
+`plugin.load`'s `bundle` is an absolute path or a URL. For now it is the
 plugin's `mod.ts` (for example `<root>/plugins/videohub/mod.ts`); its default
 export must be a `definePlugin()` result.
 

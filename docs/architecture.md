@@ -126,26 +126,25 @@ The full definition is in the [flow spec](specs/flows.md).
 | Connections on a Raspberry Pi 5 | 50+ |
 | Plugin host restart → connections restored | < 3 s |
 
-## Proposed repo layout
+## Repo layout
 
 ```
 covalence-io/
 ├── protocol/                # protocol schema (single source of truth) → generated types
 ├── crates/
-│   ├── covalence-core/      # engine library
+│   ├── covalence-core/      # engine library, with QuickJS (rquickjs) for expressions and transforms
 │   ├── covalence-server/    # headless binary: core + API + UI assets
 │   ├── covalence-protocol/  # generated Rust types + framing
 │   ├── covalence-store/     # SQLite store, migrations, export/import
-│   ├── covalence-script/    # QuickJS embedding, expression validator (oxc)
 │   ├── covalence-devices/   # HID / MIDI / serial I/O and hotplug for plugins (shared with Orbital)
-│   └── covalence-orbital/   # Orbital binary
+│   └── covalence-orbital/   # Orbital binary (not started)
 ├── packages/
 │   ├── protocol/            # generated TS types
 │   ├── sdk/                 # @covalence-io/sdk – plugin SDK (+ simulator toolkit)
 │   ├── plugin-host/         # Deno host bootstrap and worker management
 │   └── ui/                  # Vue 3 app
-├── apps/desktop/            # Tauri shell
-├── plugins/                 # first-party plugins (videohub, streamdeck, propresenter, red-rcp2, …)
+├── apps/desktop/            # Tauri shell (not started)
+├── plugins/                 # first-party plugins: videohub, streamdeck (later propresenter, red-rcp2, …)
 └── docs/
 ```
 
