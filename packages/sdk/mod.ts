@@ -42,6 +42,7 @@ export {
 export {
   type Draw,
   type ImageSpec,
+  type Level,
   presets,
   SurfaceHandle,
   type SurfaceSpec,

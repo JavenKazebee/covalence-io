@@ -5,7 +5,7 @@ import { useLiveState } from "../live/useLiveState";
 import { hrefOf, navigate } from "../nav";
 import { useCatalogStore } from "../stores/catalog";
 import { useSurfacesStore } from "../stores/surfaces";
-import { deckControls, missingControls, models, type ControlDef, type Surface } from "../surfaces/model";
+import { MAX_VIRTUAL, missingControls, surfaceControls, type ControlDef, type Surface } from "../surfaces/model";
 import VirtualDeck from "./VirtualDeck.vue";
 
 /**
@@ -49,8 +49,7 @@ watch(
 /** The controls the surface has: the virtual deck's, or what the plugin's device attached with. */
 const controls = computed(() => {
   if (stored.value?.provider !== undefined) return attachedControls.value;
-  const model = stored.value === undefined ? undefined : models[stored.value.model];
-  return model === undefined ? undefined : deckControls(model);
+  return stored.value === undefined ? undefined : surfaceControls(stored.value);
 });
 /** Layers this surface can show: it has each of their controls (surfaces spec §5.4). */
 const fitting = computed(() =>
@@ -88,12 +87,21 @@ watch(
   { immediate: true },
 );
 
+/** A virtual layout field, for the settings form: 0 encoders and faders with a motor is none. */
+function setVirtual(field: "encoders" | "faders" | "motor", value: number | boolean) {
+  if (draft.value === null) return;
+  const next = { ...draft.value.virtual, [field]: value };
+  draft.value.virtual = next;
+}
+
 async function save() {
   if (draft.value === null) return;
   saveError.value = null;
   savedNote.value = null;
   const surface = { ...draft.value, name: draft.value.name.trim() };
   if (!surface.startLayer) delete surface.startLayer;
+  const v = surface.virtual;
+  if (v !== undefined && !v.encoders && !v.faders && v.motor !== false) delete surface.virtual;
   try {
     const saved = await surfaces.saveSurface(surface);
     draft.value = { ...saved.surface };
@@ -246,6 +254,56 @@ async function remove() {
             </option>
           </select>
           <small class="hint">Shown the first time it attaches. After that it shows the layer it last showed.</small>
+        </div>
+      </div>
+      <div
+        v-if="stored.provider === undefined"
+        class="row"
+      >
+        <div class="field">
+          <label for="surface-encoders">Encoders</label>
+          <select
+            id="surface-encoders"
+            :value="draft.virtual?.encoders ?? 0"
+            @change="setVirtual('encoders', Number(($event.target as HTMLSelectElement).value))"
+          >
+            <option
+              v-for="n in MAX_VIRTUAL + 1"
+              :key="n"
+              :value="n - 1"
+            >
+              {{ n - 1 }}
+            </option>
+          </select>
+          <small class="hint"><code>e0</code>… beneath the keys: they turn and press.</small>
+        </div>
+        <div class="field">
+          <label for="surface-faders">Faders</label>
+          <select
+            id="surface-faders"
+            :value="draft.virtual?.faders ?? 0"
+            @change="setVirtual('faders', Number(($event.target as HTMLSelectElement).value))"
+          >
+            <option
+              v-for="n in MAX_VIRTUAL + 1"
+              :key="n"
+              :value="n - 1"
+            >
+              {{ n - 1 }}
+            </option>
+          </select>
+          <small class="hint"><code>f0</code>… beside the keys: they move and sense touch.</small>
+        </div>
+        <div class="field">
+          <label>
+            <input
+              type="checkbox"
+              :checked="draft.virtual?.motor ?? true"
+              @change="setVirtual('motor', ($event.target as HTMLInputElement).checked)"
+            >
+            Motorised faders
+          </label>
+          <small class="hint">A motorised fader moves to the value bound to it.</small>
         </div>
       </div>
       <div class="row">

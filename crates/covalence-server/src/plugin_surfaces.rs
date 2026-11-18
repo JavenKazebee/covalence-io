@@ -21,10 +21,12 @@ use std::sync::{Mutex, Weak};
 use covalence_core::flow;
 use covalence_core::host::PluginSurfaces;
 use covalence_core::state::ConnId;
-use covalence_core::surface::{self, Attach, ControlDef, Input, Surface, SurfaceId};
+use covalence_core::surface::{self, Attach, ControlDef, Input, Output, Surface, SurfaceId};
 use covalence_protocol::Bytes;
 use covalence_protocol::methods::core_to_host;
-use covalence_protocol::surface::{ImageFormat, SurfaceAttach, SurfaceDraw, SurfaceInput};
+use covalence_protocol::surface::{
+    ImageFormat, SurfaceAttach, SurfaceDraw, SurfaceInput, SurfaceLevel,
+};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
@@ -82,25 +84,39 @@ impl AppSurfaces {
                 },
             )
             .map_err(|e| e.to_string())?;
-        let mut draws = link.draws;
+        let mut outputs = link.outputs;
         let weak = self.app.clone();
         let (draw_conn, draw_key) = key.clone();
         let task = tokio::spawn(async move {
-            while let Some(draw) = draws.recv().await {
+            while let Some(output) = outputs.recv().await {
                 let Some(app) = weak.upgrade() else { return };
-                let Some(format) = image_format(&draw.format) else {
-                    tracing::warn!(format = %draw.format, "no protocol format for a drawn image");
-                    continue;
-                };
-                app.core.host().notify::<core_to_host::SurfaceDraw>(
-                    &draw_conn,
-                    &SurfaceDraw {
-                        surface: draw_key.clone(),
-                        control: draw.control,
-                        image: Bytes(draw.image),
-                        format,
-                    },
-                );
+                match output {
+                    Output::Image(draw) => {
+                        let Some(format) = image_format(&draw.format) else {
+                            tracing::warn!(format = %draw.format, "no protocol format for a drawn image");
+                            continue;
+                        };
+                        app.core.host().notify::<core_to_host::SurfaceDraw>(
+                            &draw_conn,
+                            &SurfaceDraw {
+                                surface: draw_key.clone(),
+                                control: draw.control,
+                                image: Bytes(draw.image),
+                                format,
+                            },
+                        );
+                    }
+                    Output::Level { control, value } => {
+                        app.core.host().notify::<core_to_host::SurfaceLevel>(
+                            &draw_conn,
+                            &SurfaceLevel {
+                                surface: draw_key.clone(),
+                                control,
+                                value,
+                            },
+                        );
+                    }
+                }
             }
             // Attached again (by another connection or this one) or deleted:
             // whoever did that owns the surface now.
@@ -194,6 +210,7 @@ impl App {
                     serial: serial.map(str::to_owned),
                     start_layer: None,
                     provider: Some(conn.to_owned()),
+                    virtual_layout: None,
                 }
             }
         };

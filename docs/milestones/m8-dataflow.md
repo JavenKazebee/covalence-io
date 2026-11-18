@@ -1,6 +1,6 @@
 # Milestone 8: Dataflow
 
-- **Status:** In progress (Phases 0–3 done)
+- **Status:** In progress (Phases 0–3 done; Phase 4 under way)
 
 Covalence gets its continuous half. Values can be computed, accumulated and sent somewhere without a flow ([ADR 0029](../adr/0029-dataflow-sources-transforms-sinks.md)):
 - **Reducers** (`toggle`, `position`, `select` …) are sandboxed transform definitions.
@@ -66,8 +66,8 @@ Notes from Phase 2:
 - [x] `follow`, `holdoff` and `pickup`. `follow` applies when what it follows changes, through the definition's `follow` (`absolute` drops its pickup) or by taking the value; it pauses while the control is touched and for `holdoff` (default 250 ms; a number of ms or a duration) after the last input, then catches up. A helper starts where what it follows is. Changes from `follow` send nothing to sinks.
 - [ ] Echoes (surfaces §4.4), per [ADR 0035](../adr/0035-level-outputs-echoes-and-control-settings.md): the plugin driving a motorised controller marks its motor's movement `echo: true`.
   - [x] The core's rule: a marked input updates input state and gives no events (`Input.echo`).
-  - [ ] The `value` property, `surface.level` and `requested.level`.
-- [ ] The virtual surface gains an optional encoder (`relative` + `momentary`) and fader (`absolute` + `touch`, with a `level` output and a motor mode that moves it) for tests and the UI. Per ADR 0035: configured on the surface entity, `virtual: {encoders, faders, motor}`, up to four of each.
+  - [x] The `value` property, `surface.level` and `requested.level`. `value` drives a `level` output, held to 0…1; `undefined` sends nothing. The surface link carries `Output`s (an image or a level) on one channel. `surface.level` is in the TypeSpec, the Rust types, the SDK (`onLevel`, and `echo` for a motor's own movement), the plugin host and the web surface. Each level sent is written to `requested.level` with `cause` → the latest change among what the binding read, origin `{core: "dataflow"}`.
+- [x] The virtual surface gains an optional encoder (`relative` + `momentary`) and fader (`absolute` + `touch`, with a `level` output and a motor mode that moves it) for tests and the UI. Per ADR 0035: configured on the surface entity, `virtual: {encoders, faders, motor}`, up to four of each. `virtual_controls` builds the controls for core tests; the UI's virtual deck draws them, glides a motor fader to its level, and attaches again when `virtual` changes. The surface's settings set them.
 
 ### Phase 5: Layer resolution (Rust)
 - [ ] `when`, `level`, `rank` and `on` as sources and selectors; the resolution rule of surfaces §5.2; `surface.<slug>.layers` and `.controls.<id>.layer`; `resolutionCycle`.

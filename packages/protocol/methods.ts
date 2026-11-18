@@ -45,4 +45,5 @@ export interface CoreToHostNotifications {
   "io.data": T.IoData;
   "io.state": T.IoState;
   "surface.draw": T.SurfaceDraw;
+  "surface.level": T.SurfaceLevel;
 }

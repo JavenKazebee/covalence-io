@@ -5,6 +5,10 @@
 //! properties whose reads they touch on layers some surface shows, and
 //! redraws each control whose resolved look differs from what that surface
 //! last got. A layer that comes into view is evaluated in full first.
+//!
+//! A `value` property drives a `level` output (ADR 0035). Each level sent is
+//! written to `surface.<slug>.controls.<id>.requested.level`, with `cause` →
+//! the latest change among what the property read.
 //! `expr` bindings run on the worker's own QuickJS, so bindings and flows
 //! never wait on each other.
 
@@ -15,10 +19,17 @@ use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
 
 use super::{Binding, ControlBinding, Prop, PropValue, prop_value};
+use crate::Shared;
 use crate::expr::{Evaluator, Limits, QuickJs, Scope};
-use crate::state::{ConnId, Dirty, LiveState, Quality, StatePath};
+use crate::journal::{
+    CoreOrigin, Journal, JournalOp, NewEntry, Origin, Record, Seq, StatePatchRecord,
+};
+use crate::state::{ConnId, Dirty, LiveState, Meta, Quality, Source, StatePath};
+use crate::surface::Output;
 use crate::surface::render::{Look, Renderer};
-use crate::surface::{ControlDef, Draw, LayerId, SurfaceId};
+use crate::surface::{
+    ControlDef, Draw, LayerId, OutputCap, OutputCapKind, SurfaceId, requested_level_path,
+};
 
 /// An `expr` binding's time limit (ADR 0023).
 pub const EXPR_TIME: Duration = Duration::from_millis(10);
@@ -36,12 +47,13 @@ enum Command {
     Set(ControlBinding),
     Remove(String),
     Aliases(Arc<BTreeMap<String, ConnId>>),
-    /// A surface shows `layer` (or nothing) through `draws`.
+    /// A surface shows `layer` (or nothing) through `outputs`.
     Show {
         surface: SurfaceId,
+        slug: String,
         layer: Option<LayerId>,
         controls: Vec<ControlDef>,
-        draws: mpsc::Sender<Draw>,
+        outputs: mpsc::Sender<Output>,
     },
     Hide(SurfaceId),
     Flush(std::sync::mpsc::Sender<()>),
@@ -49,12 +61,13 @@ enum Command {
 
 impl Bindings {
     /// Starts the worker on its own thread.
-    pub fn start(state: Arc<LiveState>) -> Self {
+    pub fn start(shared: Shared) -> Self {
         let (commands, rx) = mpsc::unbounded_channel();
         let problems = Arc::new(Mutex::new(Problems::new()));
-        let feed = state.subscribe();
+        let feed = shared.state.subscribe();
         let worker = Worker {
-            state,
+            state: shared.state,
+            journal: shared.journal,
             evaluator: QuickJs::new(Limits {
                 time: EXPR_TIME,
                 ..Limits::default()
@@ -96,15 +109,17 @@ impl Bindings {
     pub fn show(
         &self,
         surface: &str,
+        slug: &str,
         layer: Option<LayerId>,
         controls: Vec<ControlDef>,
-        draws: mpsc::Sender<Draw>,
+        outputs: mpsc::Sender<Output>,
     ) {
         self.send(Command::Show {
             surface: surface.to_owned(),
+            slug: slug.to_owned(),
             layer,
             controls,
-            draws,
+            outputs,
         });
     }
 
@@ -141,6 +156,7 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 
 struct Worker {
     state: Arc<LiveState>,
+    journal: Arc<Journal>,
     evaluator: QuickJs,
     aliases: Arc<BTreeMap<String, ConnId>>,
     bindings: BTreeMap<String, ControlBinding>,
@@ -154,17 +170,31 @@ struct Worker {
 }
 
 struct Shown {
+    slug: String,
     layer: Option<LayerId>,
     controls: Vec<ControlDef>,
-    draws: mpsc::Sender<Draw>,
+    outputs: mpsc::Sender<Output>,
     /// What each control was last sent.
     drawn: BTreeMap<String, Look>,
+    /// The level each `level` output was last sent.
+    levels: BTreeMap<String, f64>,
 }
 
 #[derive(Default)]
 struct Resolved {
     props: BTreeMap<Prop, Evaluated>,
     look: Look,
+    /// The `value` property, for a `level` output: `None` sends nothing.
+    level: Option<f64>,
+}
+
+impl Resolved {
+    fn level(&self) -> Option<f64> {
+        match self.props.get(&Prop::Value)?.value {
+            Some(PropValue::Level(v)) => Some(v),
+            _ => None,
+        }
+    }
 }
 
 /// One property, evaluated.
@@ -204,16 +234,22 @@ pub fn evaluate(
     }
 }
 
-/// A control's look from its properties. Stale if any value it read is.
+/// A control's look from the properties that draw its image. Stale if any
+/// value they read is.
 pub fn look(props: &BTreeMap<Prop, Evaluated>, state: &LiveState) -> Look {
+    let image = || {
+        props
+            .iter()
+            .filter(|(p, _)| p.output() == OutputCapKind::Image)
+    };
     let mut look = Look::default();
-    for (prop, evaluated) in props {
+    for (prop, evaluated) in image() {
         if let Some(value) = &evaluated.value {
             value.clone().apply(*prop, &mut look);
         }
     }
     look.stale = state.read(|tree| {
-        props.values().flat_map(|e| &e.reads).any(|path| {
+        image().flat_map(|(_, e)| &e.reads).any(|path| {
             tree.leaves_under(path)
                 .any(|(_, leaf)| leaf.meta.quality == Quality::Stale)
         })
@@ -334,23 +370,34 @@ impl Worker {
             }
             Command::Show {
                 surface,
+                slug,
                 layer,
                 controls,
-                draws,
+                outputs,
             } => {
                 // The same device keeps what it shows; a new connection
-                // starts blank, as far as the core knows.
-                let drawn = match self.shown.remove(&surface) {
-                    Some(old) if old.draws.same_channel(&draws) => old.drawn,
-                    _ => BTreeMap::new(),
+                // starts blank, as far as the core knows. Levels are sent
+                // again under a new slug, so `requested` is written there.
+                let (drawn, levels) = match self.shown.remove(&surface) {
+                    Some(old) if old.outputs.same_channel(&outputs) => (
+                        old.drawn,
+                        if old.slug == slug {
+                            old.levels
+                        } else {
+                            BTreeMap::new()
+                        },
+                    ),
+                    _ => Default::default(),
                 };
                 self.shown.insert(
                     surface.clone(),
                     Shown {
+                        slug,
                         layer,
                         controls,
-                        draws,
+                        outputs,
                         drawn,
+                        levels,
                     },
                 );
                 self.track_visible();
@@ -443,8 +490,10 @@ impl Worker {
         }
         let changed = if any {
             let look = self.look(&resolved);
-            let changed = look != resolved.look;
+            let level = resolved.level();
+            let changed = look != resolved.look || level != resolved.level;
             resolved.look = look;
+            resolved.level = level;
             changed
         } else {
             false
@@ -487,21 +536,47 @@ impl Worker {
         }
     }
 
-    /// Sends a surface every control whose look differs from what it has.
+    /// Sends a surface every control whose look or level differs from what
+    /// it has.
     fn draw(&mut self, surface: &str) {
         let Some(shown) = self.shown.get_mut(surface) else {
             return;
         };
+        let mut requested = Vec::new();
         for control in &shown.controls {
+            let resolved = shown
+                .layer
+                .as_ref()
+                .and_then(|layer| self.resolved.get(&(layer.clone(), control.id.clone())));
+            let has_level = control
+                .outputs
+                .iter()
+                .any(|o| matches!(o, OutputCap::Level { .. }));
+            if has_level
+                && let Some(resolved) = resolved
+                && let Some(level) = resolved.level
+                && shown.levels.get(&control.id) != Some(&level)
+            {
+                let output = Output::Level {
+                    control: control.id.clone(),
+                    value: level,
+                };
+                match shown.outputs.try_send(output) {
+                    Ok(()) => {
+                        shown.levels.insert(control.id.clone(), level);
+                        let reads = resolved.props.get(&Prop::Value).map(|e| &e.reads);
+                        requested.push((control.id.clone(), level, reads.cloned()));
+                    }
+                    // Tried again on the next turn, with the newest value.
+                    Err(_) => {
+                        tracing::warn!(%surface, control = %control.id, "surface isn't taking levels; dropped one");
+                    }
+                }
+            }
             let Some(image) = control.image() else {
                 continue;
             };
-            let look = shown
-                .layer
-                .as_ref()
-                .and_then(|layer| self.resolved.get(&(layer.clone(), control.id.clone())))
-                .map(|r| r.look.clone())
-                .unwrap_or_default();
+            let look = resolved.map(|r| r.look.clone()).unwrap_or_default();
             if shown.drawn.get(&control.id) == Some(&look) {
                 continue;
             }
@@ -516,12 +591,12 @@ impl Worker {
                         continue;
                     }
                 };
-            let draw = Draw {
+            let draw = Output::Image(Draw {
                 control: control.id.clone(),
                 format: image.format.clone(),
                 image: bytes,
-            };
-            match shown.draws.try_send(draw) {
+            });
+            match shown.outputs.try_send(draw) {
                 Ok(()) => {
                     shown.drawn.insert(control.id.clone(), look);
                 }
@@ -529,6 +604,61 @@ impl Worker {
                     tracing::warn!(%surface, control = %control.id, "surface isn't taking images; dropped one");
                 }
             }
+        }
+        let slug = shown.slug.clone();
+        for (control, level, reads) in requested {
+            self.requested(surface, &slug, &control, level, reads.as_ref());
+        }
+    }
+
+    /// Writes a level sent as `requested.level`, with `cause` → the latest
+    /// change among what the `value` property read.
+    fn requested(
+        &self,
+        surface: &str,
+        slug: &str,
+        control: &str,
+        level: f64,
+        reads: Option<&BTreeSet<StatePath>>,
+    ) {
+        let cause: Option<Seq> = self.state.read(|tree| {
+            reads?
+                .iter()
+                .flat_map(|path| tree.leaves_under(path))
+                .map(|(_, leaf)| leaf.meta.seq)
+                .max()
+        });
+        let path = requested_level_path(slug, control);
+        let value: covalence_protocol::Value = level.into();
+        let record = Record::StatePatch(StatePatchRecord {
+            ops: vec![JournalOp::Set {
+                path: path.clone(),
+                value: value.clone(),
+                reducer: None,
+            }],
+            replaces: None,
+            device_ts: None,
+        });
+        let origin = Origin::Core {
+            core: CoreOrigin::Dataflow,
+        };
+        let journal = &self.journal;
+        let (written, _) = self.state.mutate_turn(|tree| {
+            match journal.append(NewEntry::new(origin, record).cause(cause)) {
+                Ok(entry) => {
+                    let meta = Meta {
+                        ts: crate::clock::epoch_ms(),
+                        seq: entry.seq,
+                        quality: Quality::Good,
+                        source: Source::Core,
+                    };
+                    (Ok(()), tree.set(&path, &value, &meta))
+                }
+                Err(e) => (Err(e), Dirty::new()),
+            }
+        });
+        if let Err(e) = written {
+            tracing::error!(%surface, %control, "cannot journal a requested level: {e}");
         }
     }
 }

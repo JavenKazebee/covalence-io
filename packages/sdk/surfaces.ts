@@ -13,6 +13,15 @@
  * device.on("down", (k) => deck.down(`k${k}`));
  * ```
  *
+ * A motor fader takes its level with `onLevel`, and reports its motor's own
+ * movement with `echo`, so nothing reacts to the device moving itself
+ * (ADR 0035):
+ *
+ * ```ts
+ * desk.onLevel(({ control, value }) => device.moveFader(control, value));
+ * device.on("fader", (f, v) => device.touched(f) ? desk.value(f, v) : desk.echo(f, v));
+ * ```
+ *
  * @module
  */
 
@@ -149,10 +158,18 @@ export interface Draw {
   format: ImageFormat;
 }
 
+/** A level the core set on a control's `level` output. */
+export interface Level {
+  control: string;
+  /** 0 to 1. */
+  value: number;
+}
+
 /** A surface this connection attached. */
 export class SurfaceHandle {
   readonly #sink: SurfaceSink;
   readonly #draws = new Set<(draw: Draw) => void>();
+  readonly #levels = new Set<(level: Level) => void>();
   readonly #forget: () => void;
   #attached = true;
 
@@ -179,6 +196,7 @@ export class SurfaceHandle {
     kind: InputKind,
     value?: number | [number, number],
     ts: number = performance.timeOrigin + performance.now(),
+    echo = false,
   ) {
     if (!this.#attached) return;
     const p: Record<string, unknown> = {
@@ -188,6 +206,7 @@ export class SurfaceHandle {
       ts,
     };
     if (value !== undefined) p.value = value;
+    if (echo) p.echo = true;
     this.#sink.notify("surface.input", p);
   }
 
@@ -213,10 +232,25 @@ export class SurfaceHandle {
     this.input(control, "touch", touched ? 1 : 0, ts);
   }
 
+  /**
+   * A position the device moved to by itself, such as a motor fader
+   * following its level. The core keeps it as input state and gives no
+   * events.
+   */
+  echo(control: string, value: number | [number, number], ts?: number) {
+    this.input(control, "value", value, ts, true);
+  }
+
   /** Calls `fn` with each image the core draws. Returns an unsubscribe. */
   onDraw(fn: (draw: Draw) => void): () => void {
     this.#draws.add(fn);
     return () => this.#draws.delete(fn);
+  }
+
+  /** Calls `fn` with each level the core sets. Returns an unsubscribe. */
+  onLevel(fn: (level: Level) => void): () => void {
+    this.#levels.add(fn);
+    return () => this.#levels.delete(fn);
   }
 
   /** Detaches: the core releases its input and stops drawing. */
@@ -230,6 +264,11 @@ export class SurfaceHandle {
   /** @internal */
   _draw(draw: Draw) {
     for (const fn of this.#draws) fn(draw);
+  }
+
+  /** @internal */
+  _level(level: Level) {
+    for (const fn of this.#levels) fn(level);
   }
 }
 
@@ -267,8 +306,16 @@ export class Surfaces {
     return handle;
   }
 
-  /** Handles `surface.draw`. Returns whether it was one. */
+  /** Handles `surface.draw` and `surface.level`. Returns whether it was one. */
   receive(method: string, params: unknown): boolean {
+    if (method === "surface.level") {
+      const p = params as { surface: string; control: string; value: number };
+      this.#handles.get(p.surface)?._level({
+        control: p.control,
+        value: p.value,
+      });
+      return true;
+    }
     if (method !== "surface.draw") return false;
     const p = params as {
       surface: string;

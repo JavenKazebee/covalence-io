@@ -91,6 +91,25 @@ Deno.test("a surface attaches, reports input, takes draws and detaches", () => {
     format: "jpeg",
   }));
   assertEquals(draws, [[0xff, 0xd8]]);
+
+  const levels: [string, number][] = [];
+  deck.onLevel((l) => levels.push([l.control, l.value]));
+  assert(surfaces.receive("surface.level", {
+    surface: "elgato.mk2:AL12",
+    control: "k0",
+    value: 0.7,
+  }));
+  assertEquals(levels, [["k0", 0.7]]);
+
+  deck.echo("k0", 0.5, 12);
+  assertEquals(sink.sent.at(-1), ["surface.input", {
+    surface: "elgato.mk2:AL12",
+    control: "k0",
+    kind: "value",
+    value: 0.5,
+    ts: 12,
+    echo: true,
+  }]);
   assert(!surfaces.receive("io.data", {}));
 
   surfaces.detachAll();

@@ -156,24 +156,27 @@ pub fn helper_cell_id(binding: &str, key: &str) -> String {
     format!("helper:{binding}/{key}")
 }
 
-/// A property of a control. M5 has the three a key image needs. In the
-/// order of their names, as JSON objects are written.
+/// A property of a control: the three a key image needs, and `value` for a
+/// `level` output (ADR 0035). In the order of their names, as JSON objects
+/// are written.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Prop {
     Background,
     Label,
     TextColor,
+    Value,
 }
 
 impl Prop {
-    pub const ALL: [Prop; 3] = [Prop::Background, Prop::Label, Prop::TextColor];
+    pub const ALL: [Prop; 4] = [Prop::Background, Prop::Label, Prop::TextColor, Prop::Value];
 
     pub fn as_str(self) -> &'static str {
         match self {
             Prop::Label => "label",
             Prop::TextColor => "textColor",
             Prop::Background => "background",
+            Prop::Value => "value",
         }
     }
 
@@ -181,7 +184,12 @@ impl Prop {
     pub fn output(self) -> OutputCapKind {
         match self {
             Prop::Label | Prop::TextColor | Prop::Background => OutputCapKind::Image,
+            Prop::Value => OutputCapKind::Level,
         }
+    }
+
+    fn is_color(self) -> bool {
+        matches!(self, Prop::TextColor | Prop::Background)
     }
 }
 
@@ -189,7 +197,8 @@ impl Prop {
 pub type Binding = Source<Json>;
 
 /// A result as a property's value: a label is text (numbers and booleans
-/// are written as JavaScript writes them), a colour is `#rrggbb` or `#rgb`.
+/// are written as JavaScript writes them), a colour is `#rrggbb` or `#rgb`,
+/// and a `value` is a number, held to 0…1.
 pub fn prop_value(prop: Prop, value: &Json) -> Result<PropValue, String> {
     match (prop, value) {
         (Prop::Label, Json::String(s)) => Ok(PropValue::Text(s.clone())),
@@ -203,13 +212,20 @@ pub fn prop_value(prop: Prop, value: &Json) -> Result<PropValue, String> {
         (Prop::TextColor | Prop::Background, v) => {
             Err(format!("a colour must be text like \"#ff0000\", not {v}"))
         }
+        (Prop::Value, Json::Number(n)) => match n.as_f64() {
+            Some(n) if n.is_finite() => Ok(PropValue::Level(n.clamp(0.0, 1.0))),
+            _ => Err(format!("{n} isn't a value from 0 to 1")),
+        },
+        (Prop::Value, v) => Err(format!("a value must be a number from 0 to 1, not {v}")),
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PropValue {
     Text(String),
     Color(Rgb),
+    /// A `level` output's value, 0 to 1.
+    Level(f64),
 }
 
 impl PropValue {
@@ -218,6 +234,7 @@ impl PropValue {
             (Prop::Label, PropValue::Text(t)) => look.label = t,
             (Prop::TextColor, PropValue::Color(c)) => look.text_color = c,
             (Prop::Background, PropValue::Color(c)) => look.background = c,
+            // A level isn't part of an image.
             _ => {}
         }
     }
@@ -623,7 +640,7 @@ impl Validation<'_> {
                         self.value(prop, item, at(base, &[key("to"), index(i)]));
                     }
                 }
-                MapTo::Range(_) if prop != Prop::Label => self.error(
+                MapTo::Range(_) if prop.is_color() => self.error(
                     at(base, &[key("to")]),
                     Code::BadValue,
                     "a colour can't be a number: map to a list of colours".into(),

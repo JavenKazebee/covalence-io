@@ -325,7 +325,7 @@ A surface is a two-way device ([ADR 0024](../adr/0024-surfaces-as-two-way-device
 | `surface.input` | host → core, ntf | `{surface, control, kind: "down" \| "up" \| "turn" \| "touch" \| "value", value?, ts, echo?}` |
 | `surface.draw` | core → host, ntf | `{surface, control, image: bytes, format: "jpeg" \| "bmp" \| "png" \| "rgb565" \| "rgb"}`, for `image` outputs. **(M7)** `rgb` is raw 8-bit RGB, rows top to bottom, for a driver that packs images itself |
 | `surface.led` | core → host, ntf | `{surface, control, color}`, for `led` outputs **(Later)** |
-| `surface.level` | core → host, ntf | `{surface, control, value: 0..1}`, for `level` outputs: motor faders, encoder rings, meters **(Later)** |
+| `surface.level` | core → host, ntf | `{surface, control, value: 0..1}`, for `level` outputs: motor faders, encoder rings, meters. **(M8)** The SDK's `onLevel`; a plugin reports its motor's own movement with `echo` (ADR 0035) |
 | `surface.text` | core → host, ntf | `{surface, control, text}`, for `text` outputs **(Later)** |
 | `surface.brightness` | core → host, ntf | `{surface, value: 0..100}`, when the attach declares `brightness` **(Later)** |
 

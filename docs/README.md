@@ -11,7 +11,7 @@
 - [M5: Surfaces and bindings](milestones/m5-surfaces-and-bindings.md) (done)
 - [M6: Primitives](milestones/m6-primitives.md) (done; redraw budget to re-measure): sources, selectors, events by path, the core connection
 - [M7: Surfaces from plugins](milestones/m7-surfaces-from-plugins.md) (done, except checks on hardware: Phase 7 waits on a real MK.2 and the M3): devices, transports, surfaces over the plugin host, the Stream Deck plugin
-- [M8: Dataflow](milestones/m8-dataflow.md) (in progress: Phase 0 done): reducers, cells, variables, sinks, helpers, layer resolution
+- [M8: Dataflow](milestones/m8-dataflow.md) (in progress: Phases 0–3 done, Phase 4 under way): reducers, cells, variables, sinks, helpers, layer resolution
 - [M9: Composition](milestones/m9-composition.md) (planned): one template primitive, composites, components, nesting, `forEach`, plugin transforms
 
 ## Specs (drafts)

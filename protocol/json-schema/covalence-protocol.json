@@ -1981,6 +1981,29 @@
             ],
             "description": "(M7) `rgb`: raw 8-bit RGB, rows top to bottom, for devices whose driver packs images itself."
         },
+        "SurfaceLevel": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "SurfaceLevel.json",
+            "type": "object",
+            "properties": {
+                "surface": {
+                    "type": "string"
+                },
+                "control": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "number",
+                    "description": "0 to 1."
+                }
+            },
+            "required": [
+                "surface",
+                "control",
+                "value"
+            ],
+            "description": "`surface.level` params (core → host, ntf), for `level` outputs: motor faders, encoder rings, meters."
+        },
         "Message": {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
             "$id": "Message.json",

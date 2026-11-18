@@ -235,11 +235,11 @@ export class Host {
         break;
       }
       case "ntf":
-        // Transport traffic and draws go to their connection's worker; unknown
+        // Transport traffic and outputs go to their connection's worker; unknown
         // notifications are ignored (spec §10).
         if (
           msg.m === "io.data" || msg.m === "io.state" ||
-          msg.m === "surface.draw"
+          msg.m === "surface.draw" || msg.m === "surface.level"
         ) {
           if (msg.conn) this.#conns.get(msg.conn)?.notify(msg.m, msg.p);
         }

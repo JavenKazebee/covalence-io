@@ -20,7 +20,8 @@ use covalence_core::state::StatePath;
 use covalence_core::surface::gesture::Timing;
 use covalence_core::surface::{
     Attach, AttachError, ControlDef, Draw, ImageDef, Input, InputCap, InputCapKind, InputValue,
-    Layer, LayerControl, Link, OutputCap, OutputCapKind, Placement, ShowError, Surface, Surfaces,
+    Layer, LayerControl, Link, Output, OutputCap, OutputCapKind, Placement, ShowError, Surface,
+    Surfaces,
 };
 use covalence_protocol::Value;
 use covalence_protocol::state::PathSegment;
@@ -63,6 +64,7 @@ fn world() -> World {
             serial: None,
             start_layer: Some(CAMS.into()),
             provider: None,
+            virtual_layout: None,
         })
         .unwrap();
     for (id, slug, cols, rows) in [
@@ -295,8 +297,10 @@ async fn settle(surfaces: &Surfaces) {
 
 fn take_draws(link: &mut Link) -> Vec<Draw> {
     let mut out = Vec::new();
-    while let Ok(draw) = link.draws.try_recv() {
-        out.push(draw);
+    while let Ok(output) = link.outputs.try_recv() {
+        if let Output::Image(draw) = output {
+            out.push(draw);
+        }
     }
     out
 }
@@ -632,7 +636,7 @@ async fn a_second_attach_replaces_the_first() {
     let second = w.surfaces.attach(DECK, deck()).unwrap();
     settle(&w.surfaces).await;
     assert!(
-        first.draws.recv().await.is_none(),
+        first.outputs.recv().await.is_none(),
         "the first link is closed"
     );
     // The first transport hanging up later doesn't detach the second.
@@ -714,6 +718,7 @@ async fn removing_a_layer_or_renaming_a_surface_updates_state() {
             serial: None,
             start_layer: None,
             provider: None,
+            virtual_layout: None,
         })
         .unwrap();
     assert_eq!(state(&w.shared, "connected"), None, "the old slug is gone");

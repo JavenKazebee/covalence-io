@@ -148,3 +148,12 @@ model SurfaceDraw {
   image: Bytes;
   format: ImageFormat;
 }
+
+/** `surface.level` params (core → host, ntf), for `level` outputs: motor faders, encoder rings, meters. */
+model SurfaceLevel {
+  surface: string;
+  control: string;
+
+  /** 0 to 1. */
+  value: float64;
+}

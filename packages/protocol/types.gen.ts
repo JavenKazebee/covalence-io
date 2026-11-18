@@ -80,6 +80,7 @@ export type CovalenceProtocol =
   | InputKind
   | SurfaceDraw
   | ImageFormat
+  | SurfaceLevel
   | Message;
 /**
  * Spec §9.
@@ -734,4 +735,15 @@ export interface SurfaceDraw {
   control: string;
   image: Bytes;
   format: ImageFormat;
+}
+/**
+ * `surface.level` params (core → host, ntf), for `level` outputs: motor faders, encoder rings, meters.
+ */
+export interface SurfaceLevel {
+  surface: string;
+  control: string;
+  /**
+   * 0 to 1.
+   */
+  value: number;
 }

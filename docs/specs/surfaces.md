@@ -31,6 +31,11 @@ interface Surface {               // project entity `surface`
   serial?: string;                // (M7) matches a hardware device on attach
   startLayer?: string;            // (Now) layer ID shown in the `main` group on first attach (M5: `startPage`)
   provider?: string;              // (M7) the connection whose device this is
+  virtual?: {                     // (M8) a virtual deck's encoders and faders (§8, ADR 0035)
+    encoders?: number;            // 0–4, default 0
+    faders?: number;              // 0–4, default 0
+    motor?: boolean;              // whether the faders' level moves them; default true
+  };
 }
 
 interface Layer {                 // (Now) project entity `layer`, replacing `page`
@@ -118,7 +123,7 @@ type OutputKind = OutputCap["kind"];
 - **(Now) IDs are free-form.** The `k0…kN` row-major rule and the attach's `layout` are gone. The SDK keeps presets (`button`, `encoder`, `fader`, `touchstrip`, `lcd`, `led`) that produce common capability sets.
 - **(Now) Every control has `at`.** Controls may not overlap. A device without a physical layout, such as GPIO pins, is placed in a row by its SDK preset. Positions are what regions, neighbours, surface groups and the editor's drawing are built on.
 - **(Now)** A control with no inputs and no outputs is refused at attach, as is a duplicate ID or a missing `at`. Input that doesn't match a control's capabilities (a `turn` on a control with no `relative` input) is dropped and logged, rate-limited.
-- **(Now) Outputs.** Only `image` does anything. **(Later)** `led`, `level` and `text` through the bindings' `led`, `value` and `text` properties, and surface-wide brightness.
+- **(Now) Outputs.** `image`, and **(M8)** `level` through the bindings' `value` property ([ADR 0035](../adr/0035-level-outputs-echoes-and-control-settings.md)). **(Later)** `led` and `text` through the bindings' `led` and `text` properties, and surface-wide brightness.
 - **(M6) Controls are named by selectors.** Wherever one or many controls are named (a layer's `controls`, a control group, an event source), the field is a `Selector<ControlId>` (dataflow §2): an ID, a list, `{region: Rect}` for every control whose `at` lies inside, `{near: "left" | "right" | "above" | "below", of}` for the nearest control in that direction, `{has: {inputs?, outputs?}}` by capability, `{expr}`, and `any`, `all` and `not`. M6 implements the selector in the core and IDs and lists in each field; the other forms reach each field as it needs them.
 
 ---
@@ -138,7 +143,7 @@ type OutputKind = OutputCap["kind"];
 | `surface.<slug>.controls.<id>.detents` | integer | **(Now)** The device: the running total of `relative` input since the attach |
 | `surface.<slug>.controls.<id>.value` | `number`, or `[x, y]` | **(Now)** The device: `absolute` input |
 | `surface.<slug>.controls.<id>.touched` | `boolean` | **(Now)** The device: `touch` input |
-| `surface.<slug>.controls.<id>.requested.<output>` | the output's value | **(M8)** The core: what it last sent to a `led`, `level` or `text` output (§4.4) |
+| `surface.<slug>.controls.<id>.requested.<output>` | the output's value | **(M8)** The core: what it last sent to a `led`, `level` or `text` output (§4.4), with `cause` → the latest change among what the binding read. `requested.level` is implemented |
 | `surface.<slug>.controls.<id>.helpers.<name>` | a helper's value | **(M8)** A helper with `scope: "surface"` (§4.3) |
 | `layer.<slug>.controls.<id>.<name>` | a helper's value | **(M8)** A helper on a layer (§4.3) |
 | `layer.<slug>.params.<name>` | a layer parameter | **(M9)** An instance's or a template's parameter (composition §1) |
@@ -410,15 +415,22 @@ The browser's virtual deck is a surface like any other ([ADR 0022](../adr/0022-s
     "outputs": [{ "kind": "image", "w": 144, "h": 144, "format": "png" }] }, … ] } }
 { "method": "surface.input",  "params": { "surface": "<slug>", "control": "k3", "kind": "down", "ts": 1234.5 } }
 { "method": "surface.draw",   "params": { "surface": "<slug>", "control": "k3", "format": "png", "image": "<base64>" } }
+{ "method": "surface.level",  "params": { "surface": "<slug>", "control": "f0", "value": 0.7 } }
 ```
 
 - **(Now)** The virtual deck declares 15 controls `k0`…`k14`, each `momentary` with a 144 × 144 PNG `image`, placed 5 × 3 with `at`. The attach has no `layout`.
+- **(M8)** The surface's `virtual` adds, per [ADR 0035](../adr/0035-level-outputs-echoes-and-control-settings.md):
+  - encoders `e0`…`e3` in a row beneath the keys (`y` 3), each `relative` + `momentary` with a `level` output for its ring
+  - faders `f0`…`f3` to the right of the keys (`x` 5…8, three cells tall), each `absolute` + `touch` with a `level` output, `motor` as configured
+
+  A motorised virtual fader glides to each level it's sent. It reports `value` only while it's dragged, with `touch` 1 on pointer down and 0 on pointer up, so it never echoes. Changing `virtual` makes the browser attach again with the new controls. `covalence_core::surface::virtual_controls` builds the same list for tests.
 - **One surface per socket.** The socket's `{id}` must name an existing surface entity, or the upgrade is refused with `404`. The first message must be `surface.attach` within 10 s, and it and every `surface.input` must use the surface's slug.
 - **Errors close the socket** with code 1008 (policy) and the reason as the close frame's text:
   - a message that isn't a notification
   - an attach the core refuses (`cannot attach: …`)
   - another surface's slug
   - a method other than `surface.input` and `surface.detach` after the attach
+  - **(M8)** `virtual` on a surface whose model isn't `virtual.deck15`, or more than 4 encoders or faders, is `invalid` when the surface is saved
 - **A second attach for the same surface replaces the first,** whose socket is closed with 1000 and `attached elsewhere`. Two browser tabs can't drive one surface. Deleting the surface closes it with 1000 and `surface deleted`; shutting down, with 1001.
 - **`ts`** is the browser's `performance.now()` in milliseconds.
 - **Images are base64 PNG** at the size each control's `image` output declares. The virtual deck declares 144 × 144 so keys stay sharp on high-density screens.

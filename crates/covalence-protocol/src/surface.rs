@@ -143,6 +143,16 @@ pub enum ImageFormat {
     Rgb,
 }
 
+/// `surface.level` params (core → host, ntf), for `level` outputs: motor
+/// faders, encoder rings, meters.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SurfaceLevel {
+    pub surface: String,
+    pub control: String,
+    /// 0 to 1.
+    pub value: f64,
+}
+
 /// `surface.draw` params (core → host, ntf), for `image` outputs.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SurfaceDraw {

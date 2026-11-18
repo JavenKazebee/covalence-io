@@ -165,6 +165,7 @@ pub mod core_to_host {
             "io.data" => IoData(io::IoData),
             "io.state" => IoState(io::IoState),
             "surface.draw" => SurfaceDraw(surface::SurfaceDraw),
+            "surface.level" => SurfaceLevel(surface::SurfaceLevel),
         }
     }
 }

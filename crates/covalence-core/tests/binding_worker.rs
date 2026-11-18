@@ -17,8 +17,8 @@ use covalence_core::state::{Meta, Quality, Source, StatePath};
 use covalence_core::surface::gesture::Timing;
 use covalence_core::surface::render::{Look, Renderer, Rgb};
 use covalence_core::surface::{
-    Attach, ControlDef, Draw, ImageDef, Input, InputCap, Link, OutputCap, Placement, Surface,
-    Surfaces,
+    Attach, ControlDef, Draw, ImageDef, Input, InputCap, Link, Output, OutputCap, Placement,
+    Surface, Surfaces,
 };
 use covalence_protocol::Value;
 use covalence_protocol::state::PathSegment;
@@ -50,6 +50,7 @@ fn world() -> World {
                 serial: None,
                 start_layer: Some(CAMS.into()),
                 provider: None,
+                virtual_layout: None,
             })
             .unwrap();
     }
@@ -129,8 +130,10 @@ fn source(segments: &[&str]) -> serde_json::Value {
 /// Draws waiting, by control: the last image each control got.
 fn draws(link: &mut Link) -> BTreeMap<String, Vec<u8>> {
     let mut out = BTreeMap::new();
-    while let Ok(Draw { control, image, .. }) = link.draws.try_recv() {
-        out.insert(control, image);
+    while let Ok(output) = link.outputs.try_recv() {
+        if let Output::Image(Draw { control, image, .. }) = output {
+            out.insert(control, image);
+        }
     }
     out
 }
@@ -421,6 +424,7 @@ async fn bench_a_full_page_of_expr_bindings() {
                 serial: None,
                 start_layer: Some(page.clone()),
                 provider: None,
+                virtual_layout: None,
             })
             .unwrap();
         let keys = cols * rows;
@@ -448,7 +452,7 @@ async fn bench_a_full_page_of_expr_bindings() {
             set(&w.shared, path("vars", &["n"]), n.into());
             let mut got = 0;
             while got < keys {
-                link.draws.recv().await.unwrap();
+                link.outputs.recv().await.unwrap();
                 got += 1;
             }
             times.push(start.elapsed());
@@ -696,4 +700,138 @@ async fn a_toggle_helper_latches_a_key_and_its_events_start_flows() {
         ]
     );
     runtime.shutdown().await;
+}
+
+/// Levels sent, in order: `(control, value)`.
+fn levels(link: &mut Link) -> Vec<(String, f64)> {
+    let mut out = Vec::new();
+    while let Ok(output) = link.outputs.try_recv() {
+        if let Output::Level { control, value } = output {
+            out.push((control, value));
+        }
+    }
+    out
+}
+
+/// ADR 0035: a `value` binding drives a `level` output. Each level sent is
+/// written to `requested.level`, with `cause` → what the binding read; an
+/// unchanged or `undefined` value sends nothing.
+#[tokio::test]
+async fn a_value_binding_sets_a_level_and_records_what_was_sent() {
+    use covalence_core::journal::Record;
+    use covalence_core::surface::{VirtualLayout, virtual_controls};
+
+    const MIX: &str = "01JC5PAGE00000000000000003";
+    let w = world();
+    let controls = virtual_controls(Some(&VirtualLayout {
+        encoders: 2,
+        faders: 2,
+        motor: true,
+    }));
+    assert_eq!(
+        controls
+            .iter()
+            .map(|c| c.id.as_str())
+            .skip(15)
+            .collect::<Vec<_>>(),
+        ["e0", "e1", "f0", "f1"]
+    );
+    w.surfaces
+        .set_layer(covalence_core::surface::Layer {
+            id: MIX.into(),
+            name: "mix".into(),
+            slug: "mix".into(),
+            controls: controls.iter().map(ControlDef::to_layer_control).collect(),
+        })
+        .unwrap();
+    set(&w.shared, path(VH, &["mixer", "ch1"]), 0.25.into());
+    w.surfaces.set_binding(binding(
+        "b1",
+        MIX,
+        "f0",
+        json!({ "value": { "ref": source(&["mixer", "ch1"]) } }),
+    ));
+    // Out of range is held to 0…1.
+    w.surfaces
+        .set_binding(binding("b2", MIX, "e0", json!({ "value": 3 })));
+    // Nothing to read: no level is sent.
+    w.surfaces.set_binding(binding(
+        "b3",
+        MIX,
+        "f1",
+        json!({ "value": { "ref": source(&["mixer", "ch9"]) } }),
+    ));
+
+    let mut link = w
+        .surfaces
+        .attach(
+            DECK,
+            Attach {
+                model: "virtual.deck15".into(),
+                serial: None,
+                name: "Virtual deck".into(),
+                controls,
+            },
+        )
+        .unwrap();
+    w.surfaces
+        .show(DECK, Some(MIX), covalence_core::journal::Origin::system())
+        .unwrap();
+    w.surfaces.flush().await;
+    assert_eq!(
+        levels(&mut link),
+        [("e0".to_owned(), 1.0), ("f0".to_owned(), 0.25)]
+    );
+    let requested = |control: &str| {
+        w.shared.state.value(&path(
+            "surface",
+            &["deck", "controls", control, "requested", "level"],
+        ))
+    };
+    assert_eq!(requested("f0"), Some(0.25.into()));
+    assert_eq!(requested("f1"), None);
+
+    // `why` on the level reaches what the binding read (seq 1 here).
+    let entries = w.shared.journal.range(1, 10_000).unwrap();
+    let sent = entries
+        .iter()
+        .rev()
+        .find(|e| matches!(&e.record, Record::StatePatch(p) if p.ops.iter().any(|op| format!("{op:?}").contains("\"f0\""))))
+        .unwrap();
+    assert_eq!(sent.cause, Some(1));
+
+    set(&w.shared, path(VH, &["mixer", "ch1"]), 0.5.into());
+    w.surfaces.flush().await;
+    assert_eq!(levels(&mut link), [("f0".to_owned(), 0.5)]);
+    assert_eq!(requested("f0"), Some(0.5.into()));
+
+    // The same value again sends nothing.
+    set(&w.shared, path(VH, &["mixer", "ch1"]), 0.5.into());
+    w.surfaces.flush().await;
+    assert!(levels(&mut link).is_empty());
+}
+
+#[test]
+fn a_value_needs_a_level_output_and_a_number() {
+    let layers: BTreeMap<String, covalence_core::surface::Layer> =
+        [(CAMS.to_owned(), common::deck_layer(CAMS, "cams", 5, 3))].into();
+    let conns = [VH.to_owned()].into();
+    let ctx = covalence_core::binding::Context {
+        layers: &layers,
+        conns: &conns,
+        taken: &Default::default(),
+        evaluator: &covalence_core::expr::QuickJs::default(),
+    };
+    let codes = |props| {
+        covalence_core::binding::validate(&binding("b", CAMS, "k0", props), &ctx)
+            .errors
+            .iter()
+            .map(|p| serde_json::to_value(p).unwrap()["code"].clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(codes(json!({ "value": 0.5 })), [json!("noOutput")]);
+    assert_eq!(
+        codes(json!({ "value": "loud" })),
+        [json!("noOutput"), json!("badValue")]
+    );
 }

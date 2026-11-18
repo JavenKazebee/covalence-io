@@ -254,6 +254,9 @@ fn prop_json(
         Some(PropValue::Color(color)) => {
             out.insert("value".into(), json!(hex(*color)));
         }
+        Some(PropValue::Level(level)) => {
+            out.insert("value".into(), json!(level));
+        }
         None => {}
     }
     if let Some(error) = &evaluated.error {

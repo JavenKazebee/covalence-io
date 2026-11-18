@@ -4,7 +4,8 @@
 //! JSON text frames, with images as base64 PNG.
 //!
 //! The first message must be `surface.attach` with the surface's slug.
-//! After that the browser sends `surface.input` and gets `surface.draw`.
+//! After that the browser sends `surface.input` and gets `surface.draw` and
+//! `surface.level`.
 //! Anything else closes the socket with a policy error and a reason, as
 //! does the surface being attached again elsewhere or deleted. The socket
 //! closing detaches the surface.
@@ -18,7 +19,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use covalence_core::surface::{Attach, Draw, Input, Link, Surface};
+use covalence_core::surface::{Attach, Input, Link, Output, Surface};
 use serde::Deserialize;
 use serde_json::{Value as JsonValue, json};
 
@@ -89,10 +90,10 @@ async fn attach(app: &App, surface: &Surface, socket: &mut WebSocket) -> Result<
         .map_err(|e| Close::policy(format!("cannot attach: {e}")))
 }
 
-/// Carries input to the core and draws to the browser until either side
+/// Carries input to the core and outputs to the browser until either side
 /// stops. `None` when the browser has gone.
 async fn run(app: &App, surface: &Surface, socket: &mut WebSocket, link: Link) -> Option<Close> {
-    let Link { input, mut draws } = link;
+    let Link { input, mut outputs } = link;
     let mut closing = app.closing.subscribe();
     loop {
         tokio::select! {
@@ -113,9 +114,9 @@ async fn run(app: &App, surface: &Surface, socket: &mut WebSocket, link: Link) -
                 Ok(None) => return None,
                 Err(close) => return Some(close),
             },
-            draw = draws.recv() => match draw {
-                Some(draw) => {
-                    if socket.send(draw_message(surface, draw)).await.is_err() {
+            output = outputs.recv() => match output {
+                Some(output) => {
+                    if socket.send(output_message(surface, output)).await.is_err() {
                         return None;
                     }
                 }
@@ -174,15 +175,25 @@ fn params_for<T: serde::de::DeserializeOwned>(
         .map_err(|e| Close::policy(format!("bad params: {e}")))
 }
 
-fn draw_message(surface: &Surface, draw: Draw) -> Message {
-    let message = json!({
-        "method": "surface.draw",
-        "params": {
-            "surface": surface.slug,
-            "control": draw.control,
-            "format": draw.format,
-            "image": BASE64.encode(draw.image),
-        },
-    });
+fn output_message(surface: &Surface, output: Output) -> Message {
+    let message = match output {
+        Output::Image(draw) => json!({
+            "method": "surface.draw",
+            "params": {
+                "surface": surface.slug,
+                "control": draw.control,
+                "format": draw.format,
+                "image": BASE64.encode(draw.image),
+            },
+        }),
+        Output::Level { control, value } => json!({
+            "method": "surface.level",
+            "params": {
+                "surface": surface.slug,
+                "control": control,
+                "value": value,
+            },
+        }),
+    };
     Message::Text(message.to_string().into())
 }

@@ -1,9 +1,10 @@
 // The browser's virtual deck as a surface (surfaces spec §4): it attaches
-// over `GET /surface/{id}`, sends key input with the browser's timestamps,
-// and shows the key images the core draws.
+// over `GET /surface/{id}`, sends input with the browser's timestamps, and
+// shows the key images and levels the core sets. Besides its keys it can
+// have encoders and faders (ADR 0035).
 
 import type { Socket } from "../live/client";
-import { deckControls, type Model } from "./model";
+import { deckControls, type Model, type VirtualLayout } from "./model";
 
 export interface DeckState {
   status: "connecting" | "attached" | "closed";
@@ -15,6 +16,12 @@ export interface DeckState {
   images: Record<string, string>;
   /** Controls held down right now. */
   down: Record<string, boolean>;
+  /** The level the core last set on each `level` output, 0 to 1. */
+  levels: Record<string, number>;
+  /** Faders touched right now. */
+  touched: Record<string, boolean>;
+  /** Where each fader was last moved to by hand, 0 to 1. */
+  positions: Record<string, number>;
 }
 
 export interface DeckOptions {
@@ -27,23 +34,34 @@ export interface DeckOptions {
 }
 
 export function newDeckState(): DeckState {
-  return { status: "connecting", reason: null, retrying: false, images: {}, down: {} };
+  return { status: "connecting", reason: null, retrying: false, images: {}, down: {}, levels: {}, touched: {}, positions: {} };
+}
+
+/**
+ * Where a fader shows: under the hand while it's touched, else at its level
+ * if it has a motor, else where it was left.
+ */
+export function faderPosition(state: DeckState, control: string, motor: boolean): number {
+  const hand = state.positions[control];
+  if (state.touched[control] || !motor) return hand ?? 0;
+  return state.levels[control] ?? hand ?? 0;
 }
 
 /**
  * `surface.attach` for a deck of `model` (plugin protocol §8): one key per
- * cell, each `momentary` with an `image`, placed with `at`.
+ * cell, each `momentary` with an `image`, placed with `at`, and `layout`'s
+ * encoders and faders.
  */
-export function attachMessage(slug: string, name: string, modelId: string, model: Model) {
+export function attachMessage(slug: string, name: string, modelId: string, model: Model, layout?: VirtualLayout) {
   return {
     method: "surface.attach",
     params: {
       surface: slug,
       model: modelId,
       name,
-      controls: deckControls(model).map((c) => ({
+      controls: deckControls(model, layout).map((c) => ({
         ...c,
-        outputs: [{ kind: "image", w: model.key, h: model.key, format: "png" }],
+        outputs: (c.outputs ?? []).map((o) => (o.kind === "image" ? { kind: "image", w: model.key, h: model.key, format: "png" } : o)),
       })),
     },
   };
@@ -70,7 +88,7 @@ export class DeckClient {
   constructor(
     private readonly state: DeckState,
     private readonly surface: { id: string; slug: string; name: string },
-    private readonly model: { id: string; model: Model },
+    private readonly model: { id: string; model: Model; layout?: VirtualLayout },
     options: DeckOptions = {},
   ) {
     const scheme = typeof location !== "undefined" && location.protocol === "https:" ? "wss:" : "ws:";
@@ -115,6 +133,38 @@ export class DeckClient {
     this.send({ method: "surface.input", params: { surface: this.surface.slug, control, kind: "up", ts: this.now() } });
   }
 
+  /** An encoder turned by whole detents, clockwise positive. */
+  turn(control: string, detents: number) {
+    if (detents === 0 || !Number.isInteger(detents)) return;
+    this.input(control, "turn", detents);
+  }
+
+  /** A fader touched or let go. It reports its position only while touched. */
+  touch(control: string, touched: boolean) {
+    if (Boolean(this.state.touched[control]) === touched) return;
+    if (!touched) {
+      delete this.state.touched[control];
+      this.input(control, "touch", 0);
+      return;
+    }
+    if (this.input(control, "touch", 1)) {
+      this.state.touched[control] = true;
+      // It starts from where it shows.
+      if (this.state.positions[control] === undefined && this.state.levels[control] !== undefined) {
+        this.state.positions[control] = this.state.levels[control];
+      }
+    }
+  }
+
+  /** A touched fader moved to `value`, 0 to 1. */
+  move(control: string, value: number) {
+    if (!this.state.touched[control]) return;
+    const v = Math.min(1, Math.max(0, value));
+    if (this.state.positions[control] === v) return;
+    this.state.positions[control] = v;
+    this.input(control, "value", v);
+  }
+
   private open() {
     this.state.status = "connecting";
     this.state.retrying = false;
@@ -124,15 +174,19 @@ export class DeckClient {
       if (socket !== this.socket) return;
       this.attempt = 0;
       this.state.reason = null;
-      socket.send(JSON.stringify(attachMessage(this.surface.slug, this.surface.name, this.model.id, this.model.model)));
+      socket.send(
+        JSON.stringify(attachMessage(this.surface.slug, this.surface.name, this.model.id, this.model.model, this.model.layout)),
+      );
       this.state.status = "attached";
     };
     socket.onmessage = (ev) => {
       if (socket !== this.socket) return;
-      const message = JSON.parse(String(ev.data)) as { method?: string; params?: { control?: string; image?: string } };
-      const { control, image } = message.params ?? {};
+      const message = JSON.parse(String(ev.data)) as { method?: string; params?: { control?: string; image?: string; value?: number } };
+      const { control, image, value } = message.params ?? {};
       if (message.method === "surface.draw" && control !== undefined && image !== undefined) {
         this.state.images[control] = `data:image/png;base64,${image}`;
+      } else if (message.method === "surface.level" && control !== undefined && typeof value === "number") {
+        this.state.levels[control] = value;
       }
     };
     socket.onclose = (ev) => {
@@ -159,6 +213,11 @@ export class DeckClient {
 
   private released() {
     for (const control of Object.keys(this.state.down)) delete this.state.down[control];
+    for (const control of Object.keys(this.state.touched)) delete this.state.touched[control];
+  }
+
+  private input(control: string, kind: string, value: number): boolean {
+    return this.send({ method: "surface.input", params: { surface: this.surface.slug, control, kind, value, ts: this.now() } });
   }
 
   private send(message: unknown): boolean {

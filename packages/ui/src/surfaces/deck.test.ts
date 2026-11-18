@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Socket } from "../live/client";
-import { DeckClient, newDeckState } from "./deck";
-import { models } from "./model";
+import { DeckClient, faderPosition, newDeckState } from "./deck";
+import { models, type VirtualLayout } from "./model";
 
 class FakeSocket implements Socket {
   readyState = 0;
@@ -28,14 +28,14 @@ class FakeSocket implements Socket {
   }
 }
 
-function setup() {
+function setup(layout?: VirtualLayout) {
   const sockets: FakeSocket[] = [];
   const state = newDeckState();
   let now = 100;
   const deck = new DeckClient(
     state,
     { id: "01S", slug: "foh", name: "FOH deck" },
-    { id: "virtual.deck15", model: models["virtual.deck15"]! },
+    { id: "virtual.deck15", model: models["virtual.deck15"]!, layout },
     {
       url: "ws://test/surface/01S",
       connect: () => {
@@ -136,6 +136,59 @@ describe("virtual deck", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("attaches encoders beneath the keys and faders beside them", () => {
+    const { deck, sockets } = setup({ encoders: 2, faders: 1 });
+    deck.start();
+    sockets[0]!.open();
+    const controls = (sockets[0]!.sent[0] as { params: { controls: { id: string }[] } }).params.controls;
+    expect(controls.slice(15)).toEqual([
+      { id: "e0", at: { x: 0, y: 3 }, inputs: [{ kind: "relative" }, { kind: "momentary" }], outputs: [{ kind: "level" }] },
+      { id: "e1", at: { x: 1, y: 3 }, inputs: [{ kind: "relative" }, { kind: "momentary" }], outputs: [{ kind: "level" }] },
+      { id: "f0", at: { x: 5, y: 0, h: 3 }, inputs: [{ kind: "absolute" }, { kind: "touch" }], outputs: [{ kind: "level", motor: true }] },
+    ]);
+  });
+
+  it("turns encoders and reports a fader only while it's touched", () => {
+    const { deck, state, sockets } = setup({ encoders: 1, faders: 1 });
+    deck.start();
+    sockets[0]!.open();
+    deck.turn("e0", -2);
+    deck.move("f0", 0.4);
+    deck.touch("f0", true);
+    deck.move("f0", 0.4);
+    deck.move("f0", 1.5);
+    deck.touch("f0", false);
+    const input = (kind: string, control: string, value: number) => ({
+      method: "surface.input",
+      params: { surface: "foh", control, kind, value, ts: 100 },
+    });
+    expect(sockets[0]!.sent.slice(1)).toEqual([
+      input("turn", "e0", -2),
+      input("touch", "f0", 1),
+      input("value", "f0", 0.4),
+      input("value", "f0", 1),
+      input("touch", "f0", 0),
+    ]);
+    expect(state.touched).toEqual({});
+  });
+
+  it("moves a motor fader to its level unless a hand is on it", () => {
+    const { deck, state, sockets } = setup({ faders: 1 });
+    deck.start();
+    sockets[0]!.open();
+    sockets[0]!.receive({ method: "surface.level", params: { surface: "foh", control: "f0", value: 0.7 } });
+    expect(state.levels.f0).toBe(0.7);
+    expect(faderPosition(state, "f0", true)).toBe(0.7);
+    expect(faderPosition(state, "f0", false)).toBe(0);
+    deck.touch("f0", true);
+    expect(faderPosition(state, "f0", true)).toBe(0.7);
+    deck.move("f0", 0.2);
+    sockets[0]!.receive({ method: "surface.level", params: { surface: "foh", control: "f0", value: 0.9 } });
+    expect(faderPosition(state, "f0", true)).toBe(0.2);
+    deck.touch("f0", false);
+    expect(faderPosition(state, "f0", true)).toBe(0.9);
   });
 
   it("detaches on stop by closing the socket", () => {

@@ -2,9 +2,9 @@
 //!
 //! [`Surfaces`] holds the `surface` and `layer` entities and the surfaces
 //! attached right now. It doesn't know how a surface is connected: a
-//! transport (the web surface's WebSocket, later the plugin host) attaches
-//! one with its controls, feeds it [`Input`] and sends on the [`Draw`]s it
-//! gets back.
+//! transport (the web surface's WebSocket, or the plugin host) attaches one
+//! with its controls, feeds it [`Input`] and sends on the [`Output`]s it gets
+//! back: images and levels.
 //!
 //! What a surface shows is drawn by the binding worker
 //! ([`crate::binding::worker`]), which evaluates the bindings of the layer it
@@ -51,8 +51,8 @@ pub const SURFACE_ENTITY: &str = "surface";
 pub const LAYER_ENTITY: &str = "layer";
 /// The state root for surfaces: `{conn: "surface", path: [slug, ...]}`.
 pub const STATE_ROOT: &str = "surface";
-/// How many draws wait for a slow transport before more are dropped.
-const DRAW_BACKLOG: usize = 256;
+/// How many outputs wait for a slow transport before more are dropped.
+const OUTPUT_BACKLOG: usize = 256;
 /// How much input waits for a busy core.
 const INPUT_BACKLOG: usize = 256;
 /// The most controls a surface can declare.
@@ -89,6 +89,94 @@ pub struct Surface {
     /// (plugin protocol §8).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
+    /// A virtual surface's encoders and faders, beside its 15 keys (ADR 0035).
+    #[serde(default, rename = "virtual", skip_serializing_if = "Option::is_none")]
+    pub virtual_layout: Option<VirtualLayout>,
+}
+
+/// The model of the browser's virtual deck.
+pub const VIRTUAL_DECK: &str = "virtual.deck15";
+/// The most encoders, or faders, a virtual surface can have.
+pub const MAX_VIRTUAL: u8 = 4;
+/// The virtual deck's key images, in pixels a side.
+const VIRTUAL_KEY: u32 = 144;
+
+/// What a virtual surface has besides its keys (ADR 0035).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct VirtualLayout {
+    /// `e0`…`e3`, a row beneath the keys: `relative` + `momentary`, with a
+    /// `level` output for the ring.
+    #[serde(default)]
+    pub encoders: u8,
+    /// `f0`…`f3`, to the right of the keys, three cells tall: `absolute` +
+    /// `touch`, with a `level` output.
+    #[serde(default)]
+    pub faders: u8,
+    /// Whether the faders' `level` moves them.
+    #[serde(default = "yes")]
+    pub motor: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+impl Default for VirtualLayout {
+    fn default() -> Self {
+        VirtualLayout {
+            encoders: 0,
+            faders: 0,
+            motor: true,
+        }
+    }
+}
+
+/// The controls the browser's virtual deck attaches with (surfaces spec §8,
+/// ADR 0035): keys `k0`…`k14` in 5 × 3, then the layout's encoders and
+/// faders. The UI builds the same list (`packages/ui/src/surfaces/model.ts`).
+pub fn virtual_controls(layout: Option<&VirtualLayout>) -> Vec<ControlDef> {
+    let layout = layout.copied().unwrap_or_default();
+    let mut controls: Vec<ControlDef> = (0..15)
+        .map(|i| ControlDef {
+            id: format!("k{i}"),
+            label: None,
+            at: Placement::at(i % 5, i / 5),
+            inputs: vec![InputCap::Momentary { velocity: false }],
+            outputs: vec![OutputCap::Image(ImageDef {
+                w: VIRTUAL_KEY,
+                h: VIRTUAL_KEY,
+                format: "png".into(),
+                rotation: 0,
+            })],
+        })
+        .collect();
+    for i in 0..u32::from(layout.encoders.min(MAX_VIRTUAL)) {
+        controls.push(ControlDef {
+            id: format!("e{i}"),
+            label: None,
+            at: Placement::at(i, 3),
+            inputs: vec![InputCap::Relative, InputCap::Momentary { velocity: false }],
+            outputs: vec![OutputCap::Level { motor: false }],
+        });
+    }
+    for i in 0..u32::from(layout.faders.min(MAX_VIRTUAL)) {
+        controls.push(ControlDef {
+            id: format!("f{i}"),
+            label: None,
+            at: Placement {
+                x: 5 + i,
+                y: 0,
+                w: None,
+                h: Some(3),
+            },
+            inputs: vec![InputCap::Absolute { axes: None }, InputCap::Touch],
+            outputs: vec![OutputCap::Level {
+                motor: layout.motor,
+            }],
+        });
+    }
+    controls
 }
 
 /// A set of control bindings on the controls it covers (surfaces spec §1).
@@ -390,13 +478,30 @@ pub struct Draw {
     pub image: Vec<u8>,
 }
 
+/// What the core sets on a control (ADR 0035): `surface.draw` for an image,
+/// `surface.level` for a level. One channel keeps them in order.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Output {
+    Image(Draw),
+    Level { control: String, value: f64 },
+}
+
+impl Output {
+    pub fn control(&self) -> &str {
+        match self {
+            Output::Image(draw) => &draw.control,
+            Output::Level { control, .. } => control,
+        }
+    }
+}
+
 /// An attached surface's half of the connection to the core.
 pub struct Link {
     /// Input from the device. Dropping it detaches the surface.
     pub input: mpsc::Sender<Input>,
-    /// Images to show. Closes when the surface is detached by the core:
+    /// What to show. Closes when the surface is detached by the core:
     /// replaced by a newer attach, or deleted.
-    pub draws: mpsc::Receiver<Draw>,
+    pub outputs: mpsc::Receiver<Output>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -415,7 +520,7 @@ pub enum ShowError {
     UnknownSurface(SurfaceId),
     #[error("no layer {0}")]
     UnknownLayer(LayerId),
-    #[error("layer {layer} doesn't fit: the surface has no key for {}", missing.join(", "))]
+    #[error("layer {layer} doesn't fit: the surface lacks {}", missing.join(", "))]
     DoesNotFit {
         layer: LayerId,
         missing: Vec<String>,
@@ -456,7 +561,7 @@ struct Attached {
     /// Tells a replaced attach's task apart from the current one.
     session: u64,
     attach: Attach,
-    draws: mpsc::Sender<Draw>,
+    outputs: mpsc::Sender<Output>,
     /// Input applied as if the device sent it (surfaces spec §4.5).
     inject: mpsc::Sender<Injection>,
     /// Dropped to stop the task when the attach is replaced or deleted.
@@ -488,7 +593,7 @@ impl Surfaces {
     pub fn new(shared: Shared, timing: Timing) -> Self {
         Surfaces {
             inner: Arc::new(Inner {
-                bindings: Bindings::start(shared.state.clone()),
+                bindings: Bindings::start(shared.clone()),
                 shared,
                 timing,
                 book: Mutex::new(Book::default()),
@@ -533,6 +638,8 @@ impl Surfaces {
                 let mut ops = vec![(StatePath::new(STATE_ROOT, vec![key(&old.slug)]), None)];
                 ops.extend(inner.surface_state(&book, &surface.id));
                 inner.patch(Origin::system(), None, ops)?;
+                // Its levels are written again under the new slug.
+                inner.show_on(&book, &surface.id);
             }
             _ => {}
         }
@@ -720,13 +827,13 @@ impl Surfaces {
     }
 
     /// Attaches a surface. A surface already attached is replaced: its
-    /// [`Link::draws`] closes. Must be called inside a tokio runtime.
+    /// [`Link::outputs`] closes. Must be called inside a tokio runtime.
     pub fn attach(&self, surface: &str, attach: Attach) -> Result<Link, AttachError> {
         check_attach(&attach)?;
         let inner = &self.inner;
         let session = inner.sessions.fetch_add(1, Ordering::Relaxed);
         let (input_tx, input_rx) = mpsc::channel(INPUT_BACKLOG);
-        let (draws_tx, draws_rx) = mpsc::channel(DRAW_BACKLOG);
+        let (outputs_tx, outputs_rx) = mpsc::channel(OUTPUT_BACKLOG);
         let (stop_tx, stop_rx) = oneshot::channel();
         let (inject_tx, inject_rx) = mpsc::channel(INPUT_BACKLOG);
 
@@ -753,7 +860,7 @@ impl Surfaces {
             Attached {
                 session,
                 attach,
-                draws: draws_tx,
+                outputs: outputs_tx,
                 inject: inject_tx,
                 _stop: stop_tx,
             },
@@ -774,7 +881,7 @@ impl Surfaces {
         ));
         Ok(Link {
             input: input_tx,
-            draws: draws_rx,
+            outputs: outputs_rx,
         })
     }
 }
@@ -895,6 +1002,24 @@ pub fn validate_surface(
             "model is required",
         ));
     }
+    if let Some(v) = &surface.virtual_layout {
+        if surface.model != VIRTUAL_DECK {
+            errors.push(Problem::new(
+                vec![key("virtual")],
+                Code::Invalid,
+                format!("only a {VIRTUAL_DECK} surface has a virtual layout"),
+            ));
+        }
+        for (name, n) in [("encoders", v.encoders), ("faders", v.faders)] {
+            if n > MAX_VIRTUAL {
+                errors.push(Problem::new(
+                    vec![key("virtual"), key(name)],
+                    Code::Invalid,
+                    format!("a virtual surface can have at most {MAX_VIRTUAL} {name}"),
+                ));
+            }
+        }
+    }
     if let Some(layer) = &surface.start_layer
         && !layers.contains_key(layer)
     {
@@ -1000,6 +1125,21 @@ pub(crate) fn named(kind: &str, name: &str, slug: &str, taken: &BTreeSet<String>
 
 fn key(k: &str) -> PathSegment {
     PathSegment::Key(k.to_owned())
+}
+
+/// `surface.<slug>.controls.<id>.requested.level`: what the core last sent
+/// a `level` output (surfaces spec §4.4).
+pub(crate) fn requested_level_path(slug: &str, control: &str) -> StatePath {
+    StatePath::new(
+        STATE_ROOT,
+        vec![
+            key(slug),
+            key("controls"),
+            key(control),
+            key("requested"),
+            key("level"),
+        ],
+    )
 }
 
 fn surface_origin(surface: &str) -> Origin {
@@ -1638,9 +1778,10 @@ impl Inner {
             let layer = book.shown.get(surface).cloned().flatten();
             self.bindings.show(
                 surface,
+                &book.surfaces[surface].slug,
                 layer,
                 attached.attach.controls.clone(),
-                attached.draws.clone(),
+                attached.outputs.clone(),
             );
         }
     }
@@ -1680,6 +1821,44 @@ mod tests {
             slug: "cams".into(),
             controls,
         }
+    }
+
+    #[test]
+    fn a_virtual_layout_is_for_the_virtual_deck_with_up_to_four_of_each() {
+        let surface = |model: &str, json: serde_json::Value| Surface {
+            id: "s".into(),
+            name: "Deck".into(),
+            slug: "deck".into(),
+            model: model.into(),
+            serial: None,
+            start_layer: None,
+            provider: None,
+            virtual_layout: Some(serde_json::from_value(json).unwrap()),
+        };
+        let check = |s: &Surface| codes(&validate_surface(s, &BTreeSet::new(), &BTreeMap::new()));
+        let ok = surface(
+            VIRTUAL_DECK,
+            serde_json::json!({ "encoders": 4, "faders": 2 }),
+        );
+        assert!(ok.virtual_layout.unwrap().motor, "motor defaults to true");
+        assert!(check(&ok).is_empty());
+        assert!(
+            check_attach(&Attach {
+                model: VIRTUAL_DECK.into(),
+                serial: None,
+                name: "Deck".into(),
+                controls: virtual_controls(ok.virtual_layout.as_ref()),
+            })
+            .is_ok()
+        );
+        assert_eq!(
+            check(&surface(VIRTUAL_DECK, serde_json::json!({ "faders": 5 }))),
+            [(serde_json::json!(["virtual", "faders"]), "invalid".into())]
+        );
+        assert_eq!(
+            check(&surface("elgato.mk2", serde_json::json!({}))),
+            [(serde_json::json!(["virtual"]), "invalid".into())]
+        );
     }
 
     #[test]

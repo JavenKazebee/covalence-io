@@ -19,7 +19,22 @@ export interface Surface {
   startLayer?: string;
   /** The connection whose device this is, for a surface a plugin provides. */
   provider?: string;
+  /** A virtual deck's encoders and faders, beside its keys (ADR 0035). */
+  virtual?: VirtualLayout;
 }
+
+/** What a virtual deck has besides its keys. Mirrors `covalence_core::surface::VirtualLayout`. */
+export interface VirtualLayout {
+  /** `e0`…`e3`, a row beneath the keys. Default 0. */
+  encoders?: number;
+  /** `f0`…`f3`, to the right of the keys, as tall as the deck. Default 0. */
+  faders?: number;
+  /** Whether the faders' level moves them. Default true. */
+  motor?: boolean;
+}
+
+/** The most encoders, or faders, a virtual deck can have. */
+export const MAX_VIRTUAL = 4;
 
 /** Where a control is, in grid cells. `w` and `h` default to 1. */
 export interface Placement {
@@ -38,7 +53,7 @@ export interface ControlDef {
   label?: string;
   at: Placement;
   inputs?: { kind: InputKind }[];
-  outputs?: { kind: OutputKind }[];
+  outputs?: { kind: OutputKind; motor?: boolean }[];
 }
 
 /** A control a layer covers, and what it needs that control to do. */
@@ -88,15 +103,40 @@ export function keysOf(layout: Layout): string[] {
   return Array.from({ length: layout.cols * layout.rows }, (_, i) => `k${i}`);
 }
 
-/** The controls a deck of `model` attaches with (surfaces spec §8). */
-export function deckControls(model: Model): ControlDef[] {
-  const { cols } = model.layout;
-  return keysOf(model.layout).map((id, i) => ({
+/**
+ * The controls a deck of `model` attaches with (surfaces spec §8): its keys,
+ * then `layout`'s encoders in a row beneath them and faders to their right
+ * (ADR 0035). The core builds the same list (`virtual_controls`).
+ */
+export function deckControls(model: Model, layout: VirtualLayout = {}): ControlDef[] {
+  const { cols, rows } = model.layout;
+  const keys: ControlDef[] = keysOf(model.layout).map((id, i) => ({
     id,
     at: { x: i % cols, y: Math.floor(i / cols) },
     inputs: [{ kind: "momentary" }],
     outputs: [{ kind: "image" }],
   }));
+  const count = (n: number | undefined) => Math.max(0, Math.min(MAX_VIRTUAL, n ?? 0));
+  const encoders: ControlDef[] = Array.from({ length: count(layout.encoders) }, (_, i) => ({
+    id: `e${i}`,
+    at: { x: i, y: rows },
+    inputs: [{ kind: "relative" }, { kind: "momentary" }],
+    outputs: [{ kind: "level" }],
+  }));
+  const motor = layout.motor ?? true;
+  const faders: ControlDef[] = Array.from({ length: count(layout.faders) }, (_, i) => ({
+    id: `f${i}`,
+    at: { x: cols + i, y: 0, h: rows },
+    inputs: [{ kind: "absolute" }, { kind: "touch" }],
+    outputs: [motor ? { kind: "level", motor: true } : { kind: "level" }],
+  }));
+  return [...keys, ...encoders, ...faders];
+}
+
+/** The controls a virtual surface attaches with, or `undefined` for a model the browser can't be. */
+export function surfaceControls(surface: Pick<Surface, "model" | "virtual">): ControlDef[] | undefined {
+  const model = models[surface.model];
+  return model === undefined ? undefined : deckControls(model, surface.virtual);
 }
 
 /** What a new layer copies from a surface's control. */

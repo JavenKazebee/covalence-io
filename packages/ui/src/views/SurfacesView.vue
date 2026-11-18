@@ -7,7 +7,7 @@ import { useLiveState } from "../live/useLiveState";
 import { hrefOf, navigate } from "../nav";
 import { useCatalogStore } from "../stores/catalog";
 import { useSurfacesStore } from "../stores/surfaces";
-import { deckControls, missingControls, models, toLayerControl, VIRTUAL_DECK, virtualDeck, type ControlDef } from "../surfaces/model";
+import { deckControls, missingControls, models, surfaceControls, toLayerControl, VIRTUAL_DECK, virtualDeck, type ControlDef } from "../surfaces/model";
 
 defineProps<{ surface?: string; layer?: string; control?: string }>();
 
@@ -76,9 +76,10 @@ async function controlsFrom(from: string): Promise<ControlDef[]> {
     } catch (e) {
       if (!(e instanceof ApiError && e.status === 404)) throw e;
     }
-    const model = models[surfaces.surface(id)?.model ?? ""];
-    if (model === undefined) throw new Error("That surface hasn't attached yet, so its controls aren't known.");
-    return deckControls(model);
+    const surface = surfaces.surface(id);
+    const controls = surface === undefined ? undefined : surfaceControls(surface);
+    if (controls === undefined) throw new Error("That surface hasn't attached yet, so its controls aren't known.");
+    return controls;
   }
   return deckControls(models[id] ?? virtualDeck);
 }
