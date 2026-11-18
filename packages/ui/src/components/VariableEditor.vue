@@ -5,7 +5,6 @@ import type { ShownProblem } from "../flows/model";
 import { useLiveState } from "../live/useLiveState";
 import { hrefOf, navigate } from "../nav";
 import type { Json, Source } from "../sources/model";
-import { useCatalogStore } from "../stores/catalog";
 import {
   blankVariable,
   kindNames,
@@ -16,7 +15,6 @@ import {
   reducers,
   reducerSource,
   schemaTypes,
-  varsRef,
   withKind,
   type CellProblem,
   type Kind,
@@ -25,6 +23,7 @@ import {
   type Sink,
   type Variable,
 } from "../variables/model";
+import SinksEditor from "./SinksEditor.vue";
 import SourceInput from "./SourceInput.vue";
 
 /**
@@ -35,7 +34,6 @@ import SourceInput from "./SourceInput.vue";
 const props = defineProps<{ id: string; variables: readonly Variable[]; problem?: CellProblem }>();
 const emit = defineEmits<{ saved: [] }>();
 
-const catalog = useCatalogStore();
 const stored = computed(() => props.variables.find((v) => v.id === props.id));
 const isNew = computed(() => props.id === "new");
 
@@ -128,43 +126,10 @@ const options = jsonText(
     }),
 );
 
-// ---- Sinks ----
-
-const sinks = computed(() => draft.value?.to ?? []);
-function setSinks(to: Sink[]) {
-  patch({ to: to.length === 0 ? undefined : to });
-}
-function addSink(form: "set" | "action") {
-  const conn = catalog.connections.find((c) => !c.builtIn)?.id ?? "";
-  const sink: Sink =
-    form === "set"
-      ? { set: { root: "vars", path: [""] } }
-      : { action: { target: { conn }, action: "", param: "" } };
-  setSinks([...sinks.value, sink]);
-}
-function replaceSink(i: number, sink: Sink) {
-  setSinks(sinks.value.map((s, j) => (j === i ? sink : s)));
-}
-function removeSink(i: number) {
-  setSinks(sinks.value.filter((_, j) => j !== i));
-}
-const setPath = (s: Sink) => ("set" in s ? `vars.${String(s.set.path[0] ?? "")}` : "");
-const actionOf = (s: Sink) => ("action" in s ? s.action : null);
-const connOf = (s: Sink) => {
-  const t = actionOf(s)?.target;
-  return typeof t === "object" && t !== null && "conn" in t ? String(t.conn) : typeof t === "string" ? t : "";
-};
-const manifestOf = (conn: string) => {
-  const c = catalog.connections.find((x) => x.id === conn);
-  return c === undefined ? null : catalog.manifest(c.plugin);
-};
-const actionsOf = (conn: string) => manifestOf(conn)?.actions ?? [];
-const paramsOf = (conn: string, action: string) =>
-  Object.keys(actionsOf(conn).find((a) => a.id === action)?.params.properties ?? {});
-function editAction(i: number, s: Sink, fields: Partial<NonNullable<ReturnType<typeof actionOf>>>) {
-  const a = actionOf(s);
-  if (a !== null) replaceSink(i, { action: { ...a, ...fields } });
-}
+const sinks = computed<Sink[]>({
+  get: () => draft.value?.to ?? [],
+  set: (to) => patch({ to: to.length === 0 ? undefined : to }),
+});
 
 // ---- Live value, saving ----
 
@@ -384,112 +349,10 @@ const otherProblems = computed(() => problems.value.filter((p) => p.path[0] !== 
       class="sinks"
     >
       <h3>Sends its value to</h3>
-      <p
-        v-if="sinks.length === 0"
-        class="muted"
-      >
-        Nowhere. A sink keeps a variable or an action in step with this one, sending on each change.
-      </p>
-      <div
-        v-for="(s, i) in sinks"
-        :key="i"
-        class="row sink"
-      >
-        <template v-if="'set' in s">
-          <div class="field">
-            <label :for="`sink-${i}-set`">Sets</label>
-            <input
-              :id="`sink-${i}-set`"
-              :value="setPath(s)"
-              autocomplete="off"
-              @change="replaceSink(i, { set: varsRef(($event.target as HTMLInputElement).value) ?? s.set })"
-            >
-          </div>
-        </template>
-        <template v-else>
-          <div class="field">
-            <label :for="`sink-${i}-conn`">Connection</label>
-            <select
-              :id="`sink-${i}-conn`"
-              :value="connOf(s)"
-              @change="editAction(i, s, { target: { conn: ($event.target as HTMLSelectElement).value }, action: '', param: '' })"
-            >
-              <option
-                v-for="c in catalog.connections"
-                :key="c.id"
-                :value="c.id"
-              >
-                {{ c.alias }}
-              </option>
-            </select>
-          </div>
-          <div class="field">
-            <label :for="`sink-${i}-action`">Action</label>
-            <select
-              :id="`sink-${i}-action`"
-              :value="actionOf(s)?.action"
-              @change="editAction(i, s, { action: ($event.target as HTMLSelectElement).value, param: '' })"
-            >
-              <option
-                v-for="a in actionsOf(connOf(s))"
-                :key="a.id"
-                :value="a.id"
-              >
-                {{ a.name }}
-              </option>
-            </select>
-          </div>
-          <div class="field">
-            <label :for="`sink-${i}-param`">Value goes to</label>
-            <select
-              :id="`sink-${i}-param`"
-              :value="actionOf(s)?.param"
-              @change="editAction(i, s, { param: ($event.target as HTMLSelectElement).value })"
-            >
-              <option
-                v-for="p in paramsOf(connOf(s), actionOf(s)?.action ?? '')"
-                :key="p"
-                :value="p"
-              >
-                {{ p }}
-              </option>
-            </select>
-          </div>
-          <div class="field">
-            <label :for="`sink-${i}-rate`">At most every</label>
-            <input
-              :id="`sink-${i}-rate`"
-              :value="actionOf(s)?.rateLimit ?? ''"
-              placeholder="20ms"
-              autocomplete="off"
-              @change="editAction(i, s, { rateLimit: ($event.target as HTMLInputElement).value.trim() || undefined })"
-            >
-          </div>
-        </template>
-        <button
-          type="button"
-          class="secondary"
-          @click="removeSink(i)"
-        >
-          Remove
-        </button>
-      </div>
-      <div class="row">
-        <button
-          type="button"
-          class="secondary"
-          @click="addSink('set')"
-        >
-          Add: set a variable
-        </button>
-        <button
-          type="button"
-          class="secondary"
-          @click="addSink('action')"
-        >
-          Add: send an action
-        </button>
-      </div>
+      <SinksEditor
+        v-model="sinks"
+        id-prefix="var-sink"
+      />
     </section>
 
     <ul
@@ -558,10 +421,6 @@ const otherProblems = computed(() => problems.value.filter((p) => p.path[0] !== 
 
 .sinks {
   margin: 1rem 0;
-}
-
-.sink {
-  align-items: flex-end;
 }
 
 button.danger {

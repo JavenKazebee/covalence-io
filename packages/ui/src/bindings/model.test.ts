@@ -2,12 +2,13 @@ import { describe, expect, it } from "vitest";
 import { formOf, newSource, refsOf, type Source } from "../sources/model";
 import {
   fromDraft,
+  helperPath,
+  isEmpty,
   isSimpleTemplate,
   literalText,
   parseLiteral,
   parseRef,
   parseTemplate,
-  props,
   refText,
   templateText,
   toDraft,
@@ -43,6 +44,7 @@ describe("binding model", () => {
 
   it.each(Object.entries(fixtures))("reads back every ref and template in %s as text", (_, binding) => {
     for (const b of Object.values(binding.props)) {
+      if (b === undefined) continue;
       for (const ref of refsOf(b)) expect(parseRef(refText(ref, aliases), aliases)).toEqual({ ok: true, value: ref });
       if (formOf(b) === "template") {
         const parts = (b as { parts: Source[] }).parts;
@@ -53,9 +55,27 @@ describe("binding model", () => {
 
   it("round-trips problem fixtures it can't save, too", () => {
     for (const { binding } of Object.values(problemFixtures)) {
-      const known = Object.fromEntries(Object.entries(binding.props).filter(([p]) => (props as readonly string[]).includes(p)));
-      expect(fromDraft(toDraft(binding)).props).toEqual(known);
+      expect(fromDraft(toDraft(binding)).props).toEqual(binding.props);
     }
+  });
+
+  it("keeps what the editor doesn't edit: other properties, helpers and gestures", () => {
+    const binding: ControlBinding = {
+      id: "b",
+      layer: "p",
+      control: "f0",
+      props: { value: { ref: { conn: VH, path: ["level"] } }, label: "Vol" },
+      helpers: { level: { use: "absolute", follow: { ref: { conn: VH, path: ["level"] } } } },
+      gestures: { longAfter: "800ms" },
+    };
+    const sent = fromDraft(toDraft(binding));
+    expect(sent).toEqual(binding);
+    expect(Object.keys(sent.props)).toEqual(["label", "value"]);
+    expect(isEmpty({ ...sent, props: {} })).toBe(false);
+    expect(helperPath("cams", "f0", "level", binding.helpers!.level!)).toBe("layer.cams.controls.f0.level");
+    expect(helperPath("cams", "f0", "level", { use: "toggle", scope: "surface", as: "on" }, "deck")).toBe(
+      "surface.deck.controls.f0.helpers.on",
+    );
   });
 
   it("writes refs by alias, and reserved roots as they are", () => {

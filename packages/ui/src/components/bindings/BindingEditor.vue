@@ -2,12 +2,13 @@
 import { computed, ref, type Ref } from "vue";
 import { api, ApiError } from "../../api";
 import { provideInvalid } from "../../bindings/editing";
-import { fromDraft, newDraft, props as allProps, toDraft, type ControlBinding, type RuntimeProblem } from "../../bindings/model";
+import { fromDraft, isEmpty, newDraft, props as allProps, toDraft, type ControlBinding, type RuntimeProblem } from "../../bindings/model";
 import { usePreviews } from "../../bindings/usePreviews";
 import { firesOn, newFlowDraft, pressTrigger, type ShownProblem } from "../../flows/model";
 import { navigate } from "../../nav";
 import { useFlowsStore } from "../../stores/flows";
 import type { Layer } from "../../surfaces/model";
+import HelpersEditor from "./HelpersEditor.vue";
 import PropEditor from "./PropEditor.vue";
 
 /**
@@ -20,6 +21,8 @@ const props = defineProps<{
   control: string;
   stored: ControlBinding | undefined;
   runtime: RuntimeProblem[];
+  /** Whether the control shows an image, so its look can be bound. */
+  image?: boolean;
 }>();
 const emit = defineEmits<{ saved: [] }>();
 
@@ -39,7 +42,8 @@ const { results } = usePreviews(() => [sending.value], 250);
 const result = computed(() => results.get(props.control));
 const preview = computed(() => result.value?.preview);
 
-const empty = computed(() => Object.keys(sending.value.props).length === 0);
+const empty = computed(() => isEmpty(sending.value));
+const helpersEditor = ref<InstanceType<typeof HelpersEditor> | null>(null);
 const baseline = computed(() => JSON.stringify(props.stored === undefined ? newDraft(props.layer.id, props.control) : fromDraft(props.stored)));
 const dirty = computed(() => JSON.stringify(sending.value) !== baseline.value);
 
@@ -54,7 +58,7 @@ const otherProblems = computed(() => [
 async function save() {
   saveError.value = null;
   savedNote.value = null;
-  if (invalid.size > 0) {
+  if (invalid.size > 0 || helpersEditor.value?.anyBad) {
     saveError.value = "Fix the highlighted fields first.";
     return;
   }
@@ -151,13 +155,21 @@ function whenPressed() {
     </div>
 
     <PropEditor
-      v-for="prop in allProps"
+      v-for="prop in image === false ? [] : allProps"
       :key="prop"
       v-model="draft.props[prop]"
       :prop="prop"
       :shown="preview?.props[prop]"
       :problems="problemsOf(prop)"
       :runtime="dirty ? undefined : runtimeOf(prop)"
+    />
+
+    <HelpersEditor
+      ref="helpersEditor"
+      v-model="draft.helpers"
+      :layer="layer"
+      :control="control"
+      :binding="draft.id"
     />
 
     <ul

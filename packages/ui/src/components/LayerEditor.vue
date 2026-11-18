@@ -326,11 +326,11 @@ async function remove() {
             v-if="control !== undefined && controls.includes(control) && !hasImage(control)"
             class="muted"
           >
-            {{ control }} has no image output on this layer, so there's nothing to bind on it yet. Flows can still
-            trigger on it.
+            {{ control }} has no image output on this layer, so its look can't be bound. It can have helpers, and
+            flows can trigger on it.
           </p>
           <p
-            v-else-if="control !== undefined && controls.includes(control) && loadedFor !== layer.id"
+            v-if="control !== undefined && controls.includes(control) && loadedFor !== layer.id"
             class="muted"
           >
             Loading…
@@ -342,6 +342,7 @@ async function remove() {
             :control="control"
             :stored="byControl.get(control)"
             :runtime="runtimeFor"
+            :image="hasImage(control)"
             @saved="load"
           />
           <p

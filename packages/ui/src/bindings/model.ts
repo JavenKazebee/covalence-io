@@ -3,6 +3,7 @@
 // crates/covalence-core/fixtures/bindings/ catch drift (overview spec: project entities).
 
 import type { Problem } from "../flows/model";
+import type { Sink } from "../variables/model";
 import {
   copyJson,
   fallbackOf,
@@ -14,6 +15,7 @@ import {
   type Aliases,
   type Expect,
   type Format,
+  type Json,
   type Parsed,
   type Ref,
   type Source,
@@ -67,7 +69,33 @@ export interface ControlBinding {
   id: string;
   layer: string;
   control: string;
-  props: Partial<Record<Prop, Binding>>;
+  /** The editor's properties, and any others (`value`), kept as they are. */
+  props: Partial<Record<Prop, Binding>> & Record<string, Binding | undefined>;
+  /** Reducers on the control's input, by key (bindings spec §5). */
+  helpers?: Record<string, Helper>;
+  /** Per-control gesture timing (surfaces spec §4.2), kept as it is. */
+  gestures?: Record<string, Source>;
+}
+
+/**
+ * A helper (bindings spec §5): a reducer whose `on` and `input` default to
+ * its control, its value a cell under the layer or, with `scope: "surface"`,
+ * per surface.
+ */
+export type Helper = {
+  use: string;
+  as?: string;
+  scope?: "layer" | "surface";
+  to?: Sink[];
+  journal?: "full" | { sampled: string };
+} & { [option: string]: Json | Sink[] | undefined };
+
+/** Where a helper's value is: `layer.<slug>.controls.<id>.<as>`, or per surface. */
+export function helperPath(layerSlug: string, control: string, key: string, helper: Helper, surfaceSlug?: string): string {
+  const name = helper.as ?? key;
+  return helper.scope === "surface"
+    ? `surface.${surfaceSlug ?? "*"}.controls.${control}.helpers.${name}`
+    : `layer.${layerSlug}.controls.${control}.${name}`;
 }
 
 export interface SavedBinding {
@@ -176,14 +204,25 @@ export function toDraft(binding: ControlBinding): ControlBinding {
   return copyJson(binding);
 }
 
-/** The binding to send: properties in the editor's order. */
+/**
+ * The binding to send: the editor's properties in its order, then any others
+ * it doesn't edit, and helpers and gestures as they are.
+ */
 export function fromDraft(draft: ControlBinding): ControlBinding {
   const out: ControlBinding = { id: draft.id, layer: draft.layer, control: draft.control, props: {} };
-  for (const prop of props) {
+  const others = Object.keys(draft.props).filter((p) => !(props as readonly string[]).includes(p));
+  for (const prop of [...props, ...others]) {
     const binding = draft.props[prop];
     if (binding !== undefined) out.props[prop] = copyJson(binding);
   }
+  if (draft.helpers !== undefined && Object.keys(draft.helpers).length > 0) out.helpers = copyJson(draft.helpers as never);
+  if (draft.gestures !== undefined && Object.keys(draft.gestures).length > 0) out.gestures = copyJson(draft.gestures as never);
   return out;
+}
+
+/** Whether a binding sets nothing, so saving it deletes it. */
+export function isEmpty(binding: ControlBinding): boolean {
+  return Object.keys(binding.props).length === 0 && binding.helpers === undefined && binding.gestures === undefined;
 }
 
 export function newDraft(layer: string, control: string): ControlBinding {
