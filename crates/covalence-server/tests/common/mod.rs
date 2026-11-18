@@ -25,11 +25,19 @@ pub struct Server {
 
 impl Server {
     pub fn start() -> Self {
+        Self::start_with(&[])
+    }
+
+    /// The server with these plugins as well as the first-party ones, each
+    /// `<id>@<version>=<bundle under the repository>`.
+    pub fn start_with(extra: &[&str]) -> Self {
         let data = tempfile::tempdir().unwrap();
+        let mut plugins = Config::default_plugins();
+        plugins.extend(extra.iter().map(|p| p.parse().expect("a plugin spec")));
         let app = App::start(Config {
             data_dir: data.path().to_owned(),
             root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."),
-            plugins: Config::default_plugins(),
+            plugins,
             deno: "deno".into(),
             devices: Default::default(),
         })
@@ -57,6 +65,11 @@ impl Server {
     pub async fn listen(&self) -> String {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap().to_string();
+        // As the server's own listener: small writes go at once.
+        use axum::serve::ListenerExt;
+        let listener = listener.tap_io(|tcp| {
+            let _ = tcp.set_nodelay(true);
+        });
         let routes = self.router.clone();
         let task = tokio::spawn(async move { axum::serve(listener, routes).await.unwrap() });
         self.serving.lock().unwrap().push(task);

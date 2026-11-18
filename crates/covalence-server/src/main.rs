@@ -102,6 +102,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         covalence_core::PROTOCOL_VERSION,
         listener.local_addr()?
     );
+    // Surfaces' input and draws are small writes that must go at once: no
+    // Nagle, or each waits up to a delayed ACK, past the redraw budget.
+    use axum::serve::ListenerExt;
+    let listener = listener.tap_io(|tcp| {
+        if let Err(e) = tcp.set_nodelay(true) {
+            tracing::warn!("cannot turn off Nagle on a connection: {e}");
+        }
+    });
     axum::serve(listener, routes)
         .with_graceful_shutdown(async {
             stop_signal().await;

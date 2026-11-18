@@ -59,7 +59,7 @@ impl EntityKind for Variable {
         if self.slug.is_empty() {
             self.slug = flow::derive_slug_for("var", &self.name, &taken);
         }
-        let conns: BTreeSet<String> = app.conns().keys().cloned().collect();
+        let conns = app.conn_ids();
         variable::validate(
             self,
             &variable::Context {

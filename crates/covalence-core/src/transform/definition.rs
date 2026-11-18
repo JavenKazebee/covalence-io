@@ -19,6 +19,11 @@ use crate::expr::{ExprCode, ExprError, Limits, QuickJs};
 /// A definition's time limit per call: the bindings' (dataflow §4.4).
 pub const CALL_TIME: Duration = Duration::from_millis(10);
 
+/// The limit for loading the built-in definitions, once, at startup. They're
+/// trusted, and a busy machine mustn't stop the core starting by making a
+/// load take longer than a call may.
+const BUILTIN_LOAD_TIME: Duration = Duration::from_secs(2);
+
 /// The built-in definitions' sources, by ID.
 pub const BUILTIN: &[(&str, &str)] = &[
     ("toggle", include_str!("../../transforms/toggle.js")),
@@ -142,7 +147,7 @@ impl Definition {
 pub fn builtins() -> &'static BTreeMap<String, Definition> {
     static LOADED: OnceLock<BTreeMap<String, Definition>> = OnceLock::new();
     LOADED.get_or_init(|| {
-        let sandbox = Sandbox::new();
+        let sandbox = Sandbox::with_time(BUILTIN_LOAD_TIME);
         BUILTIN
             .iter()
             .map(|(id, source)| {
@@ -270,10 +275,15 @@ impl Default for Sandbox {
 }
 
 impl Sandbox {
+    /// Calls with the bindings' limit, [`CALL_TIME`].
     pub fn new() -> Self {
+        Self::with_time(CALL_TIME)
+    }
+
+    fn with_time(time: Duration) -> Self {
         Sandbox {
             js: QuickJs::new(Limits {
-                time: CALL_TIME,
+                time,
                 ..Limits::default()
             }),
         }

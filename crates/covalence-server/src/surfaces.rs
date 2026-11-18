@@ -481,7 +481,7 @@ impl EntityKind for ControlBinding {
             .filter(|b| b.id != self.id)
             .map(|b| (b.layer.clone(), b.control.clone()))
             .collect();
-        let conns: BTreeSet<ConnId> = app.conns().keys().cloned().collect();
+        let conns = app.conn_ids();
         binding::validate(
             self,
             &binding::Context {

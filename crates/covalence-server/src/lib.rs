@@ -623,7 +623,18 @@ impl App {
         roots.insert(STATE_ROOT.into(), STATE_ROOT.into());
         roots.insert(VARS_ROOT.into(), VARS_ROOT.into());
         roots.insert(surface::STATE_ROOT.into(), surface::STATE_ROOT.into());
+        // Layer-scoped helpers' values (surfaces spec §3).
+        let layer = covalence_core::source::Root::Layer.as_str();
+        roots.insert(layer.into(), layer.into());
         roots
+    }
+
+    /// Every connection's ID, and `core`'s: what a sink or a step may
+    /// target (core actions §1).
+    pub(crate) fn conn_ids(&self) -> BTreeSet<ConnId> {
+        let mut ids: BTreeSet<ConnId> = self.conns().keys().cloned().collect();
+        ids.insert(covalence_core::core_conn::CORE.into());
+        ids
     }
 
     /// Every flow, by ID.
