@@ -866,7 +866,7 @@ impl Surfaces {
             },
         );
         let mut ops = inner.surface_state(&book, surface);
-        ops.extend(Inner::input_reset(&book, surface));
+        ops.extend(inner.input_reset(&book, surface));
         inner.patch(surface_origin(surface), None, ops)?;
         inner.show_on(&book, surface);
         drop(book);
@@ -1679,18 +1679,23 @@ impl Inner {
 
     /// A fresh attach's input state (surfaces spec §4.1): every control
     /// released, untouched and at 0 detents, with no `value` until the
-    /// device sends one.
-    fn input_reset(book: &Book, surface: &str) -> Vec<(StatePath, Option<Value>)> {
+    /// device sends one, and nothing requested. Helpers with `scope:
+    /// "surface"` keep their values (ADR 0035).
+    fn input_reset(&self, book: &Book, surface: &str) -> Vec<(StatePath, Option<Value>)> {
         let (Some(entity), Some(attached)) =
             (book.surfaces.get(surface), book.attached.get(surface))
         else {
             return Vec::new();
         };
         let slug = &entity.slug;
-        let mut ops = vec![(
-            StatePath::new(STATE_ROOT, vec![key(slug), key("controls")]),
-            None,
-        )];
+        let controls = StatePath::new(STATE_ROOT, vec![key(slug), key("controls")]);
+        let mut ops: Vec<(StatePath, Option<Value>)> = self.shared.state.read(|tree| {
+            tree.leaves_under(&controls)
+                .map(|(path, _)| path)
+                .filter(|path| path.path.get(3) != Some(&key("helpers")))
+                .map(|path| (path.clone(), None))
+                .collect()
+        });
         for control in &attached.attach.controls {
             for input in &control.inputs {
                 let (leaf, value): (&str, Value) = match input {

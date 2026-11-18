@@ -50,7 +50,7 @@
 //!
 //! Any other path is the built web UI, when there is one (see `ui`).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -294,6 +294,9 @@ pub struct App {
     variables: RwLock<BTreeMap<String, Variable>>,
     /// Computed variables' cells and their sinks (dataflow §5).
     dataflow: Dataflow,
+    /// The surfaces each layer has been shown on, which have its bindings'
+    /// surface-scoped helpers (ADR 0035).
+    shown_on: Mutex<BTreeMap<LayerId, BTreeSet<SurfaceId>>>,
 }
 
 impl App {
@@ -340,11 +343,25 @@ impl App {
                 dataflow.put(cell, None);
             }
         }
+        // What each surface showed last: it shows it again when it attaches,
+        // and its surface-scoped helpers on that layer are there from the start.
+        let kept_shown = load(&store, SHOWN_ENTITY, |s: &Shown| s.surface.clone())?;
+        let mut shown_on: BTreeMap<LayerId, BTreeSet<SurfaceId>> = BTreeMap::new();
+        for shown in kept_shown.values() {
+            if let Some(layer) = &shown.layer
+                && surface_entities.contains_key(&shown.surface)
+            {
+                shown_on
+                    .entry(layer.clone())
+                    .or_default()
+                    .insert(shown.surface.clone());
+            }
+        }
         for b in bindings.values() {
             if let Some(layer) = layers.get(&b.layer) {
                 dataflow.replace(
                     &binding::helper_cell_id(&b.id, ""),
-                    b.helper_cells(&layer.slug),
+                    helper_cells(b, &layer.slug, &shown_on, &surface_entities, None),
                     None,
                 );
             }
@@ -360,8 +377,7 @@ impl App {
         for binding in bindings.values() {
             surfaces.set_binding(binding.clone());
         }
-        // What each surface showed last, so it shows it again when it attaches.
-        for shown in load(&store, SHOWN_ENTITY, |s: &Shown| s.surface.clone())?.into_values() {
+        for shown in kept_shown.into_values() {
             surfaces.restore_shown(&shown.surface, shown.layer)?;
         }
 
@@ -393,6 +409,9 @@ impl App {
             surfaces.on_shown(Arc::new(move |surface, layer| {
                 if let Some(app) = keeping.upgrade() {
                     app.keep_shown(surface, layer);
+                    if let Some(layer) = layer {
+                        app.shown_on_surface(surface, layer);
+                    }
                 }
             }));
             App {
@@ -417,6 +436,7 @@ impl App {
                 devices,
                 variables: RwLock::new(variables),
                 dataflow,
+                shown_on: Mutex::new(shown_on),
             }
         });
         variables::spawn_persisting(&app);
@@ -479,11 +499,92 @@ impl App {
 
     /// [`sync_helpers`](Self::sync_helpers) for a layer with this slug.
     pub(crate) fn sync_helpers_on(&self, b: &ControlBinding, layer_slug: &str) {
-        self.dataflow.replace(
-            &binding::helper_cell_id(&b.id, ""),
-            b.helper_cells(layer_slug),
-            None,
-        );
+        self.sync_helpers_with(b, layer_slug, None);
+    }
+
+    /// [`sync_helpers_on`](Self::sync_helpers_on), with one surface's new
+    /// entity in place of the stored one.
+    fn sync_helpers_with(&self, b: &ControlBinding, layer_slug: &str, renamed: Option<&Surface>) {
+        let cells = {
+            let shown_on = self.shown_on.lock().unwrap_or_else(|e| e.into_inner());
+            helper_cells(
+                b,
+                layer_slug,
+                &shown_on,
+                &read(&self.surface_entities),
+                renamed,
+            )
+        };
+        self.dataflow
+            .replace(&binding::helper_cell_id(&b.id, ""), cells, None);
+    }
+
+    /// Re-syncs the bindings with surface-scoped helpers on these layers.
+    fn sync_surface_helpers(&self, layers: &BTreeSet<LayerId>, renamed: Option<&Surface>) {
+        let bindings: Vec<ControlBinding> = read(&self.bindings)
+            .values()
+            .filter(|b| layers.contains(&b.layer) && b.has_surface_helpers())
+            .cloned()
+            .collect();
+        for b in bindings {
+            let slug = read(&self.layers).get(&b.layer).map(|l| l.slug.clone());
+            if let Some(slug) = slug {
+                self.sync_helpers_with(&b, &slug, renamed);
+            }
+        }
+    }
+
+    /// A surface shows a layer: the first time, its bindings' surface-scoped
+    /// helpers get a cell on that surface, kept until the binding or the
+    /// surface is deleted (ADR 0035). Called with the surfaces locked.
+    fn shown_on_surface(&self, surface: &str, layer: &str) {
+        let new = self
+            .shown_on
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .entry(layer.to_owned())
+            .or_default()
+            .insert(surface.to_owned());
+        if new {
+            self.sync_surface_helpers(&BTreeSet::from([layer.to_owned()]), None);
+        }
+    }
+
+    /// A surface's slug changed: its helpers' cells move with it.
+    pub(crate) fn surface_renamed(&self, surface: &Surface) {
+        let layers: BTreeSet<LayerId> = self
+            .shown_on
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .filter(|(_, on)| on.contains(&surface.id))
+            .map(|(layer, _)| layer.clone())
+            .collect();
+        self.sync_surface_helpers(&layers, Some(surface));
+    }
+
+    /// A surface was deleted: its helpers go with it.
+    pub(crate) fn forget_surface(&self, surface: &str) {
+        let mut layers = BTreeSet::new();
+        for (layer, on) in self
+            .shown_on
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter_mut()
+        {
+            if on.remove(surface) {
+                layers.insert(layer.clone());
+            }
+        }
+        self.sync_surface_helpers(&layers, None);
+    }
+
+    /// A layer was deleted; its bindings, and their cells, go with it.
+    pub(crate) fn forget_layer(&self, layer: &str) {
+        self.shown_on
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(layer);
     }
 
     /// Tells the runtime the current aliases, after a connection changes.
@@ -888,6 +989,28 @@ fn is_valid_alias(alias: &str) -> bool {
         && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
         && !RESERVED_ROOTS.contains(&alias)
         && !expr::is_taken_name(alias)
+}
+
+/// A binding's helper cells (surfaces §4.3): its layer-scoped helpers under
+/// the layer, and its surface-scoped ones on each surface that has shown the
+/// layer. `renamed` stands in for its stored entity.
+fn helper_cells(
+    b: &ControlBinding,
+    layer_slug: &str,
+    shown_on: &BTreeMap<LayerId, BTreeSet<SurfaceId>>,
+    surfaces: &BTreeMap<SurfaceId, Surface>,
+    renamed: Option<&Surface>,
+) -> Vec<covalence_core::dataflow::CellDef> {
+    let mut cells = b.helper_cells(layer_slug);
+    if b.has_surface_helpers() {
+        for id in shown_on.get(&b.layer).into_iter().flatten() {
+            let surface = renamed.filter(|s| &s.id == id).or_else(|| surfaces.get(id));
+            if let Some(s) = surface {
+                cells.extend(b.surface_helper_cells(&s.id, &s.slug));
+            }
+        }
+    }
+    cells
 }
 
 #[cfg(test)]

@@ -156,6 +156,11 @@ pub fn helper_cell_id(binding: &str, key: &str) -> String {
     format!("helper:{binding}/{key}")
 }
 
+/// A surface-scoped helper's cell identity: one per surface (ADR 0035).
+pub fn surface_helper_cell_id(binding: &str, key: &str, surface: &str) -> String {
+    format!("helper:{binding}/{key}@{surface}")
+}
+
 /// A property of a control: the three a key image needs, and `value` for a
 /// `level` output (ADR 0035). In the order of their names, as JSON objects
 /// are written.
@@ -262,13 +267,12 @@ fn at(base: &[PathSegment], more: &[PathSegment]) -> Path {
 }
 
 impl ControlBinding {
-    /// Its helpers' cells, for a layer with this slug (surfaces §4.3).
-    /// Surface-scoped helpers aren't cells yet.
+    /// Its layer-scoped helpers' cells, for a layer with this slug
+    /// (surfaces §4.3): `layer.<slug>.controls.<id>.<name>`, whose `on`
+    /// defaults to the control's events on the layer.
     pub fn helper_cells(&self, layer_slug: &str) -> Vec<crate::dataflow::CellDef> {
-        use crate::dataflow::{CellDef, ControlContext, JournalMode};
         use crate::flow::EventSource;
         use crate::select::Selector;
-        use crate::transform::reducer::On;
         self.helpers
             .iter()
             .filter(|(_, h)| h.scope == HelperScope::Layer)
@@ -283,50 +287,109 @@ impl ControlBinding {
                         key(&name),
                     ],
                 );
-                let mut reducer = h.reducer.clone();
-                // `on` defaults to the control's events on this layer.
                 let from = EventSource::Layer {
                     layer: self.layer.clone(),
                     controls: Some(Selector::One(self.control.clone())),
                 };
-                match &mut reducer.on {
-                    Some(on) if on.from.is_none() => on.from = Some(from),
-                    Some(_) => {}
-                    None => {
-                        reducer.on = Some(On {
-                            from: Some(from),
-                            event: None,
-                            filter: None,
-                        })
-                    }
-                }
-                let input = reducer.input.is_none() && reducer.definition().steps.input.is_some();
-                CellDef {
-                    journal: match &h.journal {
-                        Some(crate::variable::Journaling::Sampled { sampled }) => {
-                            JournalMode::Sampled(sampled.get())
-                        }
-                        _ => JournalMode::Full,
-                    },
-                    to: h.to.clone(),
-                    control: Some(ControlContext {
-                        layer: self.layer.clone(),
-                        control: self.control.clone(),
-                        input,
-                    }),
-                    ..CellDef::new(
-                        helper_cell_id(&self.id, k),
-                        home,
-                        Source::Use {
-                            transform: Box::new(crate::transform::Transform::Reducer(Box::new(
-                                reducer,
-                            ))),
-                            fallback: None,
-                        },
-                    )
-                }
+                self.helper_cell(helper_cell_id(&self.id, k), h, home, from, None)
             })
             .collect()
+    }
+
+    /// Whether any of its helpers has `scope: "surface"`.
+    pub fn has_surface_helpers(&self) -> bool {
+        self.helpers
+            .values()
+            .any(|h| h.scope == HelperScope::Surface)
+    }
+
+    /// Its surface-scoped helpers' cells on one surface (ADR 0035):
+    /// `surface.<slug>.controls.<id>.helpers.<name>`, whose `on` defaults to
+    /// the control's events on that surface. Only input that arrived while
+    /// the binding's layer controlled the control steps them.
+    pub fn surface_helper_cells(
+        &self,
+        surface: &str,
+        surface_slug: &str,
+    ) -> Vec<crate::dataflow::CellDef> {
+        use crate::flow::EventSource;
+        use crate::select::Selector;
+        self.helpers
+            .iter()
+            .filter(|(_, h)| h.scope == HelperScope::Surface)
+            .map(|(k, h)| {
+                let name = h.name.clone().unwrap_or_else(|| k.clone());
+                let home = StatePath::new(
+                    crate::surface::STATE_ROOT,
+                    vec![
+                        key(surface_slug),
+                        key("controls"),
+                        key(&self.control),
+                        key("helpers"),
+                        key(&name),
+                    ],
+                );
+                let from = EventSource::Surface {
+                    surface: surface.to_owned(),
+                    controls: Some(Selector::One(self.control.clone())),
+                };
+                self.helper_cell(
+                    surface_helper_cell_id(&self.id, k, surface),
+                    h,
+                    home,
+                    from,
+                    Some(surface.to_owned()),
+                )
+            })
+            .collect()
+    }
+
+    fn helper_cell(
+        &self,
+        id: String,
+        h: &Helper,
+        home: StatePath,
+        from: crate::flow::EventSource,
+        surface: Option<String>,
+    ) -> crate::dataflow::CellDef {
+        use crate::dataflow::{CellDef, ControlContext, JournalMode};
+        use crate::transform::reducer::On;
+        let mut reducer = h.reducer.clone();
+        match &mut reducer.on {
+            Some(on) if on.from.is_none() => on.from = Some(from),
+            Some(_) => {}
+            None => {
+                reducer.on = Some(On {
+                    from: Some(from),
+                    event: None,
+                    filter: None,
+                })
+            }
+        }
+        let input = reducer.input.is_none() && reducer.definition().steps.input.is_some();
+        CellDef {
+            journal: match &h.journal {
+                Some(crate::variable::Journaling::Sampled { sampled }) => {
+                    JournalMode::Sampled(sampled.get())
+                }
+                _ => JournalMode::Full,
+            },
+            to: h.to.clone(),
+            control: Some(ControlContext {
+                layer: self.layer.clone(),
+                control: self.control.clone(),
+                input,
+                surface,
+            }),
+            ..CellDef::new(
+                id,
+                home,
+                Source::Use {
+                    transform: Box::new(crate::transform::Transform::Reducer(Box::new(reducer))),
+                    fallback: None,
+                },
+            )
+        }
     }
 
     /// The outputs its properties drive, which its layer must give the
@@ -502,13 +565,6 @@ impl Validation<'_> {
 
     /// A helper (bindings §5): its reducer's sources and its sinks.
     fn helper(&mut self, helper: &Helper, base: &[PathSegment]) {
-        if helper.scope == HelperScope::Surface {
-            self.error(
-                at(base, &[key("scope")]),
-                Code::Unsupported,
-                "helpers with `scope: surface` aren't supported yet".into(),
-            );
-        }
         let source = Source::Use {
             transform: Box::new(crate::transform::Transform::Reducer(Box::new(
                 helper.reducer.clone(),

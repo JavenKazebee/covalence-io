@@ -228,9 +228,9 @@ A **helper** builds on a control's input to give derived state, events, or both.
 
 - **Each helper is a cell** (dataflow §5), written under `as` (the helper's name by default):
   - at `layer.<slug>.controls.<id>.<name>`, shared by every surface the layer is on
-  - with `scope: "surface"`, at `surface.<slug>.controls.<id>.helpers.<name>` instead, one value per surface
+  - with `scope: "surface"`, at `surface.<slug>.controls.<id>.helpers.<name>` instead, one value per surface. **(M8)** Its cell exists from the first time the surface shows the layer until the binding or the surface is deleted, so a surface's value survives navigating away and back, and reattaching. Its `on` defaults to `{surface, controls: <id>}`, and only input that arrived while the helper's layer controlled the control steps it ([ADR 0035](../adr/0035-level-outputs-echoes-and-control-settings.md))
 - **`to`** sends the value on to a variable or an action parameter, as for any cell (dataflow §7).
-- **Events** from a helper (a `toggle`'s `on` and `off`, a `select`'s `select`, a `script`'s own) happen at its cell, `layer.<slug>.controls.<id>.<name>:on`, and match event triggers on `{layer, controls}` with the helper's event name.
+- **Events** from a helper (a `toggle`'s `on` and `off`, a `select`'s `select`, a `script`'s own) happen at its cell, `layer.<slug>.controls.<id>.<name>:on`, and match event triggers on `{layer, controls}` with the helper's event name. A surface-scoped helper's events also carry its surface, so they match `{surface, controls}` too.
 - **Options are `Source`s,** so a step, a bound or a list can follow state.
 - **`follow`, `holdoff` and `pickup`** are as in dataflow §4.3.
 - **Helpers run in the core,** as sandboxed transform definitions (dataflow §4.4). A plugin can suggest defaults for a control (`ControlDef.suggest`, plugin protocol §8), and **(M9)** ship transforms of its own, which also run in the core.

@@ -330,14 +330,21 @@ impl EntityKind for Surface {
     }
 
     fn apply(&self, app: &App) -> Result<(), SaveError> {
+        let renamed = read(&app.surface_entities)
+            .get(&self.id)
+            .is_some_and(|old| old.slug != self.slug);
         app.surfaces.set_surface(self.clone())?;
+        if renamed {
+            app.surface_renamed(self);
+        }
         Ok(())
     }
 
-    /// Detaches it, and forgets the layer it showed.
+    /// Detaches it, and forgets the layer it showed and its helpers.
     fn unapply(id: &str, app: &App) -> Result<(), SaveError> {
         app.delete_entity(crate::SHOWN_ENTITY, id)?;
         app.surfaces.remove_surface(id)?;
+        app.forget_surface(id);
         Ok(())
     }
 
@@ -407,6 +414,7 @@ impl EntityKind for Layer {
 
     fn unapply(id: &str, app: &App) -> Result<(), SaveError> {
         app.surfaces.remove_layer(id)?;
+        app.forget_layer(id);
         Ok(())
     }
 

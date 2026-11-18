@@ -1103,3 +1103,71 @@ async fn flows_drive_the_deck_and_other_flows_through_core() {
     );
     server.stop().await;
 }
+
+/// ADR 0035: a surface-scoped helper gets a cell on a surface the first time
+/// it shows the helper's layer, moves with the surface's slug, and goes when
+/// the surface is deleted.
+#[tokio::test(flavor = "multi_thread")]
+async fn surface_scoped_helpers_live_on_the_surfaces_that_showed_their_layer() {
+    let server = Server::start();
+    let cams = create(&server, "/layers", "layer", deck_layer("Cams")).await;
+    let deck = create(
+        &server,
+        "/surfaces",
+        "surface",
+        json!({ "name": "Deck", "model": "virtual.deck15" }),
+    )
+    .await;
+    create(
+        &server,
+        "/control-bindings",
+        "binding",
+        json!({
+            "layer": id(&cams), "control": "k3",
+            "helpers": { "latched": { "use": "toggle", "scope": "surface" } },
+        }),
+    )
+    .await;
+    let latched = |slug: &str| format!("surface.{slug}.controls.k3.helpers.latched");
+    assert_eq!(server.value(&latched("deck")).await, None);
+
+    let (status, body) = server
+        .post(
+            &format!("/surfaces/{}/current", id(&deck)),
+            json!({ "layer": id(&cams) }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    server
+        .eventually(WAIT, "the helper's cell", || async {
+            server
+                .value(&latched("deck"))
+                .await
+                .filter(|v| *v == json!(false))
+        })
+        .await;
+
+    let (status, body) = server
+        .put(
+            &format!("/surfaces/{}", id(&deck)),
+            json!({ "name": "Desk", "slug": "desk", "model": "virtual.deck15" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    server
+        .eventually(WAIT, "the helper under the new slug", || async {
+            server
+                .value(&latched("desk"))
+                .await
+                .filter(|v| *v == json!(false))
+        })
+        .await;
+    assert_eq!(server.value(&latched("deck")).await, None);
+
+    assert_eq!(
+        server.delete(&format!("/surfaces/{}", id(&deck))).await,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(server.value(&latched("desk")).await, None);
+    server.stop().await;
+}

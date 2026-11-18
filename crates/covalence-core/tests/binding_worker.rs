@@ -835,3 +835,98 @@ fn a_value_needs_a_level_output_and_a_number() {
         [json!("noOutput"), json!("badValue")]
     );
 }
+
+/// ADR 0035: a helper with `scope: "surface"` has a cell on each surface,
+/// stepped only by that surface's input while its layer controls the
+/// control, and keeps its value while the surface shows another layer.
+#[tokio::test]
+async fn a_surface_scoped_helper_keeps_one_value_per_surface() {
+    use covalence_core::dataflow::Dataflow;
+    use covalence_core::journal::{Origin, Record};
+    let w = world();
+    let dataflow = Dataflow::start(&w.shared);
+    let b = ControlBinding::parse(&json!({
+        "id": "b3", "layer": CAMS, "control": "k3",
+        "helpers": { "latched": { "use": "toggle", "scope": "surface" } },
+    }))
+    .unwrap();
+    assert!(b.helper_cells("cams").is_empty());
+    let mut cells = b.surface_helper_cells(DECK, "deck");
+    cells.extend(b.surface_helper_cells(OTHER, "other"));
+    assert_eq!(cells[0].id, format!("helper:b3/latched@{DECK}"));
+    dataflow.replace("helper:b3/", cells, None);
+
+    let deck_link = w.surfaces.attach(DECK, deck()).unwrap();
+    let _other_link = w.surfaces.attach(OTHER, deck()).unwrap();
+    let latched = |slug: &str| path("surface", &[slug, "controls", "k3", "helpers", "latched"]);
+    let press = |ts: f64| {
+        let input = deck_link.input.clone();
+        async move {
+            for (kind, at) in [(InputKind::Down, ts), (InputKind::Up, ts + 50.0)] {
+                input
+                    .send(Input {
+                        control: "k3".into(),
+                        kind,
+                        value: None,
+                        ts: at,
+                        echo: false,
+                    })
+                    .await
+                    .unwrap();
+            }
+        }
+    };
+    let settle = || async {
+        for _ in 0..40 {
+            w.surfaces.flush().await;
+            dataflow.flush().await;
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    };
+
+    press(1_000.0).await;
+    settle().await;
+    assert_eq!(w.shared.state.value(&latched("deck")), Some(true.into()));
+    assert_eq!(w.shared.state.value(&latched("other")), Some(false.into()));
+
+    // On another layer, the deck's k3 isn't this helper's.
+    w.surfaces
+        .show(DECK, Some(AUDIO), Origin::system())
+        .unwrap();
+    press(2_000.0).await;
+    settle().await;
+    assert_eq!(w.shared.state.value(&latched("deck")), Some(true.into()));
+
+    // Back again, it kept its value.
+    w.surfaces.show(DECK, Some(CAMS), Origin::system()).unwrap();
+    press(3_000.0).await;
+    settle().await;
+    assert_eq!(w.shared.state.value(&latched("deck")), Some(false.into()));
+
+    // Its events are at its cell, with its surface, layer and control.
+    let events: Vec<_> = w
+        .shared
+        .journal
+        .range(1, usize::MAX)
+        .unwrap()
+        .into_iter()
+        .filter_map(|e| match &e.record {
+            Record::Event(ev) if ev.path == latched("deck") => Some((
+                ev.event.clone(),
+                ev.surface.clone(),
+                ev.layer.clone(),
+                ev.control.clone(),
+            )),
+            _ => None,
+        })
+        .collect();
+    let at = |name: &str| {
+        (
+            name.to_owned(),
+            Some(DECK.to_owned()),
+            Some(CAMS.to_owned()),
+            Some("k3".to_owned()),
+        )
+    };
+    assert_eq!(events, [at("on"), at("off")]);
+}

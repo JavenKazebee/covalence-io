@@ -97,6 +97,10 @@ pub struct ControlContext {
     /// The reducer has no `input` of its own: the control's `turn` and
     /// `change` events move it (bindings §5).
     pub input: bool,
+    /// The surface of a helper with `scope: "surface"` (ADR 0035): its
+    /// events carry it, and only input that arrived while `layer` controlled
+    /// the control steps it.
+    pub surface: Option<String>,
 }
 
 impl CellDef {
@@ -971,8 +975,18 @@ impl Turn<'_> {
             if event.path == cell.def.home {
                 continue;
             }
-            // Control input is at the surface; a helper's events aren't.
-            let at_surface = event.path.conn == crate::surface::STATE_ROOT;
+            // Control input is at the control, `surface.<slug>.controls.<id>`;
+            // a helper's events are at its cell, under the layer or deeper.
+            let at_surface =
+                event.path.conn == crate::surface::STATE_ROOT && event.path.path.len() == 3;
+            // A surface's own helper hears its layer's input only.
+            if at_surface
+                && let Some(c) = &cell.def.control
+                && c.surface.is_some()
+                && event.layer.as_ref() != Some(&c.layer)
+            {
+                continue;
+            }
             let control_input = at_surface && cell.def.control.as_ref().is_some_and(|c| c.input);
             let touch = at_surface
                 && cell.def.control.is_some()
@@ -1404,6 +1418,7 @@ impl Turn<'_> {
         let patch = self.journal.last_seq();
         for (seq, e) in emitted {
             let record = EventRecord {
+                surface: def.control.as_ref().and_then(|c| c.surface.clone()),
                 layer: def.control.as_ref().map(|c| c.layer.clone()),
                 control: def.control.as_ref().map(|c| c.control.clone()),
                 ..EventRecord::at(
