@@ -40,6 +40,11 @@ export interface JournalEntry {
   origin: Origin;
   /** Seq of the entry that directly caused this one. */
   cause?: number;
+  /**
+   * When `cause` is a derived entry: the nearest input among its causes,
+   * which `why` steps to once the derived ones have left memory (state spec §2.4).
+   */
+  inputCause?: number;
   run?: string;
   kind: string;
   data: unknown;

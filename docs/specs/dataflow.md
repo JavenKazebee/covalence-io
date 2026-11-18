@@ -254,6 +254,7 @@ A **cell** is a source with a home in the state tree. It's how a computed or acc
 ### 5.1 Writing
 - **A cell's value is state.** A change is journaled as a `state.patch` with origin `{core: "dataflow"}`, `cause` → the latest entry among its reads that changed (or the event that stepped it), so `why` on anything that read a cell reaches the input that moved it.
 - **Read-only.** Only the core writes a cell. A `set` step on one is a save error (`readOnly`).
+- **Problems.** A cell's last failure (`cycle`, an expression's code, `unsupported`) is served at `GET /cells/problems` as `[{cell, code, message}]`, `cell` being its identity (§5.4).
 - **Quality.** A cell is `stale` while any value it read is stale, and `unknown` until it first has a value.
 - **High-rate cells** may set `journal: {sampled: "100ms"}`: every value is applied to state, but the journal keeps the latest per interval, with a final entry when it settles. This answers state spec open question 4 for cells and fader input.
 

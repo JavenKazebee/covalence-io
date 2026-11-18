@@ -83,6 +83,50 @@ function describeInputPatch(entry: JournalEntry, ctx: SummaryContext): string | 
   return `${name} ${[...byControl].map(([control, parts]) => `${control} ${parts.join(", ")}`).join("; ")}`;
 }
 
+/**
+ * A patch from the dataflow (dataflow spec §5.1): layer resolution as
+ * `deck: k3 on shift; active shift, cams` (surfaces spec §5.2), a level sent
+ * to a control, or a cell's new value, `cell vars.isLive = true`. `undefined`
+ * for any other patch.
+ */
+function describeDataflowPatch(entry: JournalEntry, ctx: SummaryContext): string | undefined {
+  if (!("core" in entry.origin) || entry.origin.core !== "dataflow") return undefined;
+  const d = (entry.data ?? {}) as Data;
+  const ops = (d.ops ?? []) as { path: IdPath; value?: unknown; delete?: boolean }[];
+  if (ops.length === 0) return undefined;
+  const under = (op: (typeof ops)[number]) => op.path.path.map(String);
+  const isResolution = (op: (typeof ops)[number]) => {
+    const p = under(op);
+    return op.path.conn === "surface" && ((p.length === 2 && p[1] === "layers") || (p.length === 4 && p[1] === "controls" && p[3] === "layer"));
+  };
+  if (ops.every(isResolution)) {
+    const slug = under(ops[0]!)[0];
+    const parts: string[] = [];
+    for (const op of ops) {
+      const p = under(op);
+      if (p[1] === "layers") {
+        const active = Array.isArray(op.value) ? op.value.map(String) : [];
+        parts.push(active.length === 0 ? "no layer active" : `active ${active.join(", ")}`);
+      } else {
+        parts.push(op.value == null ? `${p[2]} on no layer` : `${p[2]} on ${String(op.value)}`);
+      }
+    }
+    return `${slug}: ${parts.join("; ")}`;
+  }
+  const one = ops[0]!;
+  const p = under(one);
+  if (ops.length === 1 && one.path.conn === "surface" && p[1] === "controls" && p[3] === "requested") {
+    return `${p[0]} ${p[2]} ${p[4] ?? "output"} sent ${json(one.value, 20)}`;
+  }
+  const isHelper = (op: (typeof ops)[number]) =>
+    (op.path.conn === "layer" && op.path.path[1] === "controls") || (op.path.conn === "surface" && op.path.path[3] === "helpers");
+  const what = ops.every(isHelper) ? "helper" : "cell";
+  const shown = ops
+    .slice(0, 2)
+    .map((op) => (op.delete ? `${textPath(op.path, ctx)} cleared` : `${textPath(op.path, ctx)} = ${json(op.value, 40)}`));
+  return `${what} ${shown.join(", ")}${ops.length > 2 ? ` and ${ops.length - 2} more` : ""}`;
+}
+
 export function describeOrigin(origin: Origin, ctx: SummaryContext): string {
   if ("user" in origin) return `${origin.user} (${origin.client})`;
   if ("conn" in origin) return ctx.alias(origin.conn);
@@ -108,7 +152,7 @@ export function describe(entry: JournalEntry, ctx: SummaryContext): string {
     case "conn.status":
       return `${ctx.alias(String(d.conn))} ${String(d.status)}${d.message ? `: ${String(d.message)}` : ""}`;
     case "state.patch": {
-      const input = describeInputPatch(entry, ctx);
+      const input = describeInputPatch(entry, ctx) ?? describeDataflowPatch(entry, ctx);
       if (input !== undefined) return input;
       const ops = (d.ops ?? []) as ({ path: IdPath; value?: unknown; delete?: boolean })[];
       const shown = ops

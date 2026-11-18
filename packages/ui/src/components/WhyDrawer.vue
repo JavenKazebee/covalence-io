@@ -41,6 +41,16 @@ function flowOf(entry: JournalEntry): string | undefined {
   return typeof flow === "string" ? flow : undefined;
 }
 
+/**
+ * Whether `why` stepped over derived entries after `i` (state spec §2.4):
+ * its cause has left memory, so the next entry is its `inputCause`.
+ */
+function steppedOver(i: number): boolean {
+  const entry = chain.value[i];
+  const next = chain.value[i + 1];
+  return entry?.cause !== undefined && next !== undefined && next.seq !== entry.cause;
+}
+
 function time(ts: string): string {
   const d = new Date(ts);
   return Number.isNaN(d.getTime()) ? ts : d.toLocaleTimeString(undefined, { hour12: false });
@@ -101,6 +111,12 @@ function time(ts: string): string {
             </summary>
             <pre>{{ JSON.stringify(entry.data, null, 2) }}</pre>
           </details>
+          <p
+            v-if="steppedOver(i)"
+            class="muted stepped"
+          >
+            Computed entries from #{{ entry.cause }} back are no longer kept. The input that led here:
+          </p>
         </li>
       </ol>
     </template>
@@ -108,6 +124,11 @@ function time(ts: string): string {
 </template>
 
 <style scoped>
+.stepped {
+  font-style: italic;
+  margin: 0.5rem 0 0;
+}
+
 .why-drawer {
   position: fixed;
   top: 0;

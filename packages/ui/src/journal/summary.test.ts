@@ -136,4 +136,25 @@ group("journal summaries", () => {
       "flow.preService:finished",
     );
   });
+
+  it("reads dataflow patches: resolution, levels sent, cells and helpers", () => {
+    const dataflow = (ops: unknown[]) => ({ ...entry("state.patch", { ops }), origin: { core: "dataflow" as const } });
+    const at = (conn: string, ...path: (string | number)[]) => ({ conn, path });
+    expect(
+      describe(
+        dataflow([
+          { path: at("surface", "deck", "layers"), value: ["shift", "cams"] },
+          { path: at("surface", "deck", "controls", "k3", "layer"), value: "shift" },
+        ]),
+        ctx,
+      ),
+    ).toBe("deck: active shift, cams; k3 on shift");
+    expect(describe(dataflow([{ path: at("surface", "deck", "controls", "f0", "requested", "level"), value: 0.5 }]), ctx)).toBe(
+      "deck f0 level sent 0.5",
+    );
+    expect(describe(dataflow([{ path: at("vars", "isLive"), value: true }]), ctx)).toBe("cell vars.isLive = true");
+    expect(describe(dataflow([{ path: at("layer", "cams", "controls", "k3", "latched"), value: true }]), ctx)).toBe(
+      "helper layer.cams.controls.k3.latched = true",
+    );
+  });
 });

@@ -1,6 +1,6 @@
 # Milestone 8: Dataflow
 
-- **Status:** In progress (Phases 0–5 done, except `cascade: through`)
+- **Status:** In progress (Phases 0–6 done, except `cascade: through`)
 
 Covalence gets its continuous half. Values can be computed, accumulated and sent somewhere without a flow ([dataflow §10.3](../specs/dataflow.md#103-sources-transforms-and-sinks-helpers-are-transforms)):
 - **Reducers** (`toggle`, `position`, `select` …) are sandboxed transform definitions.
@@ -76,11 +76,11 @@ Notes from Phase 2:
 - [x] Presets: navigation group, levels, shift, popover, always on, as `when` and `level`, evaluated natively. The editor shows them in Phase 6.
 
 ### Phase 6: UI
-- [ ] A variables view: declare, type, persist, computed with the source editor, and sinks.
-- [ ] Helpers on the key editor: pick a reducer, its options as sources, its sinks, and a live readout of its cell.
-- [ ] Layer fields: level, rank, `when` presets, and the control's candidates ("k3: Shift while k15 is held, otherwise Cameras").
-- [ ] The virtual deck's encoder and fader.
-- [ ] `why` and the timeline show cell patches as links in the chain.
+- [x] A variables view: declare, type, persist, computed with the source editor, and sinks. A reducer's options are edited as JSON. `GET /cells/problems` gives each failing cell's problem.
+- [x] Helpers on the key editor: pick a reducer, its options, its sinks, and a live readout of its cell. Options are JSON, not one source editor each. Controls without an image get the editor for their helpers.
+- [x] Layer fields: level, rank, `when` presets, and the control's candidates ("k3: Shift while k15 is held, otherwise Cameras").
+- [x] The virtual deck's encoder and fader (built with Phase 4).
+- [x] `why` and the timeline show cell patches as links in the chain: cells, helpers, resolution and levels sent read as such, and `why` says where it stepped over derived entries no longer kept.
 
 ### Phase 7: Acceptance
 - [ ] A Rust end-to-end test covers the "Done when" list against simulated devices.
