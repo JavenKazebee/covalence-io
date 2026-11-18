@@ -198,6 +198,10 @@ const rank = computed<number | null>({
     patch({ rank: n === null || n === 0 ? undefined : Math.max(0, Math.min(99, n)) });
   },
 });
+const cascade = computed<"replace" | "through">({
+  get: () => draft.value?.cascade ?? "replace",
+  set: (c) => patch({ cascade: c === "replace" ? undefined : c }),
+});
 const level = computed<Level>({
   get: () => draft.value?.level ?? "normal",
   set: (l) => {
@@ -438,6 +442,25 @@ async function remove() {
               {{ l }}
             </option>
           </select>
+        </div>
+        <div class="field">
+          <label for="layer-cascade">Covers</label>
+          <select
+            id="layer-cascade"
+            v-model="cascade"
+          >
+            <option value="replace">
+              its keys entirely
+            </option>
+            <option value="through">
+              only what it binds
+            </option>
+          </select>
+          <small class="hint">{{
+            cascade === "through"
+              ? "Keys keep the look of the layers below except what this layer binds, and pass presses down unless a key takes them."
+              : "Keys show only what this layer binds, and their presses are this layer's."
+          }}</small>
         </div>
         <div class="field">
           <label for="layer-rank">Rank</label>

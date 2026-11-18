@@ -44,6 +44,23 @@ pub struct ControlBinding {
     /// The control's gesture timing while this binding's layer controls it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gestures: Option<Gestures>,
+    /// Whether the layer takes the control's input (surfaces spec §5.2.1).
+    /// When absent, a `replace` layer claims it and a `through` layer
+    /// passes it down.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<InputMode>,
+}
+
+/// What a binding does with its control's input (surfaces spec §5.2.1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InputMode {
+    /// Takes it: events carry this layer, and its helpers and triggers see them.
+    Claim,
+    /// Leaves it to the layers below.
+    Pass,
+    /// Takes it and does nothing with it.
+    Block,
 }
 
 /// Gesture timing for one control (bindings §1, surfaces spec §11.4). Each is a
@@ -566,6 +583,14 @@ pub fn validate(binding: &ControlBinding, ctx: &Context) -> Report {
             }
         },
     };
+    if binding.input == Some(InputMode::Block) && !binding.helpers.is_empty() {
+        v.error(
+            vec![key("input")],
+            Code::Invalid,
+            "a binding that blocks its control's input can't have helpers: they'd never step"
+                .into(),
+        );
+    }
     if let Some(control) = control {
         for prop in binding.props.keys() {
             let output = prop.output();

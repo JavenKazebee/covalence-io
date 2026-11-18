@@ -78,6 +78,8 @@ export interface Layer {
   level?: Level;
   /** Its order within its level, 0 to 99. */
   rank?: Source;
+  /** `through`: sets only what it binds, the rest from the layers below (surfaces spec §5.2.1). */
+  cascade?: "replace" | "through";
 }
 
 /** When a layer is active (surfaces spec §5.3). Mirrors `covalence_core::surface::When`. */
@@ -176,7 +178,8 @@ export function candidatesText(control: string, layers: readonly Layer[]): strin
   if (found.length === 0) return `${control}: no layer covers it`;
   const one = (l: Layer) => {
     const level = l.level !== undefined && l.level !== "normal" ? `${l.level}, ` : "";
-    return `${l.name} (${level}${whenText(l.when)})`;
+    const through = l.cascade === "through" ? "through, " : "";
+    return `${l.name} (${level}${through}${whenText(l.when)})`;
   };
   return `${control}: ${found.map(one).join(", otherwise ")}`;
 }

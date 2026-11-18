@@ -68,6 +68,9 @@ const TURN_LIMIT: Duration = Duration::from_millis(50);
 const DROP_LOG_EVERY: Duration = Duration::from_secs(1);
 
 pub type SurfaceId = String;
+
+/// What a binding sets, and the `(layer, control)` it's on.
+type BoundAt = ((LayerId, String), resolve::Bound);
 pub type LayerId = String;
 
 /// A control device (surfaces spec §1).
@@ -204,6 +207,27 @@ pub struct Layer {
     /// Its order within its level, 0 to 99; 0 when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rank: Option<crate::source::Source<f64>>,
+    /// Whether it sets the whole look of the controls it covers, or only
+    /// what it binds (surfaces spec §5.2.1).
+    #[serde(default, skip_serializing_if = "Cascade::is_replace")]
+    pub cascade: Cascade,
+}
+
+/// How a layer covers what's under it (surfaces spec §5.2.1).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Cascade {
+    /// Sets the whole look of its controls and takes their input.
+    #[default]
+    Replace,
+    /// Sets only what it binds; the rest comes from the layers below.
+    Through,
+}
+
+impl Cascade {
+    fn is_replace(&self) -> bool {
+        *self == Cascade::Replace
+    }
 }
 
 /// When a layer is active (surfaces spec §5.3).
@@ -614,6 +638,9 @@ struct Inner {
     sessions: AtomicU64,
     on_shown: Mutex<Option<OnShown>>,
     on_active: Mutex<Option<OnActive>>,
+    /// What each binding sets, by binding ID, for resolution (surfaces spec
+    /// §5.2.1).
+    bound: Mutex<BTreeMap<String, BoundAt>>,
     /// Each control's `gestures`, by `(layer, control)`, with its binding.
     gestures: Mutex<BTreeMap<(LayerId, String), (String, crate::binding::Gestures)>>,
     /// The connection aliases gesture settings' expressions read.
@@ -690,6 +717,7 @@ impl Surfaces {
                 on_shown: Mutex::new(None),
                 on_active: Mutex::new(None),
                 gestures: Mutex::new(BTreeMap::new()),
+                bound: Mutex::new(BTreeMap::new()),
                 aliases: Mutex::new(Arc::new(BTreeMap::new())),
                 evaluator: crate::expr::QuickJs::new(crate::expr::Limits {
                     time: crate::binding::worker::EXPR_TIME,
@@ -856,6 +884,16 @@ impl Surfaces {
 
     /// Adds or replaces a control binding.
     pub fn set_binding(&self, binding: ControlBinding) {
+        self.inner.set_bound(
+            &binding.id,
+            Some((
+                (binding.layer.clone(), binding.control.clone()),
+                resolve::Bound {
+                    props: binding.props.keys().copied().collect(),
+                    input: binding.input,
+                },
+            )),
+        );
         {
             let mut gestures = lock(&self.inner.gestures);
             gestures.retain(|_, (id, _)| *id != binding.id);
@@ -870,6 +908,7 @@ impl Surfaces {
     }
 
     pub fn remove_binding(&self, id: &str) {
+        self.inner.set_bound(id, None);
         lock(&self.inner.gestures).retain(|_, (b, _)| b != id);
         self.inner.bindings.remove(id);
     }
@@ -1234,6 +1273,8 @@ pub struct LayerContext<'a> {
     pub surfaces: &'a BTreeSet<String>,
     /// Compiles expressions in its fields.
     pub evaluator: &'a dyn crate::expr::Evaluator,
+    /// The other layers, for `ambiguousOrder`.
+    pub others: &'a BTreeMap<LayerId, Layer>,
 }
 
 /// Checks a layer (surfaces spec §9): a name, a slug no other layer has, at
@@ -1315,8 +1356,53 @@ pub fn validate_layer(layer: &Layer, ctx: &LayerContext<'_>) -> Report {
     }
     Report {
         errors,
-        warnings: Vec::new(),
+        warnings: ambiguous(layer, ctx.others),
     }
+}
+
+/// `ambiguousOrder` (surfaces spec §5.2): another layer at the same level and
+/// literal rank covers one of the same controls and can be active at the
+/// same time. Two layers in one navigation group can't be. A rank that
+/// follows state isn't compared.
+fn ambiguous(layer: &Layer, others: &BTreeMap<LayerId, Layer>) -> Vec<Problem> {
+    let rank = |l: &Layer| match &l.rank {
+        None => Some(0.0),
+        Some(crate::source::Source::Literal(r)) => Some(*r),
+        Some(_) => None,
+    };
+    let group = |l: &Layer| match l.when.clone().unwrap_or_default() {
+        When::Nav(g) => Some(g),
+        _ => None,
+    };
+    let Some(mine) = rank(layer) else {
+        return Vec::new();
+    };
+    others
+        .values()
+        .filter(|o| o.id != layer.id && o.level == layer.level && rank(o) == Some(mine))
+        .filter(|o| group(o).is_none() || group(o) != group(layer))
+        .filter_map(|o| {
+            let shared: Vec<&str> = layer
+                .controls
+                .iter()
+                .filter(|c| o.control(&c.id).is_some())
+                .map(|c| c.id.as_str())
+                .collect();
+            (!shared.is_empty()).then(|| {
+                Problem::new(
+                    vec![key("rank")],
+                    Code::AmbiguousOrder,
+                    format!(
+                        "{} and {} can be active at once at the same level and rank, on {}: \
+                         whichever became active last wins. Give one a different rank.",
+                        layer.name,
+                        o.name,
+                        shared.join(", ")
+                    ),
+                )
+            })
+        })
+        .collect()
 }
 
 /// A layer field's source: its expressions compile, and nothing in it
@@ -1980,6 +2066,26 @@ impl Inner {
         lock(&self.book)
     }
 
+    /// Records what a binding sets, or that it's gone. When that changes
+    /// which properties or input a layer takes, surfaces are resolved again.
+    fn set_bound(&self, id: &str, now: Option<BoundAt>) {
+        let map = {
+            let mut bound = lock(&self.bound);
+            let before = bound.get(id).cloned();
+            if before == now {
+                return;
+            }
+            match now {
+                Some(b) => bound.insert(id.to_owned(), b),
+                None => bound.remove(id),
+            };
+            bound.values().cloned().collect::<resolve::BoundMap>()
+        };
+        self.resolver.set_bound(Arc::new(map));
+        self.shared.state.settle();
+        self.activated();
+    }
+
     /// A control's gesture timing at a press (surfaces spec §11.4): from the binding on
     /// the layer controlling it, each setting read now, or the default. A
     /// setting that fails is reported as the binding's problem.
@@ -2317,6 +2423,7 @@ mod tests {
     }
 
     static NO_SURFACES: BTreeSet<String> = BTreeSet::new();
+    static NO_LAYERS: BTreeMap<LayerId, Layer> = BTreeMap::new();
     static QJS: std::sync::LazyLock<crate::expr::QuickJs> =
         std::sync::LazyLock::new(crate::expr::QuickJs::default);
 
@@ -2329,7 +2436,61 @@ mod tests {
             bound,
             surfaces: &NO_SURFACES,
             evaluator: &*QJS,
+            others: &NO_LAYERS,
         }
+    }
+
+    #[test]
+    fn layers_that_tie_on_a_control_are_ambiguous() {
+        let none = BTreeSet::new();
+        let bound = BTreeMap::new();
+        let mk = |id: &str, json: serde_json::Value| {
+            let mut l = serde_json::json!({ "id": id, "name": id, "slug": id, "controls": [{ "id": "k3" }] });
+            l.as_object_mut()
+                .unwrap()
+                .extend(json.as_object().unwrap().clone());
+            Layer::parse(&l).unwrap()
+        };
+        let others: BTreeMap<LayerId, Layer> = [
+            (
+                "strip".to_owned(),
+                mk("strip", serde_json::json!({ "when": { "always": true } })),
+            ),
+            ("cams".to_owned(), mk("cams", serde_json::json!({}))),
+        ]
+        .into();
+        let warned = |l: &Layer| {
+            let ctx = LayerContext {
+                others: &others,
+                ..lctx(&none, &bound)
+            };
+            validate_layer(l, &ctx)
+                .warnings
+                .iter()
+                .map(|p| serde_json::to_value(p).unwrap()["code"].clone())
+                .collect::<Vec<_>>()
+        };
+        // Another page in `main` is never active with Cameras; the always-on
+        // strip is, at the same level and rank.
+        assert_eq!(
+            warned(&mk("audio", serde_json::json!({}))),
+            [serde_json::json!("ambiguousOrder")]
+        );
+        assert!(warned(&mk("audio", serde_json::json!({ "rank": 2 }))).is_empty());
+        assert!(
+            warned(&mk(
+                "pop",
+                serde_json::json!({ "level": "over", "when": { "nav": "popover" } })
+            ))
+            .is_empty()
+        );
+        assert!(
+            warned(&mk(
+                "shift",
+                serde_json::json!({ "rank": { "expr": "vars.r" } })
+            ))
+            .is_empty()
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # Milestone 8: Dataflow
 
-- **Status:** Done, except `cascade: through` (still proposed) and the budgets on the reference machine
+- **Status:** Done, except the budgets on the reference machine
 
 Covalence gets its continuous half. Values can be computed, accumulated and sent somewhere without a flow ([dataflow §10.3](../specs/dataflow.md#103-sources-transforms-and-sinks-helpers-are-transforms)):
 - **Reducers** (`toggle`, `position`, `select` …) are sandboxed transform definitions.
@@ -19,7 +19,7 @@ Helpers on controls are reducers whose input defaults to their control. Layers b
 - [x] The virtual fader in motor mode: `value` bound to `vh`'s simulated volume moves it, and sends nothing back. Dragging it sends rate-limited actions, and `requested.level` and `value` are both readable. A fader input the host marks `echo: true` updates `value` and gives no `change` ([surfaces spec §11.4](../specs/surfaces.md#114-level-outputs-echoes-gesture-timing-and-per-surface-helpers)).
 - [x] A virtual encoder with a `select` helper over `core` surfaces' layers and `to: {action: navigate}` pages a deck.
 - [x] A shift layer (`level: over`, `when: {while: …k15.pressed}`) takes over three keys while `k15` is held and redraws within 16 ms. A latching shift reads a `toggle`.
-- [ ] (Proposed) The same shift layer with `cascade: through` binds only `label` and claims input: the keys keep the base layer's background and tally, and `why` on k3's background names the base layer. A lock layer that binds an icon and `input: block` leaves every key's look live and ignores presses. Two layers that tie on a control get `ambiguousOrder` in the editor.
+- [x] The same shift layer with `cascade: through` binds only `label` and claims input: the keys keep the base layer's background and tally, and `why` on k3's background names the base layer. A lock layer that binds an icon and `input: block` leaves every key's look live and ignores presses. Two layers that tie on a control get `ambiguousOrder` in the editor. The lock layer binds a `label`, since `icon` isn't a property yet (core `layers` test).
 - [x] Every built-in reducer has a `defineTransform` definition and a conformance suite. Any native implementation passes it.
 - [x] A cycle between two computed variables is reported as `cycle` on both, and the rest of the turn goes on.
 - [x] A declared variable with `persist: true` keeps its value across a server restart.
@@ -71,7 +71,7 @@ Notes from Phase 2:
 
 ### Phase 5: Layer resolution (Rust)
 - [x] `when`, `level`, `rank` and `on` as sources and selectors; the resolution rule of surfaces §5.2; `surface.<slug>.layers` and `.controls.<id>.layer`; `resolutionCycle`. `covalence_core::surface::resolve` runs as the state turn's last step, after cells, and writes both paths in that turn; the binding worker draws from it and input takes its layer from it. `self` in a layer's expressions is its surface. Navigation groups beyond `main` (API and `navigate`).
-- [ ] (Proposed) `cascade: through`: per-property resolution and input as a property (surfaces §5.2.1), `.controls.<id>.look`, the binding's `input`, and `ambiguousOrder`.
+- [x] `cascade: through`: per-property resolution and input as a property (surfaces §5.2.1), `.controls.<id>.look`, the binding's `input`, and `ambiguousOrder`.
 - [x] Armed layers, evaluated ahead while inactive: candidates whose `when` reads the surface's input state.
 - [x] Presets: navigation group, levels, shift, popover, always on, as `when` and `level`, evaluated natively. The editor shows them in Phase 6.
 

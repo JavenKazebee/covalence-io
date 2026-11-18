@@ -972,3 +972,35 @@ fn gesture_settings_must_be_durations() {
         .is_err()
     );
 }
+
+/// A binding that blocks its control's input can't have helpers, which
+/// would never step (surfaces spec §5.2.1).
+#[test]
+fn a_blocking_binding_has_no_helpers() {
+    let layers: BTreeMap<String, covalence_core::surface::Layer> =
+        [(CAMS.to_owned(), common::deck_layer(CAMS, "cams", 5, 3))].into();
+    let conns = [VH.to_owned()].into();
+    let ctx = covalence_core::binding::Context {
+        layers: &layers,
+        conns: &conns,
+        taken: &Default::default(),
+        evaluator: &covalence_core::expr::QuickJs::default(),
+    };
+    let codes = |extra: serde_json::Value| {
+        let mut b = json!({ "id": "b", "layer": CAMS, "control": "k0" });
+        b.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        covalence_core::binding::validate(&ControlBinding::parse(&b).unwrap(), &ctx)
+            .errors
+            .iter()
+            .map(|p| serde_json::to_value(p).unwrap()["code"].clone())
+            .collect::<Vec<_>>()
+    };
+    assert!(codes(json!({ "input": "block", "props": { "label": "Locked" } })).is_empty());
+    assert!(codes(json!({ "input": "pass", "helpers": { "on": { "use": "toggle" } } })).is_empty());
+    assert_eq!(
+        codes(json!({ "input": "block", "helpers": { "on": { "use": "toggle" } } })),
+        [json!("invalid")]
+    );
+}

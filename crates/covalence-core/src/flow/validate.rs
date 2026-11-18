@@ -71,6 +71,9 @@ pub enum Code {
     NoTimeout,
     /// A `set` to a variable no `variable` entity declares (dataflow §6).
     UndeclaredVariable,
+    /// Two layers that can be active at once, at the same level and rank,
+    /// on the same control: recency decides (surfaces spec §5.2).
+    AmbiguousOrder,
 }
 
 /// One problem, with its place in the flow as a segment array:

@@ -97,7 +97,10 @@ function describeDataflowPatch(entry: JournalEntry, ctx: SummaryContext): string
   const under = (op: (typeof ops)[number]) => op.path.path.map(String);
   const isResolution = (op: (typeof ops)[number]) => {
     const p = under(op);
-    return op.path.conn === "surface" && ((p.length === 2 && p[1] === "layers") || (p.length === 4 && p[1] === "controls" && p[3] === "layer"));
+    return (
+      op.path.conn === "surface" &&
+      ((p.length === 2 && p[1] === "layers") || (p.length === 4 && p[1] === "controls" && (p[3] === "layer" || p[3] === "look")))
+    );
   };
   if (ops.every(isResolution)) {
     const slug = under(ops[0]!)[0];
@@ -107,6 +110,9 @@ function describeDataflowPatch(entry: JournalEntry, ctx: SummaryContext): string
       if (p[1] === "layers") {
         const active = Array.isArray(op.value) ? op.value.map(String) : [];
         parts.push(active.length === 0 ? "no layer active" : `active ${active.join(", ")}`);
+      } else if (p[3] === "look") {
+        const from = Object.entries((op.value ?? {}) as Record<string, unknown>).map(([prop, l]) => `${prop} from ${String(l)}`);
+        parts.push(`${p[2]} ${from.length === 0 ? "unbound" : from.join(", ")}`);
       } else {
         parts.push(op.value == null ? `${p[2]} on no layer` : `${p[2]} on ${String(op.value)}`);
       }

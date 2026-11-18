@@ -149,6 +149,9 @@ group("journal summaries", () => {
         ctx,
       ),
     ).toBe("deck: active shift, cams; k3 on shift");
+    expect(
+      describe(dataflow([{ path: at("surface", "deck", "controls", "k3", "look"), value: { background: "cams", label: "shift" } }]), ctx),
+    ).toBe("deck: k3 background from cams, label from shift");
     expect(describe(dataflow([{ path: at("surface", "deck", "controls", "f0", "requested", "level"), value: 0.5 }]), ctx)).toBe(
       "deck f0 level sent 0.5",
     );

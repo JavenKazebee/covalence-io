@@ -75,7 +75,21 @@ export interface ControlBinding {
   helpers?: Record<string, Helper>;
   /** Per-control gesture timing (surfaces spec §4.2), kept as it is. */
   gestures?: Record<string, Source>;
+  /**
+   * Whether its layer takes the control's input (surfaces spec §5.2.1). When
+   * absent, a `replace` layer claims it and a `through` layer passes it down.
+   */
+  input?: InputMode;
 }
+
+export const inputModes = ["claim", "pass", "block"] as const;
+export type InputMode = (typeof inputModes)[number];
+
+export const inputModeNames: Record<InputMode, string> = {
+  claim: "Takes presses",
+  pass: "Passes presses to the layer below",
+  block: "Takes presses and ignores them",
+};
 
 /**
  * A helper (bindings spec §5): a reducer whose `on` and `input` default to
@@ -217,12 +231,18 @@ export function fromDraft(draft: ControlBinding): ControlBinding {
   }
   if (draft.helpers !== undefined && Object.keys(draft.helpers).length > 0) out.helpers = copyJson(draft.helpers as never);
   if (draft.gestures !== undefined && Object.keys(draft.gestures).length > 0) out.gestures = copyJson(draft.gestures as never);
+  if (draft.input !== undefined) out.input = draft.input;
   return out;
 }
 
 /** Whether a binding sets nothing, so saving it deletes it. */
 export function isEmpty(binding: ControlBinding): boolean {
-  return Object.keys(binding.props).length === 0 && binding.helpers === undefined && binding.gestures === undefined;
+  return (
+    Object.keys(binding.props).length === 0 &&
+    binding.helpers === undefined &&
+    binding.gestures === undefined &&
+    binding.input === undefined
+  );
 }
 
 export function newDraft(layer: string, control: string): ControlBinding {

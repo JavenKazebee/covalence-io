@@ -34,7 +34,8 @@ use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use covalence_protocol::Value;
 use serde_json::Value as Json;
 
-use super::{ControlDef, Layer, LayerId, STATE_ROOT, SurfaceId, When, key, missing};
+use super::{Cascade, ControlDef, Layer, LayerId, STATE_ROOT, SurfaceId, When, key, missing};
+use crate::binding::{InputMode, Prop};
 use crate::expr::{Limits, QuickJs, Scope};
 use crate::journal::{CoreOrigin, Journal, JournalOp, NewEntry, Origin, Record, StatePatchRecord};
 use crate::source::Eval;
@@ -45,21 +46,39 @@ use crate::state::{ConnId, Dirty, LiveState, Meta, Quality, Settler, Source, Sta
 pub struct Resolution {
     /// The active layers, highest first.
     pub active: Vec<LayerId>,
-    /// The layer controlling each control, by control ID. A control no
-    /// active layer covers isn't listed.
+    /// The layer that has each control's input, by control ID: the
+    /// controlling layer. A control no active layer covers isn't listed.
     pub controls: BTreeMap<String, LayerId>,
+    /// Where each control's bound properties come from (surfaces spec
+    /// §5.2.1). A property no layer sets isn't listed: it's the default.
+    pub look: BTreeMap<String, BTreeMap<Prop, LayerId>>,
     /// Inactive layers whose `when` reads the surface's input state.
     pub armed: BTreeSet<LayerId>,
 }
 
 impl Resolution {
     /// The layers whose bindings should be kept evaluated for the surface:
-    /// those controlling a control, and armed ones.
+    /// those a control's look or input comes from, and armed ones.
     pub fn evaluated(&self) -> impl Iterator<Item = &LayerId> {
-        let controlling: BTreeSet<&LayerId> = self.controls.values().collect();
-        controlling.into_iter().chain(self.armed.iter())
+        let shown: BTreeSet<&LayerId> = self
+            .controls
+            .values()
+            .chain(self.look.values().flat_map(BTreeMap::values))
+            .collect();
+        shown.into_iter().chain(self.armed.iter())
     }
 }
+
+/// What a layer's binding on a control sets, for resolution: the
+/// properties it binds and what it does with input.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Bound {
+    pub props: BTreeSet<Prop>,
+    pub input: Option<InputMode>,
+}
+
+/// Bindings by `(layer, control)`.
+pub type BoundMap = BTreeMap<(LayerId, String), Bound>;
 
 /// Resolves layers for every attached surface, in the state turn.
 pub struct Resolver {
@@ -75,6 +94,7 @@ pub struct Resolver {
 
 struct Inner {
     layers: Arc<BTreeMap<LayerId, Layer>>,
+    bound: Arc<BoundMap>,
     /// Every surface's ID: the universe of a layer's `on`.
     universe: Vec<SurfaceId>,
     aliases: Arc<BTreeMap<String, ConnId>>,
@@ -111,6 +131,7 @@ impl Resolver {
             journal,
             inner: Mutex::new(Inner {
                 layers: Arc::new(BTreeMap::new()),
+                bound: Arc::new(BTreeMap::new()),
                 universe: Vec::new(),
                 aliases: Arc::new(BTreeMap::new()),
                 evaluator: QuickJs::new(Limits {
@@ -134,6 +155,14 @@ impl Resolver {
     pub fn set_layers(&self, layers: Arc<BTreeMap<LayerId, Layer>>) {
         let mut inner = self.lock();
         inner.layers = layers;
+        inner.all_due();
+    }
+
+    /// Replaces what each binding sets (surfaces spec §5.2.1). Every
+    /// surface is resolved at the next turn.
+    pub fn set_bound(&self, bound: Arc<BoundMap>) {
+        let mut inner = self.lock();
+        inner.bound = bound;
         inner.all_due();
     }
 
@@ -277,6 +306,7 @@ impl Settler for Resolver {
 impl Resolver {
     fn resolve(&self, inner: &mut Inner, state: &Arc<LiveState>, surface: &str, dirty: &mut Dirty) {
         let layers = inner.layers.clone();
+        let bound = inner.bound.clone();
         let aliases = inner.aliases.clone();
         let Some(target) = inner.surfaces.get(surface) else {
             return;
@@ -407,17 +437,22 @@ impl Resolver {
                 .then(target.active[&b.layer.id].cmp(&target.active[&a.layer.id]))
                 .then(a.layer.id.cmp(&b.layer.id))
         });
+        let ordered: Vec<&Layer> = order.iter().map(|c| c.layer).collect();
+        let mut by_input = BTreeMap::new();
+        let mut look = BTreeMap::new();
+        for control in &controls {
+            let (input, props) = cascade(&control.id, &ordered, &bound);
+            if let Some(layer) = input {
+                by_input.insert(control.id.clone(), layer);
+            }
+            if !props.is_empty() {
+                look.insert(control.id.clone(), props);
+            }
+        }
         let resolution = Resolution {
             active: order.iter().map(|c| c.layer.id.clone()).collect(),
-            controls: controls
-                .iter()
-                .filter_map(|control| {
-                    let layer = order
-                        .iter()
-                        .find(|c| c.layer.control(&control.id).is_some())?;
-                    Some((control.id.clone(), layer.layer.id.clone()))
-                })
-                .collect(),
+            controls: by_input,
+            look,
             armed: candidates
                 .iter()
                 .filter(|c| !c.active && c.reads_input)
@@ -445,6 +480,20 @@ impl Resolver {
                     .controls
                     .get(&control.id)
                     .map_or(Value::Nil, slug_of),
+            ));
+            let props = resolution.look.get(&control.id);
+            ops.push((
+                StatePath::new(
+                    STATE_ROOT,
+                    vec![key(&slug), key("controls"), key(&control.id), key("look")],
+                ),
+                Value::Map(
+                    props
+                        .into_iter()
+                        .flatten()
+                        .map(|(prop, layer)| (prop.as_str().into(), slug_of(layer)))
+                        .collect(),
+                ),
             ));
         }
         let (ops, cause) = state.read(|tree| {
@@ -516,6 +565,46 @@ impl Resolver {
         });
         dirty.extend(changed);
     }
+}
+
+/// Who has a control's input, and where each of its properties comes from
+/// (surfaces spec §5.2.1), given the active layers highest first.
+///
+/// Going down: a property comes from the first layer that binds it or is a
+/// `replace` layer, which leaves what it doesn't bind blank. Input is one
+/// more property: it goes to the first layer whose binding claims or blocks
+/// it, or the first `replace` layer. A binding's input defaults to `claim`
+/// on a `replace` layer and `pass` on a `through` one.
+pub fn cascade(
+    control: &str,
+    ordered: &[&Layer],
+    bound: &BoundMap,
+) -> (Option<LayerId>, BTreeMap<Prop, LayerId>) {
+    let mut input = None;
+    let mut props = BTreeMap::new();
+    let mut open: BTreeSet<Prop> = Prop::ALL.into_iter().collect();
+    for layer in ordered.iter().filter(|l| l.control(control).is_some()) {
+        let binding = bound.get(&(layer.id.clone(), control.to_owned()));
+        let replace = layer.cascade == Cascade::Replace;
+        for prop in binding.map(|b| &b.props).into_iter().flatten() {
+            if open.remove(prop) {
+                props.insert(*prop, layer.id.clone());
+            }
+        }
+        let mode = binding.and_then(|b| b.input).unwrap_or(if replace {
+            InputMode::Claim
+        } else {
+            InputMode::Pass
+        });
+        if input.is_none() && (mode != InputMode::Pass || replace) {
+            input = Some(layer.id.clone());
+        }
+        if replace {
+            // Nothing under a replace layer shows.
+            break;
+        }
+    }
+    (input, props)
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {

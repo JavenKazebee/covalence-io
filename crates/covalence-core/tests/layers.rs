@@ -421,3 +421,135 @@ async fn popovers_open_by_navigation_and_on_picks_surfaces() {
             .is_err()
     );
 }
+
+fn bound(id: &str, layer: &str, control: &str, json: serde_json::Value) -> ControlBinding {
+    let mut b = json!({ "id": id, "layer": layer, "control": control });
+    b.as_object_mut()
+        .unwrap()
+        .extend(json.as_object().unwrap().clone());
+    ControlBinding::parse(&b).unwrap()
+}
+
+/// The milestone's `cascade: through` shift: it binds only `label` and
+/// claims input, so held keys keep the base layer's background, and k3's
+/// `look` names where each property comes from. A key it covers but doesn't
+/// bind passes input down. A lock layer that binds a label and blocks input
+/// leaves the look live and takes presses away from the page.
+#[tokio::test]
+async fn a_through_layer_sets_only_what_it_binds() {
+    let w = world();
+    w.surfaces
+        .set_layer(layer(
+            SHIFT,
+            "shift",
+            &[3, 4],
+            json!({
+                "level": "over", "cascade": "through",
+                "when": { "while": { "expr": "self.controls.k14.pressed" } },
+            }),
+        ))
+        .unwrap();
+    w.surfaces
+        .set_layer(layer(
+            MODE,
+            "lock",
+            &[3, 4],
+            json!({
+                "level": "over", "rank": 50, "cascade": "through",
+                "when": { "while": { "ref": { "root": "vars", "path": ["locked"] } } },
+            }),
+        ))
+        .unwrap();
+    let tally = json!({ "props": { "label": "Cam 3", "background": "#e02020" } });
+    w.surfaces.set_binding(bound("b-cam3", CAMS, "k3", tally));
+    w.surfaces.set_binding(bound(
+        "b-shift3",
+        SHIFT,
+        "k3",
+        json!({ "props": { "label": "Wide" }, "input": "claim" }),
+    ));
+    w.surfaces.set_binding(bound(
+        "b-lock3",
+        MODE,
+        "k3",
+        json!({ "props": { "label": "Locked" }, "input": "block" }),
+    ));
+    let red = |label: &str| Look {
+        label: label.into(),
+        background: Rgb(0xe0, 0x20, 0x20),
+        ..Look::default()
+    };
+
+    let mut link = w.surfaces.attach(DECK, deck()).unwrap();
+    w.surfaces.flush().await;
+    assert_eq!(draws(&mut link)["k3"], image(red("Cam 3")));
+    let at = |control: &str, leaf: &str| path(&["deck", "controls", control, leaf]);
+    let look_of = |pairs: &[(&str, &str)]| {
+        Value::Map(
+            pairs
+                .iter()
+                .map(|(p, l)| (Value::from(*p), Value::from(*l)))
+                .collect(),
+        )
+    };
+    assert_eq!(
+        w.shared.state.value(&at("k3", "look")),
+        Some(look_of(&[("background", "cams"), ("label", "cams")]))
+    );
+
+    // Held: the label is Shift's, the background still Cameras'.
+    link.input
+        .send(press("k14", InputKind::Down))
+        .await
+        .unwrap();
+    until(&w, &at("k3", "layer"), "shift".into()).await;
+    assert_eq!(
+        w.shared.state.value(&at("k3", "look")),
+        Some(look_of(&[("background", "cams"), ("label", "shift")]))
+    );
+    assert_eq!(
+        w.shared.state.value(&at("k4", "layer")),
+        Some("cams".into()),
+        "k4 is covered but not bound: its input passes down"
+    );
+    w.surfaces.flush().await;
+    assert_eq!(draws(&mut link)["k3"], image(red("Wide")));
+    link.input.send(press("k14", InputKind::Up)).await.unwrap();
+    until(&w, &at("k3", "layer"), "cams".into()).await;
+
+    // Locked: presses are the lock layer's, so nothing on Cameras sees them,
+    // and the key's look stays live.
+    let meta = covalence_core::state::Meta {
+        ts: 0,
+        seq: 1,
+        quality: covalence_core::state::Quality::Good,
+        source: covalence_core::state::Source::Core,
+    };
+    let locked = StatePath::new("vars", vec![PathSegment::Key("locked".into())]);
+    w.shared
+        .state
+        .mutate(|tree| ((), tree.set(&locked, &Value::from(true), &meta)));
+    assert_eq!(
+        w.shared.state.value(&at("k3", "layer")),
+        Some("lock".into())
+    );
+    w.surfaces.flush().await;
+    assert_eq!(draws(&mut link)["k3"], image(red("Locked")));
+    link.input.send(press("k3", InputKind::Down)).await.unwrap();
+    link.input.send(press("k3", InputKind::Up)).await.unwrap();
+    until(&w, &at("k3", "pressed"), false.into()).await;
+    let layers_pressed: Vec<Option<String>> = w
+        .shared
+        .journal
+        .range(1, usize::MAX)
+        .unwrap()
+        .into_iter()
+        .filter_map(|e| match &e.record {
+            Record::Event(ev) if ev.control.as_deref() == Some("k3") && ev.event == "press" => {
+                Some(ev.layer.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(layers_pressed, [Some(MODE.to_owned())]);
+}

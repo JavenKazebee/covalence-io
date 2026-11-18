@@ -25,7 +25,7 @@ interface ControlBinding {        // project entity `control_binding`
   props: { [prop in ControlProp]?: Source<Value> };   // (M6) was `Binding`, §2
   helpers?: Helper[];             // (M8) §5
   gestures?: GestureTiming;       // (M8) surfaces §4.2: doubleWindow, longAfter, holdEvery, as Sources
-  input?: "claim" | "pass" | "block";   // (M8, proposed) surfaces §5.2.1; default "claim" on a replace layer, "pass" on a through layer
+  input?: "claim" | "pass" | "block";   // (M8) surfaces §5.2.1; default "claim" on a replace layer, "pass" on a through layer
 }
 
 type ControlProp =
@@ -37,7 +37,7 @@ type ControlProp =
 
 Each property has an expected type: `label` and `text` are strings, colours are `color` values, `icon` and `image` are asset IDs or URLs, and `value` is a number from 0 to 1. The editor checks the binding's result against it (§4). **(M8)** A `value` outside 0 to 1 is held to it, and an `undefined` one sends nothing. Each level sent is written to `requested.level` (surfaces §4.4).
 
-Each property drives one output capability (surfaces §2), and **(Now)** a property can only be bound on a control whose layer declares that output (`noOutput`). Whichever layer controls a control sets its whole look; nothing falls through from layers underneath (surfaces §5.2). **(M8, proposed)** A layer with `cascade: "through"` sets only the properties it binds, and the rest come from the layers below (surfaces §5.2.1).
+Each property drives one output capability (surfaces §2), and **(Now)** a property can only be bound on a control whose layer declares that output (`noOutput`). Whichever layer controls a control sets its whole look; nothing falls through from layers underneath (surfaces §5.2). **(M8)** A layer with `cascade: "through"` sets only the properties it binds, and the rest come from the layers below (surfaces §5.2.1).
 
 | Properties | Output |
 |---|---|

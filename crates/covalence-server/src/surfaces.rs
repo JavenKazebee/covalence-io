@@ -418,6 +418,7 @@ impl EntityKind for Layer {
                 bound: &bound,
                 surfaces: &surfaces,
                 evaluator: &*app.evaluator,
+                others: &read(&app.layers),
             },
         )
     }

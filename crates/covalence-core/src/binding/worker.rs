@@ -288,6 +288,45 @@ pub fn look(props: &BTreeMap<Prop, Evaluated>, state: &LiveState) -> Look {
     look
 }
 
+/// A control's look, its level, and what its `value` read, from the layers
+/// its properties come from (surfaces spec §5.2.1). From one layer, that's
+/// the layer's own evaluated look; from several, the properties are put
+/// together.
+fn compose<'r>(
+    sources: Option<&BTreeMap<Prop, LayerId>>,
+    control: &str,
+    resolved: &'r BTreeMap<(LayerId, String), Resolved>,
+    state: &LiveState,
+) -> (Look, Option<f64>, Option<&'r BTreeSet<StatePath>>) {
+    let Some(sources) = sources else {
+        return (Look::default(), None, None);
+    };
+    let of = |layer: &LayerId| resolved.get(&(layer.clone(), control.to_owned()));
+    let value = sources.get(&Prop::Value).and_then(of);
+    let value_reads = value
+        .and_then(|r| r.props.get(&Prop::Value))
+        .map(|e| &e.reads);
+    let mut layers = sources.values();
+    let first = layers.next();
+    if let Some(only) = first.filter(|f| layers.all(|l| l == *f)) {
+        let r = of(only);
+        return (
+            r.map(|r| r.look.clone()).unwrap_or_default(),
+            r.and_then(|r| r.level),
+            value_reads,
+        );
+    }
+    let props: BTreeMap<Prop, Evaluated> = sources
+        .iter()
+        .filter_map(|(prop, layer)| Some((*prop, of(layer)?.props.get(prop)?.clone())))
+        .collect();
+    let level = match props.get(&Prop::Value).and_then(|e| e.value.as_ref()) {
+        Some(PropValue::Level(v)) => Some(*v),
+        _ => None,
+    };
+    (look(&props, state), level, value_reads)
+}
+
 /// A binding evaluated once against live state, for the editor's preview.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Preview {
@@ -582,18 +621,18 @@ impl Worker {
         };
         let mut requested = Vec::new();
         for control in &shown.controls {
-            let resolved = shown
-                .resolution
-                .controls
-                .get(&control.id)
-                .and_then(|layer| self.resolved.get(&(layer.clone(), control.id.clone())));
+            let (look, level, value_reads) = compose(
+                shown.resolution.look.get(&control.id),
+                &control.id,
+                &self.resolved,
+                &self.state,
+            );
             let has_level = control
                 .outputs
                 .iter()
                 .any(|o| matches!(o, OutputCap::Level { .. }));
             if has_level
-                && let Some(resolved) = resolved
-                && let Some(level) = resolved.level
+                && let Some(level) = level
                 && shown.levels.get(&control.id) != Some(&level)
             {
                 let output = Output::Level {
@@ -603,8 +642,7 @@ impl Worker {
                 match shown.outputs.try_send(output) {
                     Ok(()) => {
                         shown.levels.insert(control.id.clone(), level);
-                        let reads = resolved.props.get(&Prop::Value).map(|e| &e.reads);
-                        requested.push((control.id.clone(), level, reads.cloned()));
+                        requested.push((control.id.clone(), level, value_reads.cloned()));
                     }
                     // Tried again on the next turn, with the newest value.
                     Err(_) => {
@@ -615,7 +653,6 @@ impl Worker {
             let Some(image) = control.image() else {
                 continue;
             };
-            let look = resolved.map(|r| r.look.clone()).unwrap_or_default();
             if shown.drawn.get(&control.id) == Some(&look) {
                 continue;
             }

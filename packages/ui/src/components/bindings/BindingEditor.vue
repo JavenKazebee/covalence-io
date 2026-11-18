@@ -1,8 +1,19 @@
 <script setup lang="ts">
-import { computed, ref, type Ref } from "vue";
+import { computed, ref, watch, type Ref } from "vue";
 import { api, ApiError } from "../../api";
 import { provideInvalid } from "../../bindings/editing";
-import { fromDraft, isEmpty, newDraft, props as allProps, toDraft, type ControlBinding, type RuntimeProblem } from "../../bindings/model";
+import {
+  fromDraft,
+  inputModeNames,
+  inputModes,
+  isEmpty,
+  newDraft,
+  props as allProps,
+  toDraft,
+  type ControlBinding,
+  type InputMode,
+  type RuntimeProblem,
+} from "../../bindings/model";
 import { usePreviews } from "../../bindings/usePreviews";
 import { firesOn, newFlowDraft, pressTrigger, type ShownProblem } from "../../flows/model";
 import { navigate } from "../../nav";
@@ -43,6 +54,32 @@ const result = computed(() => results.get(props.control));
 const preview = computed(() => result.value?.preview);
 
 const empty = computed(() => isEmpty(sending.value));
+
+// ---- Input (surfaces spec §5.2.1) ----
+
+const through = computed(() => props.layer.cascade === "through");
+/** What the key does with presses when `input` isn't set. */
+const defaultInput = computed<InputMode>(() => (through.value ? "pass" : "claim"));
+const input = computed<InputMode | "">({
+  get: () => draft.value.input ?? "",
+  set: (mode) => {
+    if (mode === "") delete draft.value.input;
+    else draft.value.input = mode;
+  },
+});
+/**
+ * On a `through` layer, a key given something that needs its presses (a
+ * helper, a flow) claims them, so it's stored rather than inferred.
+ */
+function claimIfThrough() {
+  if (through.value && draft.value.input === undefined) draft.value.input = "claim";
+}
+watch(
+  () => Object.keys(draft.value.helpers ?? {}).length,
+  (n, before) => {
+    if (n > (before ?? 0)) claimIfThrough();
+  },
+);
 const helpersEditor = ref<InstanceType<typeof HelpersEditor> | null>(null);
 const baseline = computed(() => JSON.stringify(props.stored === undefined ? newDraft(props.layer.id, props.control) : fromDraft(props.stored)));
 const dirty = computed(() => JSON.stringify(sending.value) !== baseline.value);
@@ -104,6 +141,15 @@ function revert() {
 /** The flow that runs when this key is pressed, if there is one. */
 const pressFlow = computed(() => flows.flows.find((f) => f.triggers.some((t) => firesOn(t, props.layer.id, props.control, "press"))));
 
+/** A flow on a `through` layer's key needs its presses: it claims them first. */
+async function whenPressedAndClaim() {
+  if (through.value && draft.value.input === undefined) {
+    claimIfThrough();
+    await save();
+  }
+  whenPressed();
+}
+
 function whenPressed() {
   if (pressFlow.value !== undefined) {
     navigate({ tab: "flows", flow: pressFlow.value.id });
@@ -147,7 +193,7 @@ function whenPressed() {
           type="button"
           class="secondary"
           data-testid="when-pressed"
-          @click="whenPressed"
+          @click="whenPressedAndClaim"
         >
           {{ pressFlow ? `When pressed: ${pressFlow.name}` : "When pressed…" }}
         </button>
@@ -163,6 +209,25 @@ function whenPressed() {
       :problems="problemsOf(prop)"
       :runtime="dirty ? undefined : runtimeOf(prop)"
     />
+
+    <div class="field input-mode">
+      <label :for="`input-${control}`">Presses</label>
+      <select
+        :id="`input-${control}`"
+        v-model="input"
+      >
+        <option value="">
+          {{ inputModeNames[defaultInput] }} (this layer's default)
+        </option>
+        <option
+          v-for="m in inputModes"
+          :key="m"
+          :value="m"
+        >
+          {{ inputModeNames[m] }}
+        </option>
+      </select>
+    </div>
 
     <HelpersEditor
       ref="helpersEditor"

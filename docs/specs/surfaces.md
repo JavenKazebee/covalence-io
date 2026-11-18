@@ -48,7 +48,7 @@ interface Layer {                 // (Now) project entity `layer`, replacing `pa
   when?: When;                    // (M8) §5.3; default { nav: "main" }
   level?: "under" | "normal" | "over";   // (M8) §5.3; default "normal"
   rank?: Source<number>;          // (M8) within the level; default 0
-  cascade?: "replace" | "through";  // (M8, proposed) §5.2.1; default "replace"
+  cascade?: "replace" | "through";  // (M8) §5.2.1; default "replace"
   parent?: string;                // (Later) the tree preset, §5.3
   params?: { [name: string]: ParamDef };        // (M9) makes it a template (composition §7)
   template?: string;                            // (M9) makes it an instance; `params` are then Sources
@@ -137,7 +137,7 @@ type OutputKind = OutputCap["kind"];
 | `surface.<slug>.current.<group>` | layer slug, or `null` | **(Now)** The core and the API: the current layer of a navigation group (§5.3). `main` replaces M5's `surface.<slug>.page`, and is set on attach as `page` was. **(M7)** `main` is kept across restarts (stored, not replayed): a surface attaches showing the layer it last showed, if that still fits, and its `startLayer` only if it has never shown one. **(M8)** Other groups (`popover`) are navigated the same way and start empty after a restart |
 | `surface.<slug>.layers` | layer slugs, highest first | **(M8)** The core: the active layers in resolution order (§5.2), while attached |
 | `surface.<slug>.controls.<id>.layer` | layer slug, or `null` | **(M8)** The core: the layer controlling the control (§5.2), while attached. With `through` layers (§5.2.1), the layer that has its input |
-| `surface.<slug>.controls.<id>.look` | `{[prop]: layer slug}` | **(M8, proposed)** The core: which layer each bound property comes from (§5.2.1) |
+| `surface.<slug>.controls.<id>.look` | `{[prop]: layer slug}` | **(M8)** The core, while attached: which layer each property comes from, for the properties some layer binds (§5.2.1). Journaled with `layer` |
 | `surface.<slug>.controls.<id>.pressed` | `boolean` | **(Now)** The device: `momentary` input |
 | `surface.<slug>.controls.<id>.velocity` | `number`, 0 to 1 | **(Now)** The device: the last `down`, if the capability has `velocity` |
 | `surface.<slug>.controls.<id>.detents` | integer | **(Now)** The device: the running total of `relative` input since the attach |
@@ -283,9 +283,9 @@ The highest `level` wins, then the highest `rank`. A tie goes to the layer that 
 - **Guards.** A layer's sources can't read resolution results (`surface.<slug>.layers`, `.controls.<id>.layer`, and the same through `self`); saving such a layer fails with `resolutionCycle`. The check reads refs and the dotted names in expressions, so a path computed at run time isn't caught. Resolution runs once per scheduler turn, after cells have settled (dataflow §5.3): it's the state turn's last step, and its results are written in the same turn. A cell that reads them sees them from the next turn.
 - **Armed layers.** A candidate layer whose `when` reads the surface's input state (`self.controls.*`, which includes surface-scoped helpers) has its bindings evaluated ahead of time while inactive, so that holding shift redraws within the 16 ms budget. A latching shift reads a layer-scoped `toggle`, isn't armed, and is evaluated when it becomes active.
 - **The editor shows a control's candidates:** "k3: Shift (over, while k15 is held), otherwise Cameras (main)". It can simulate a state ("hold k15") to show what would change.
-- **(M8, proposed) Ties are flagged.** Two layers that can be active at once, at the same level and rank, on the same control, get an `ambiguousOrder` warning in the editor. Recency still breaks ties at run time, since popovers in different navigation groups rely on it, but a project shouldn't depend on it by accident.
+- **Ties are flagged.** Two layers that can be active at once, at the same level and rank, on the same control, get an `ambiguousOrder` warning in the editor. Recency still breaks ties at run time, since popovers in different navigation groups rely on it, but a project shouldn't depend on it by accident.
 
-### 5.2.1 Cascading through (M8, proposed)
+### 5.2.1 Cascading through (M8)
 
 A `replace` layer, the default, works as above: it sets the whole look of the controls it covers and gets their input. A layer with `cascade: "through"` sets only what it binds, and everything else comes from the layers below.
 
@@ -301,7 +301,7 @@ Some examples:
 | Layer | Cascade | Binds | Effect |
 |---|---|---|---|
 | Shift | `through`, `level: over` | `label`; `input: claim` | Keys show their alternate action and keep the base layer's colour and tally |
-| Lock | `through`, `level: over`, `when: {while: vars.locked}` | `icon` (a padlock); `input: block` | Every key keeps its live look and ignores presses |
+| Lock | `through`, `level: over`, `when: {while: vars.locked}` | **(Later)** `icon` (a padlock), or a `label`; `input: block` | Every key keeps its live look and ignores presses |
 | Rehearsal | `through`, `level: over`, `when: {while: sys.simulate}` | `background` | Keys go grey while simulating; labels, input and everything else are unchanged |
 | Confidence | `through`, `level: over` | `text` on the deck's display | Shows a clock and status without taking any keys |
 
@@ -479,7 +479,7 @@ Surfaces, layers and control bindings have the same routes and answers as flows 
 8. **Time-based output:** blinking and animation. Bindings follow state, not time.
 9. **Sequences** ("A then B within 1 s"): these need recent history, not current state. A reducer (dataflow §4.2) that steps on both events and emits `matched` may be enough.
 10. **Orbitals while the core is unreachable:** should an Orbital keep showing the last outputs, or run some feedback locally?
-11. ~~**Reading the look underneath:** a shift layer that relabels a key has to set its colour too.~~ Proposed in §5.2.1: `through` layers cascade per property, with input as one more property. Reading the look underneath is rejected.
+11. ~~**Reading the look underneath:** a shift layer that relabels a key has to set its colour too.~~ Decided in §5.2.1 and §11.3.2: `through` layers cascade per property, with input as one more property. Reading the look underneath is rejected.
 
 ---
 
@@ -516,7 +516,7 @@ Why surfaces and layers are this way, and what was rejected. Keep these notes wh
   - *Sections on a canvas* (Buttons): a second concept beside layers. A section is a layer with a region and its own navigation group.
   - *Conditional bindings with CSS-like specificity:* the hardest to predict, with no structure for the editor to show.
   - *Generating bindings at run time for dynamic grids:* the core would edit the project. Control groups (§6) evaluate a live list instead.
-  - *Layering per property* (a shift layer inheriting the colour underneath): wrong for navigation, and two rules for one control are hard to explain. `through` layers (§5.2.1) are the proposed answer.
+  - *Layering per property* (a shift layer inheriting the colour underneath): wrong for navigation, and two rules for one control are hard to explain. `through` layers (§5.2.1, §11.3.2) are the answer: per property, but only where a layer asks for it.
 
 ### 11.3.1 Resolution runs in the state turn
 - **Decided:** layer resolution is the state turn's last step, after cells settle, and writes `layers` and `.controls.<id>.layer` in that turn. The binding worker draws from its results, and a surface's input reads the controlling layer from them as it arrives. A layer that doesn't fit a surface isn't a candidate there. Navigation groups other than `main` aren't kept across restarts. A surface-scoped helper's cells are added when its layer becomes its `main` group's current layer, attached or not, or becomes active on the surface, before that surface's next input.
@@ -525,6 +525,14 @@ Why surfaces and layers are this way, and what was rejected. Keep these notes wh
   - *Resolving in the binding worker:* drawing waits on resolution anyway, but input would see the previous resolution.
   - *Resolving in the dataflow graph, as cells:* resolution reads every layer's fields for every surface and orders them, which isn't one source with one home; and cells reading its results would make the `resolutionCycle` guard a graph cycle.
   - *Partly fitting layers covering the controls they can:* a shift layer that loses one key to a smaller deck still takes the other two, silently.
+
+### 11.3.2 Cascading through
+- **Decided:** a layer is `replace` (the default) or `through` (§5.2.1). Each of a control's properties, and its input, comes from the highest active layer that binds it or is a `replace` layer; a binding's `input` is `claim`, `pass` or `block`, defaulting by its layer. Where each property comes from is state, `.controls.<id>.look`, beside `.controls.<id>.layer`, which is the layer with the input. The binding worker evaluates every layer a control's look comes from, and puts the look together from them; a look from one layer is that layer's, as before. A binding that blocks input can't have helpers. The editor sets `claim` when a helper or a press flow is added to a key on a `through` layer, and warns `ambiguousOrder` when another layer that can be active at the same time ties on level and literal rank over the same control (two layers in one navigation group can't be).
+- **Why:** shift, lock, rehearsal and confidence layers want the live look underneath with one thing changed. Without it, each one copies the tally rules of every page it covers. Keeping `replace` the default keeps pages and popovers as they were, and `look` keeps `why` answerable per property.
+- **Rejected:**
+  - *Reading the look underneath* (`below.background`): a binding would depend on resolution, which the `resolutionCycle` guard forbids.
+  - *Input following the highest `through` layer that binds anything:* a relabelling layer would steal presses it doesn't handle. Input is claimed explicitly.
+  - *Warning on every tie, navigation groups included:* every page of a deck ties with every other, and they're never active together.
 
 ### 11.4 Level outputs, echoes, gesture timing and per-surface helpers
 - **Decided:**
