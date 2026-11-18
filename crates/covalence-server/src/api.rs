@@ -368,21 +368,26 @@ struct JournalQuery {
     limit: Option<usize>,
 }
 
+/// Entries from `from` on. Read from the store, past the memory window,
+/// they have gaps where derived entries were, and the answer says so with
+/// `Covalence-Derived-Dropped: true` (state spec §2.4).
 async fn journal(
     State(app): State<Arc<App>>,
     Query(query): Query<JournalQuery>,
-) -> ApiResult<Json<Vec<Entry>>> {
+) -> ApiResult<Response> {
     let limit = query
         .limit
         .unwrap_or(DEFAULT_JOURNAL_LIMIT)
         .min(MAX_JOURNAL_LIMIT);
-    let entries = app
-        .core
-        .shared()
-        .journal
-        .range(query.from.unwrap_or(1), limit)
-        .map_err(ApiError::internal)?;
-    Ok(Json(entries.iter().map(|e| Entry::clone(e)).collect()))
+    let journal = &app.core.shared().journal;
+    let from = query.from.unwrap_or(1);
+    let entries = journal.range(from, limit).map_err(ApiError::internal)?;
+    let body = Json(entries.iter().map(|e| Entry::clone(e)).collect::<Vec<_>>());
+    Ok(if journal.derived_dropped(from) {
+        ([("covalence-derived-dropped", "true")], body).into_response()
+    } else {
+        body.into_response()
+    })
 }
 
 async fn why(State(app): State<Arc<App>>, Path(seq): Path<Seq>) -> ApiResult<Json<Vec<Entry>>> {

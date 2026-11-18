@@ -33,6 +33,9 @@ pub struct JournalRow {
     /// JSON.
     pub origin: String,
     pub cause: Option<u64>,
+    /// When `cause` is a derived entry, which isn't stored: the nearest
+    /// input among its causes (state spec §2.4).
+    pub input_cause: Option<u64>,
     pub run: Option<String>,
     pub kind: String,
     /// MessagePack.
@@ -83,6 +86,9 @@ const MIGRATIONS: &[&str] = &[
         path TEXT PRIMARY KEY,
         body TEXT NOT NULL
     ) STRICT;",
+    // 4: `inputCause`, for `why` over derived entries, which aren't stored
+    // (state spec §2.4).
+    "ALTER TABLE journal ADD COLUMN input_cause INTEGER;",
 ];
 
 pub struct Store {
@@ -125,8 +131,8 @@ impl Store {
     pub fn append_journal(&self, row: &JournalRow) -> Result<()> {
         self.db
             .prepare_cached(
-                "INSERT INTO journal (seq, term, ts, mono, origin, cause, run, kind, data)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                "INSERT INTO journal (seq, term, ts, mono, origin, cause, run, kind, data, input_cause)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             )?
             .execute(params![
                 sql_seq(row.seq)?,
@@ -138,6 +144,7 @@ impl Store {
                 row.run,
                 row.kind,
                 row.data,
+                row.input_cause.map(sql_seq).transpose()?,
             ])?;
         Ok(())
     }
@@ -270,7 +277,7 @@ fn entity_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<EntityRow> {
 }
 
 const SELECT_JOURNAL: &str =
-    "SELECT seq, term, ts, mono, origin, cause, run, kind, data FROM journal";
+    "SELECT seq, term, ts, mono, origin, cause, run, kind, data, input_cause FROM journal";
 
 fn journal_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JournalRow> {
     Ok(JournalRow {
@@ -283,6 +290,7 @@ fn journal_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JournalRow> {
         run: row.get(6)?,
         kind: row.get(7)?,
         data: row.get(8)?,
+        input_cause: row.get::<_, Option<i64>>(9)?.map(|c| c as u64),
     })
 }
 
@@ -313,6 +321,7 @@ mod tests {
             mono: seq * 1000,
             origin: r#"{"core":"system"}"#.into(),
             cause,
+            input_cause: None,
             run: None,
             kind: "log".into(),
             data: vec![0x80],

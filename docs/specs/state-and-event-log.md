@@ -227,8 +227,8 @@ interface ProjectOp extends Entry {
 **(M8)** The journal holds two tiers of entry, and only one of them has to reach the disk.
 
 - **Inputs** can't be recomputed: patches from connections and from `set` steps, control input, action requests and results, run lifecycle and steps, `nondet`, `event`s from plugins, `project.applied`, connection status, node roles. They're written to the `journal` table and kept for the ring buffer's retention.
-- **Derived entries** can be recomputed from the inputs and the project, given time: patches from cells, helpers and layer resolution (origin `{core: "dataflow"}` or a surface's resolution), with their `reducer` state, `trigger.matched`, `instance.added` and `instance.removed`, and events derived from input state. They're kept in the in-memory ring only, for its window (default 1 h, or 256 MB, whichever comes first).
-- **One `seq` for both.** The live stream (subscribers, the UI and the standby) has no gaps. The `journal` table has gaps where derived entries were, and `GET /journal` past the memory window says so with `{derivedDropped: true}`.
+- **Derived entries** can be recomputed from the inputs and the project, given time: patches from cells, helpers and layer resolution (origin `{core: "dataflow"}`), with their `reducer` state, `trigger.matched`, `instance.added` and `instance.removed`, and events derived from input state (an `event` with a `surface`, or with origin `{core: "dataflow"}`). They're kept in the in-memory ring only, for its window (default 1 h, or 256 MB, whichever comes first). A sink's `action.requested` is an input, though its origin is `{core: "dataflow"}`: it's a side effect.
+- **One `seq` for both.** The live stream (subscribers, the UI and the standby) has no gaps. The `journal` table has gaps where derived entries were, and `GET /journal` read from the table, past the memory window, says so with the header `Covalence-Derived-Dropped: true`. A derived entry's seq isn't reused after a restart: the store's `meta` reserves seqs 1024 at a time as derived entries take them, and the journal continues after the higher of that and the last stored entry.
 - **`inputCause` keeps `why` working on disk.** An entry whose `cause` is a derived entry also records the nearest input among its causes. A sink's `action.requested` has `cause` → the cell's patch (derived) and `inputCause` → the control's input patch, and a `run.started` has `cause` → `trigger.matched` and `inputCause` → the event or patch it matched. Inside the memory window `why` follows `cause`, through every link. Past it, a chain follows `inputCause` over the derived entries: "the action came from this run, which this key press started". **(Later)** Replaying the journal from the nearest snapshot rebuilds the derived entries for an older window on request.
 - **High-rate values are sampled** by their schema's `journal: {sampled}` flag ([dataflow §5.1](dataflow.md)), so a meter or timecode writes a few entries per second, not hundreds. Sampling applies to both tiers.
 - **Inputs are written in batches:** one SQLite transaction per turn, or with `journal.flushInterval` set, at most one per interval. The default is per turn on a desktop and `100ms` on a Raspberry Pi, where derived entries never touch the SD card. A crash loses at most one interval of inputs from disk. A standby has them already, and `state_cache` is written in the same transaction.
@@ -274,7 +274,7 @@ Surface output (key images, LEDs) is gated by role only. A standby node doesn't 
 | `journal` | The runtime journal (time- and size-limited) |
 | `state_cache` | The last known state tree, so the UI shows `stale` values right after a restart. **(M8)** Persisted variables' values and `reducer` metadata are restored from it ([dataflow §6](dataflow.md)). M8 keeps only those, keyed by the variable's ID, and writes them as they change rather than with the journal's batch |
 | `assets` | Content-addressed blobs (icons, images) |
-| `meta` | `schemaVersion`, node ID, current term |
+| `meta` | `schemaVersion`, node ID, current term, **(M8)** `seqReserved`: seqs below it are taken (§2.4) |
 
 Secrets aren't stored here (§7.2).
 
@@ -327,6 +327,15 @@ Why the core keeps state and history this way, and what was rejected. Keep these
   - *Everything on tokio, the state tree behind a lock:* contention on every patch, and no fixed order within a turn for replay.
   - *A QuickJS runtime per flow or binding:* memory grows with the project, too much for a Raspberry Pi.
   - *Drawing on the turn thread:* a burst of changes on a 32-key deck spends the turn drawing.
+
+### 7.3.1 Journal tiers
+- **Decided:** inputs reach the disk and derived entries stay in memory (§2.4), with one `seq` for both. An entry whose `cause` is derived records `inputCause`, so `why` past the memory window steps over the gap. `GET /journal` flags a range read from disk with a header, and derived entries reserve seqs in blocks so a restart doesn't reuse them.
+- **Why:** derived entries are most of the journal at show rate (every cell, helper and resolution change, every control event), and they can be recomputed. On a Raspberry Pi the SD card is the limit. `inputCause` keeps the one question that matters past the window: which input led here. A state leaf restored from `state_cache` names its patch's seq, so a reused seq would make `why` lie.
+- **Rejected:**
+  - *Storing everything and trimming sooner:* the window for inputs shrinks with the rate of derived entries.
+  - *A separate seq for derived entries:* two orders to merge in the live stream and for the standby.
+  - *`{derivedDropped: true}` in the body of `GET /journal`:* it would change the answer from a list of entries to an object for every client. A header says the same.
+  - *Writing the seq high-water mark with every derived entry:* the disk write tiers are meant to avoid.
 
 ### 7.4 Redundancy and failover, in three levels (designed, not built)
 - **Decided:** three opt-in levels.

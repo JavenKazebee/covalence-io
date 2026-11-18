@@ -1,8 +1,13 @@
 //! The runtime journal (state spec §2.1–2.2).
 //!
-//! Entries get a gap-free `seq` under one lock, are written to SQLite (when a
-//! store is attached) before they become visible, and are kept in an in-memory
-//! ring for fast reads. Only the kinds Milestones 1, 3 and 5 need exist so far.
+//! Entries get a gap-free `seq` under one lock and are kept in an in-memory
+//! ring for fast reads. There are two tiers (state spec §2.4): **inputs**
+//! are written to SQLite (when a store is attached) before they become
+//! visible, and **derived** entries, which can be recomputed from the
+//! inputs, stay in the ring only. So the store has gaps where derived
+//! entries were. An entry whose `cause` is derived also records
+//! `inputCause`, the nearest input among its causes, and `why` follows it
+//! over entries that have left the ring.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -36,11 +41,48 @@ pub struct Entry {
     pub origin: Origin,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cause: Option<Seq>,
+    /// When `cause` is a derived entry: the nearest input among its causes
+    /// (state spec §2.4).
+    #[serde(
+        rename = "inputCause",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub input_cause: Option<Seq>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run: Option<String>,
     #[serde(flatten)]
     pub record: Record,
 }
+
+impl Entry {
+    /// Whether it can be recomputed from the inputs and the project, so it's
+    /// kept in memory only (state spec §2.4): patches and events from cells,
+    /// helpers and layer resolution, events derived from control input
+    /// state, and `trigger.matched`.
+    pub fn is_derived(&self) -> bool {
+        is_derived(&self.origin, &self.record)
+    }
+}
+
+fn is_derived(origin: &Origin, record: &Record) -> bool {
+    let dataflow = matches!(
+        origin,
+        Origin::Core {
+            core: CoreOrigin::Dataflow
+        }
+    );
+    match record {
+        Record::TriggerMatched(_) => true,
+        Record::StatePatch(_) => dataflow,
+        Record::Event(event) => dataflow || event.surface.is_some(),
+        _ => false,
+    }
+}
+
+/// How many seqs a derived entry reserves in the store at a time, so seqs
+/// aren't reused after a restart without a write per derived entry.
+const SEQ_RESERVE: Seq = 1024;
 
 /// Who produced an entry.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -482,6 +524,8 @@ pub struct Journal {
 
 struct Inner {
     next_seq: Seq,
+    /// Seqs below this are taken, whether or not their entries were stored.
+    reserved: Seq,
     term: u32,
     ring: VecDeque<Arc<Entry>>,
     capacity: usize,
@@ -496,7 +540,12 @@ impl Journal {
 
     /// A journal persisted to `store`, continuing after its last entry.
     pub fn with_store(store: Store, capacity: usize) -> Result<Self, JournalError> {
-        let next_seq = store.last_journal_seq()?.map_or(1, |s| s + 1);
+        let stored = store.last_journal_seq()?.map_or(1, |s| s + 1);
+        let reserved = store
+            .meta("seqReserved")?
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1);
+        let next_seq = stored.max(reserved);
         let term = store
             .meta("term")?
             .and_then(|t| t.parse().ok())
@@ -509,6 +558,7 @@ impl Journal {
         Journal {
             inner: Mutex::new(Inner {
                 next_seq,
+                reserved: next_seq,
                 term,
                 ring: VecDeque::new(),
                 capacity: capacity.max(1),
@@ -557,6 +607,15 @@ impl Journal {
         {
             return Err(JournalError::InvalidCause { seq, cause });
         }
+        // The nearest input among its causes, when its cause is derived.
+        let input_cause = new.cause.and_then(|c| {
+            let cause = inner.in_ring(c)?;
+            if cause.is_derived() {
+                cause.input_cause.or(cause.cause)
+            } else {
+                None
+            }
+        });
         let entry = Entry {
             seq,
             term: inner.term,
@@ -564,11 +623,18 @@ impl Journal {
             mono: self.start.elapsed().as_nanos() as u64,
             origin: new.origin,
             cause: new.cause,
+            input_cause,
             run: new.run,
             record: new.record,
         };
         if let Some(store) = &inner.store {
-            store.append_journal(&to_row(&entry)?)?;
+            if !entry.is_derived() {
+                store.append_journal(&to_row(&entry)?)?;
+            } else if seq >= inner.reserved {
+                let reserved = seq + SEQ_RESERVE;
+                store.set_meta("seqReserved", &reserved.to_string())?;
+                inner.reserved = reserved;
+            }
         }
         let entry = Arc::new(entry);
         inner.next_seq += 1;
@@ -586,7 +652,7 @@ impl Journal {
         if let Some(front) = inner.ring.front()
             && seq >= front.seq
         {
-            return Ok(inner.ring.get((seq - front.seq) as usize).cloned());
+            return Ok(inner.in_ring(seq).cloned());
         }
         match &inner.store {
             Some(store) => store
@@ -617,17 +683,39 @@ impl Journal {
         }
     }
 
+    /// Whether entries from `from` on are read from the store, which has
+    /// no derived entries (state spec §2.4).
+    pub fn derived_dropped(&self, from: Seq) -> bool {
+        let inner = self.lock();
+        inner.store.is_some() && inner.ring.front().is_none_or(|front| from < front.seq)
+    }
+
     /// "Why did this fire?": the entry at `seq`, then its cause, and so on back
-    /// to the root. Stops early if an entry has aged out of retention.
+    /// to the root. A cause that has left memory and wasn't stored, being
+    /// derived, is stepped over to the entry's `inputCause` (state spec §2.4).
+    /// Stops early if an entry has aged out of retention.
     pub fn why(&self, seq: Seq) -> Result<Vec<Arc<Entry>>, JournalError> {
         let mut chain = Vec::new();
         let mut next = Some(seq);
+        let mut over: Option<Seq> = None;
         while let Some(seq) = next {
-            let Some(entry) = self.get(seq)? else { break };
+            let Some(entry) = self.get(seq)? else {
+                next = over.take();
+                continue;
+            };
             next = entry.cause;
+            over = entry.input_cause;
             chain.push(entry);
         }
         Ok(chain)
+    }
+}
+
+impl Inner {
+    /// The entry at `seq`, if it's in the ring.
+    fn in_ring(&self, seq: Seq) -> Option<&Arc<Entry>> {
+        let front = self.ring.front()?.seq;
+        self.ring.get(seq.checked_sub(front)? as usize)
     }
 }
 
@@ -648,6 +736,7 @@ fn to_row(entry: &Entry) -> Result<JournalRow, JournalError> {
         mono: entry.mono,
         origin: serde_json::to_string(&entry.origin).map_err(|e| encode(&e))?,
         cause: entry.cause,
+        input_cause: entry.input_cause,
         run: entry.run.clone(),
         kind: entry.record.kind().to_owned(),
         data: bytes,
@@ -673,6 +762,7 @@ fn from_row(row: &JournalRow) -> Result<Entry, JournalError> {
         mono: row.mono,
         origin: serde_json::from_str(&row.origin).map_err(|e| decode(e.to_string()))?,
         cause: row.cause,
+        input_cause: row.input_cause,
         run: row.run.clone(),
         record,
     })
@@ -788,6 +878,72 @@ mod tests {
             .unwrap();
         assert_eq!(next.seq, 4);
         assert_eq!(journal.why(3).unwrap().len(), 3);
+    }
+
+    /// State spec §2.4: a cell's patch is derived, so it stays in memory; the
+    /// sink's request it caused is an input, stored with `inputCause` → the
+    /// input before the cell, and `why` on disk steps over the gap. Seqs
+    /// derived entries took aren't reused after a restart.
+    #[test]
+    fn derived_entries_stay_in_memory_and_why_steps_over_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("j.db");
+        let patch = || {
+            Record::StatePatch(StatePatchRecord {
+                ops: vec![JournalOp::Set {
+                    path: StatePath::root("vars"),
+                    value: 1.into(),
+                    reducer: None,
+                }],
+                replaces: None,
+                device_ts: None,
+            })
+        };
+        let dataflow = Origin::Core {
+            core: CoreOrigin::Dataflow,
+        };
+        let journal = Journal::with_store(Store::open(&path).unwrap(), 16).unwrap();
+        let input = journal
+            .append(NewEntry::new(Origin::conn("c1"), patch()))
+            .unwrap();
+        let cell = journal
+            .append(NewEntry::new(dataflow.clone(), patch()).cause(input.seq))
+            .unwrap();
+        let other = journal
+            .append(NewEntry::new(dataflow, patch()).cause(cell.seq))
+            .unwrap();
+        let request = journal
+            .append(NewEntry::new(Origin::conn("c1"), requested("s1")).cause(other.seq))
+            .unwrap();
+        assert!(cell.is_derived() && !input.is_derived() && !request.is_derived());
+        assert_eq!(cell.input_cause, None, "its cause is an input already");
+        assert_eq!(other.input_cause, Some(input.seq));
+        assert_eq!(request.input_cause, Some(input.seq));
+        // In memory, `why` goes through every link.
+        assert_eq!(journal.why(request.seq).unwrap().len(), 4);
+        assert!(!journal.derived_dropped(1));
+        drop(journal);
+
+        let journal = Journal::with_store(Store::open(&path).unwrap(), 16).unwrap();
+        assert!(journal.derived_dropped(1));
+        let stored: Vec<Seq> = journal
+            .range(1, 10)
+            .unwrap()
+            .iter()
+            .map(|e| e.seq)
+            .collect();
+        assert_eq!(stored, [input.seq, request.seq]);
+        let why: Vec<Seq> = journal
+            .why(request.seq)
+            .unwrap()
+            .iter()
+            .map(|e| e.seq)
+            .collect();
+        assert_eq!(why, [request.seq, input.seq]);
+        let next = journal
+            .append(NewEntry::new(Origin::system(), requested("s2")))
+            .unwrap();
+        assert!(next.seq > other.seq, "{} reuses a derived seq", next.seq);
     }
 
     #[test]

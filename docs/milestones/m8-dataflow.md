@@ -50,7 +50,7 @@ Helpers on controls are reducers whose input defaults to their control. Layers b
 Notes from Phase 2:
 - The turn's evaluations have a 2 ms limit in release builds, as [state spec §7.3](../specs/state-and-event-log.md#73-execution-model-one-turn-thread-writes-state) says, and 50 ms in debug builds, where building a fresh QuickJS context alone can take longer.
 - A reducer whose value is `undefined` (an `absolute` before any input) keeps its metadata on the leaf but can't journal it, since a delete op has no `reducer`. It restarts from `init` after a failover.
-- Not yet: the derived journal tier and `inputCause` (state spec §2.4).
+- The derived journal tier and `inputCause` (state spec §2.4) followed after Phase 5. Not yet: writing inputs in batches per turn, and `journal.flushInterval`.
 
 ### Phase 3: Variables and sinks (Rust)
 - [x] The `variable` entity: schema, `initial`, `persist`, `value`, `to`, `journal`. `set` on a computed variable is `readOnly`; an undeclared `set` warns. `covalence_core::variable`, served at `/variables` through the generic entity routes. A `set` step on a computed variable is `readOnly` when the flow is saved and fails with `readOnly` if it runs anyway; one on an undeclared variable warns `undeclaredVariable`. Saving a variable whose static reads (`{ref}`s to `vars` and `vars.<name>` in expressions) already form a cycle is `cycle`.
