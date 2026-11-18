@@ -92,12 +92,12 @@ type Selector<Id> =
 | Domain | `Id` | Extra forms | Universe for `not` |
 |---|---|---|---|
 | **Controls** | a control ID | `{region: Rect}`, `{near: "left" \| "right" \| "above" \| "below", of: string}`, `{has: {inputs?, outputs?}}` | the controls of the layer, surface or group it's on |
-| **Targets** | `Target` (`{conn, key?}`; a string is a connection ID) | `{plugin: string}`, `{template: string}` (M9), `{interface: string}` | every connection and item |
+| **Targets** | `Target` (`{conn, key?}`; a string is a connection ID) | `{plugin: string}`, `{template: string}` (M9) | every connection and item |
 | **Paths** | `Ref` | `{match: PathPattern}` | none: `not` only inside `all` |
 | **Entities** | an entity ID | `{tag: string}` (Later) | every entity of the type |
 
 - **Controls are resolved per surface.** A layer's `controls: {region}` covers whatever controls lie in the rectangle on each surface (surfaces §2). `has` filters by capability: `{has: {inputs: ["relative"]}}` is every encoder.
-- **`{template}` resolves to every instance of a composite template,** or each item of a `forEach` instance (composition §6.5). **`{interface}`** resolves to the core's collections that implement it: every surface for `surface@1` ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-proposed)).
+- **`{template}` resolves to every instance of a composite template,** or each item of a `forEach` instance (composition §6.5).
 - **`PathPattern`** is a text path where `*` matches one segment: `surface.*.controls.*.pressed`. The segments it matched are its **captures**, in order.
 - **Reactive selectors re-resolve** when their reads change, or when the domain changes: a control attaches, a connection is created, a composite instance gains an item.
 - **Order is stable:** a selector's result is in the domain's order (controls by `at`, row-major; targets and entities by ID), so a control group's items line up the same way every time.
@@ -302,7 +302,7 @@ interface Variable {                  // project entity `variable`
   id: string;
   name: string;
   slug: string;                       // state: vars.<slug>
-  schema?: StateSchemaNode;           // type, unit, kind (a `target` with an interface…)
+  schema?: StateSchemaNode;           // type, unit, kind (a `target` with a constraint…)
   initial?: Value;                    // a writable variable's value at load
   persist?: boolean;                  // keep the value across a restart; default false
   value?: Source<Value>;              // a computed or reducer variable: read-only

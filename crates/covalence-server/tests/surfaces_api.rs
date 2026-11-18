@@ -982,7 +982,7 @@ async fn flows_drive_the_deck_and_other_flows_through_core() {
                 {
                     "id": "nav", "kind": "action",
                     "target": { "ref": { "root": "vars", "path": ["deck"] } },
-                    "constraint": { "interface": "surface@1" },
+                    "constraint": { "plugin": "core", "collection": "surfaces" },
                     "action": "navigate", "params": { "layer": id(&audio) },
                 },
                 {

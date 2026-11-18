@@ -1,7 +1,7 @@
 // One-line descriptions of journal entries (state spec §2.2).
 
 import { formatPath, type Segment } from "../live/paths";
-import { coreInterfaceOf } from "../flows/model";
+import { coreCollectionOf } from "../flows/model";
 import type { JournalEntry, Origin } from "../live/protocol";
 
 export interface SummaryContext {
@@ -194,7 +194,7 @@ export function describe(entry: JournalEntry, ctx: SummaryContext): string {
       const item =
         key === ""
           ? ""
-          : ` [${(coreInterfaceOf(String(d.action)) === "flow@1" ? ctx.flowName?.(key) : ctx.surfaceName?.(key)) ?? key}]`;
+          : ` [${(coreCollectionOf(String(d.action)) === "flows" ? ctx.flowName?.(key) : ctx.surfaceName?.(key)) ?? key}]`;
       return `${name}${item} ${json(d.params)}`;
     }
     case "action.dispatched":

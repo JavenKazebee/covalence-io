@@ -152,7 +152,7 @@ type OutputKind = OutputCap["kind"];
 | `layer.<slug>.parts.<placement>` | a placement | **(M9)** Its params, its parts and its flows' status (composition §8) |
 
 - `surface` and `layer` are reserved roots: a connection alias can't be either (state spec §1.1). **(Now)** `layer` replaces M5's `page` root.
-- **(M6) Each surface is a target** of the `core` connection, `{conn: "core", key: <surface ID>}`, with interface `surface@1`. `target(t)` on it reads `surface.<slug>` ([core actions §2](core-actions.md)).
+- **(M6) Each surface is a target** of the `core` connection, `{conn: "core", key: <surface ID>}`, an item of its `surfaces` collection. `target(t)` on it reads `surface.<slug>` ([core actions §2](core-actions.md)).
 - Surface state is held while the surface is detached, with `connected: false`, so a binding that shows a surface's layer keeps working. Input state is the exception (§4.1).
 - **Control IDs that aren't state segments** (`pad.36`) use bracket syntax in text paths: `surface.mixer.controls["pad.36"].pressed` (state spec §1.1).
 
@@ -469,10 +469,10 @@ Surfaces, layers and control bindings have the same routes and answers as flows 
 
 ## 10. Open questions
 
-1. ~~Core-provided actions (navigate a group, back, set brightness, inject input) for flows: a reserved `core` target, or new step kinds?~~ Decided by [core actions §6.1](core-actions.md#61-the-core-is-a-connection): the core is a connection, and each surface is one of its targets, with interface `surface@1`.
+1. ~~Core-provided actions (navigate a group, back, set brightness, inject input) for flows: a reserved `core` target, or new step kinds?~~ Decided by [core actions §6.1](core-actions.md#61-the-core-is-a-connection): the core is a connection, and each surface is one of its targets, an item of its `surfaces` collection.
 2. ~~Mapping a page onto a surface of a different size~~: layers list their controls and fit by capability, or cover a region (§5.4). Explicit placement per surface is Later.
 3. Should hardware surfaces that attach for the first time get an entity automatically, or wait in an "unassigned" list until a user adds them?
-4. Which surface interfaces (`surface.keypad@1`, `surface.mixer@1` …) should exist, and do they name controls by role so one layer can target any surface of a shape?
+4. Should surfaces declare shapes (a keypad, a mixer) that name controls by role, so one layer can target any surface of a shape?
 5. Should a layer control be able to ask for a capability range (an image of at least 72 × 72) rather than just a capability kind?
 6. **Capabilities beyond the four inputs and four outputs:** pressure and aftertouch, more than two axes, multi-position switches, haptics, sounds. Should unknown kinds attach with their input written as raw state under the kind's name?
 7. **Whole-surface canvases:** a Loupedeck or tablet screen with touch zones, drawn as one image rather than per control.

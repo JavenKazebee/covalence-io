@@ -266,18 +266,17 @@ fn unsupported_steps(
             }
             Some("action") => {
                 let target = step.get("target");
-                let core_interface = step
+                let core_collection = step
                     .get("constraint")
-                    .and_then(|c| c.get("interface"))
-                    .and_then(Value::as_str)
-                    .is_some_and(|i| core_conn::interfaces().iter().any(|x| x.id == i));
+                    .and_then(|c| serde_json::from_value::<super::TargetConstraint>(c.clone()).ok())
+                    .is_some_and(|c| c.core_collection().is_some());
                 let on_core = target
                     .and_then(|t| t.get("conn"))
                     .is_some_and(|c| c == core_conn::CORE);
                 if target.is_some_and(|t| ["expr", "ref", "use"].iter().any(|k| t.get(k).is_some()))
                 {
                     // Only `core`'s items can be followed yet.
-                    if !core_interface {
+                    if !core_collection {
                         not_yet(
                             at("target"),
                             "dynamic targets other than core's surfaces and flows",
@@ -452,18 +451,18 @@ impl<'a> Validation<'a> {
     }
 
     /// Reports an expression that doesn't compile.
-    /// A fixed `core` target's key: a surface for `surface@1`, a flow for `flow@1`.
-    fn core_key(&mut self, interface: &str, key: Option<&str>, at: Path) {
+    /// A fixed `core` target's key: a surface or a flow, by the action's collection.
+    fn core_key(&mut self, collection: &str, key: Option<&str>, at: Path) {
         let Some(key) = key else {
             self.error(
                 at,
                 Code::UnknownTarget,
-                format!("a {interface} action needs `key`: which one"),
+                format!("an action on core's {collection} needs `key`: which one"),
             );
             return;
         };
-        let (known, what) = match interface {
-            "surface@1" => (self.ctx.surfaces.contains(key), "surface"),
+        let (known, what) = match collection {
+            core_conn::SURFACES => (self.ctx.surfaces.contains(key), "surface"),
             _ => (self.ctx.flows.contains(key), "flow"),
         };
         if !known {
@@ -747,12 +746,12 @@ impl<'a> Validation<'a> {
                 }
                 let manifest: &Manifest = match (target.literal(), constraint) {
                     (Some(t), _) if t.conn == core_conn::CORE => {
-                        let Some(interface) = core_conn::interface_of(action) else {
+                        let Some(collection) = core_conn::collection_of(action) else {
                             let message = format!("core has no action {action:?}");
                             self.error(at("action"), Code::UnknownAction, message);
                             return;
                         };
-                        self.core_key(interface.id.as_str(), t.key.as_deref(), at("target"));
+                        self.core_key(collection.id.as_str(), t.key.as_deref(), at("target"));
                         core_conn::manifest()
                     }
                     (Some(t), _) => {
@@ -762,11 +761,12 @@ impl<'a> Validation<'a> {
                         };
                         manifest
                     }
-                    // `find_unsupported` lets only `core`'s interfaces through.
+                    // `find_unsupported` lets only `core`'s collections through.
                     (None, Some(c)) => {
                         self.source(at("target"), target);
-                        if core_conn::interface_of(action).is_none_or(|i| i.id != c.interface) {
-                            let message = format!("{} has no action {action:?}", c.interface);
+                        let wanted = c.collection.as_deref().unwrap_or_default();
+                        if core_conn::collection_of(action).is_none_or(|x| x.id != wanted) {
+                            let message = format!("core's {wanted} have no action {action:?}");
                             self.error(at("action"), Code::UnknownAction, message);
                             return;
                         }
@@ -776,7 +776,8 @@ impl<'a> Validation<'a> {
                         self.error(
                             at("constraint"),
                             Code::Invalid,
-                            "a target that follows state needs a constraint: {interface}".into(),
+                            "a target that follows state needs a constraint: {plugin, collection}"
+                                .into(),
                         );
                         return;
                     }

@@ -48,7 +48,7 @@ type Value =
 
 The **state schema** (declared by the plugin manifest, or by the user for variables) adds meaning to the plain types:
 - `unit`: `ms`, `s`, `dB`, `%`, `Hz`, `K`, `fps`
-- `kind`: `duration`, `timestamp`, `color`, `enum` (with labels), `percent`, `id`, `target` (a connection or item, with an optional constraint: a plugin, a composite template or one of the core's interfaces; proposed in [plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-proposed))
+- `kind`: `duration`, `timestamp`, `color`, `enum` (with labels), `percent`, `id`, `target` (a connection or item, with an optional constraint: a plugin and one of its collections, or a composite template; proposed in [plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-proposed))
 - `range`, `step`
 - `readOnly`
 - `description`

@@ -577,14 +577,12 @@ impl Serialize for Target {
 pub enum TargetForm {
     /// Every connection of a plugin, by plugin ID.
     Plugin { plugin: String },
-    /// Every connection implementing an interface, such as `router@1`.
-    Interface { interface: String },
 }
 
 impl Domain for Targets {
     type Id = Target;
     type Form = TargetForm;
-    const FORMS: &'static [&'static str] = &["plugin", "interface"];
+    const FORMS: &'static [&'static str] = &["plugin"];
 }
 
 /// A connection as a selector sees it.
@@ -592,8 +590,6 @@ impl Domain for Targets {
 pub struct TargetView {
     pub conn: ConnId,
     pub plugin: String,
-    /// The interfaces it implements, by name and major version: `router@1`.
-    pub interfaces: Vec<String>,
 }
 
 impl Selector<Targets> {
@@ -618,9 +614,6 @@ impl Selector<Targets> {
             (0..sorted.len())
                 .filter(|&i| match f {
                     TargetForm::Plugin { plugin } => &sorted[i].plugin == plugin,
-                    TargetForm::Interface { interface } => {
-                        sorted[i].interfaces.iter().any(|x| x == interface)
-                    }
                 })
                 .collect()
         };

@@ -75,15 +75,15 @@ interface StepCommon {
 /** The core connection's ID and alias (core actions §1). */
 export const CORE = "core";
 
-/** Which of `core`'s interfaces each of its actions belongs to, and so what `key` names. */
-const coreInterfaces: Record<string, "surface@1" | "flow@1"> = {
-  navigate: "surface@1",
-  inject: "surface@1",
-  cancelRuns: "flow@1",
-  setEnabled: "flow@1",
+/** Which of `core`'s collections each of its actions acts on, and so what `key` names (core actions §2). */
+const coreCollections: Record<string, "surfaces" | "flows"> = {
+  navigate: "surfaces",
+  inject: "surfaces",
+  cancelRuns: "flows",
+  setEnabled: "flows",
 };
 
-export const coreInterfaceOf = (action: string): "surface@1" | "flow@1" | null => coreInterfaces[action] ?? null;
+export const coreCollectionOf = (action: string): "surfaces" | "flows" | null => coreCollections[action] ?? null;
 
 /** A fixed target: a connection, or one of `core`'s surfaces or flows by `key`. */
 export interface Target {
@@ -95,7 +95,7 @@ export interface ActionStep extends StepCommon {
   kind: "action";
   /** A fixed target, or a source giving one, with `constraint` beside it. */
   target: Target | Source;
-  constraint?: { interface: string };
+  constraint?: { plugin: string; collection?: string };
   action: string;
   /** Each a source (dataflow §1). */
   params: Record<string, Source>;
@@ -245,7 +245,7 @@ export interface StepDraft {
   conn: string;
   /** A `core` target's surface or flow. */
   targetKey: string;
-  /** A target that follows state, with its constraint's interface; null for a fixed one. */
+  /** A target that follows state, with its constraint's `core` collection; null for a fixed one. */
   targetSource: Source | null;
   constraint: string;
   action: string;
@@ -426,7 +426,7 @@ function stepToDraft(step: Step, schemaOf: ParamsSchema): StepDraft {
       } else {
         draft.conn = "core";
         draft.targetSource = copyJson(step.target as Source);
-        draft.constraint = step.constraint?.interface ?? "";
+        draft.constraint = step.constraint?.collection ?? "";
       }
       draft.action = step.action;
       for (const [k, v] of Object.entries(step.params)) {
@@ -502,7 +502,7 @@ function stepFromDraft(d: StepDraft, schemaOf: ParamsSchema, errors: Map<number,
       const step: ActionStep = { ...common, kind: "action", target: { conn: d.conn }, action: d.action, params: out };
       if (d.targetSource !== null) {
         step.target = copyJson(d.targetSource);
-        step.constraint = { interface: d.constraint };
+        step.constraint = { plugin: CORE, collection: d.constraint };
       } else if (d.targetKey.trim() !== "") {
         step.target = { conn: d.conn, key: d.targetKey.trim() };
       }

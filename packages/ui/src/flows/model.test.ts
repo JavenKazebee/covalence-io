@@ -122,7 +122,7 @@ describe("flow model", () => {
       body: [
         { id: "a", kind: "action", target: { conn: "core", key: "S1" }, action: "navigate", params: { layer: "L" } },
         {
-          id: "b", kind: "action", target: { ref: { root: "vars", path: ["deck"] } }, constraint: { interface: "surface@1" },
+          id: "b", kind: "action", target: { ref: { root: "vars", path: ["deck"] } }, constraint: { plugin: "core", collection: "surfaces" },
           action: "inject", params: { control: "k1", input: "down", value: { value: { ref: "not a source" } } },
         },
       ],

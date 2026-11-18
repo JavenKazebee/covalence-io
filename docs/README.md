@@ -8,7 +8,7 @@ Two kinds of document:
 ## Specs
 - [Overview](specs/overview.md): components, terms, repo layout, performance budgets, and the foundations (Rust, the UI, Orbital, simulation, licence)
 - [State model and event log](specs/state-and-event-log.md): the state tree, the journal, the output gate, storage, the execution model, redundancy, multi-user editing, live edits
-- [Plugin protocol](specs/plugin-protocol.md): messages, manifests, transports and devices, the Deno host, permissions, interfaces, distribution
+- [Plugin protocol](specs/plugin-protocol.md): messages, manifests, transports and devices, the Deno host, permissions, dynamic targets, distribution
 - [Flows](specs/flows.md): flows, steps, runs, expressions and scripts
 - [Dataflow](specs/dataflow.md): sources, selectors, events, transforms, cells, variables, sinks, scope
 - [Bindings](specs/bindings.md): how a control looks, evaluation and rendering

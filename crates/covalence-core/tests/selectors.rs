@@ -208,17 +208,14 @@ fn conns() -> Vec<TargetView> {
         TargetView {
             conn: "C".into(),
             plugin: "videohub".into(),
-            interfaces: vec![],
         },
         TargetView {
             conn: "A".into(),
             plugin: "videohub".into(),
-            interfaces: vec!["router@1".into()],
         },
         TargetView {
             conn: "B".into(),
             plugin: "atem".into(),
-            interfaces: vec!["router@1".into(), "switcher@1".into()],
         },
     ]
 }
@@ -237,11 +234,7 @@ fn target_forms_by_connection_id() {
     assert_eq!(resolve(json!("B")), ["B"]);
     assert_eq!(resolve(json!({ "conn": "B" })), ["B"]);
     assert_eq!(resolve(json!({ "plugin": "videohub" })), ["A", "C"]);
-    assert_eq!(resolve(json!({ "interface": "router@1" })), ["A", "B"]);
-    assert_eq!(
-        resolve(json!({ "not": { "interface": "router@1" } })),
-        ["C"]
-    );
+    assert_eq!(resolve(json!({ "not": { "plugin": "videohub" } })), ["B"]);
     assert_eq!(
         resolve(json!({ "conn": "A", "key": "out1" })),
         Vec::<String>::new()

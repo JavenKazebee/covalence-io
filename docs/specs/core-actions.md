@@ -17,19 +17,19 @@ Everything Covalence itself can do (navigate a surface, inject input, cancel a f
 - **Its manifest is served like a plugin's,** so the editor validates `core` actions, parameters and results the same way. It's listed in `GET /plugins` with the ID `core`.
 - **Actions run in-process.** They never cross the plugin host, and they answer in the same scheduler turn unless they wait for a surface to be drawn.
 
-## 2. Collections and interfaces
+## 2. Collections
 
-| Collection | Key | Interface | `target(t)` is |
+| Collection | Key | Actions | `target(t)` is |
 |---|---|---|---|
-| `surfaces` | surface ID | `surface@1` | `surface.<slug>` |
-| `flows` | flow ID | `flow@1` | `flow.<slug>` |
+| `surfaces` | surface ID | `navigate`, `inject` | `surface.<slug>` |
+| `flows` | flow ID | `cancelRuns`, `setEnabled` | `flow.<slug>` |
 
-- **A variable can hold "the selected deck":** `schema: {kind: "target", interface: "surface@1"}` (state spec §1.2). Its value is `{conn: "core", key: "<surface ID>"}`.
-- **Only the core implements interfaces** ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-proposed)). They're kept in `protocol/interfaces/`. Surfaces from plugins (M7) are surfaces like any other, so they're items of `core`'s `surfaces`, not of their provider connection.
+- **A variable can hold "the selected deck":** `schema: {kind: "target", constraint: {plugin: "core", collection: "surfaces"}}` (state spec §1.2). Its value is `{conn: "core", key: "<surface ID>"}`.
+- **Each action acts on one collection's items,** so a step on `core` names the item with `key`, and a target that follows state is constrained by `{plugin: "core", collection}` ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-proposed)). The collections and their actions are defined in `covalence-core`, beside the core connection. Surfaces from plugins (M7) are surfaces like any other, so they're items of `core`'s `surfaces`, not of their provider connection.
 
 ## 3. Actions
 
-### 3.1 `surface@1`, on `{conn: "core", key: <surface ID>}`
+### 3.1 On a surface, `{conn: "core", key: <surface ID>}`
 
 | Action | Params | Result | Effect | Notes |
 |---|---|---|---|---|
@@ -38,7 +38,7 @@ Everything Covalence itself can do (navigate a surface, inject input, cancel a f
 | `inject` | `{control: string, input: "down" \| "up" \| "turn" \| "value" \| "touch", value?: Value}` | none | internal | **(M6)** Applied as if the device had sent it (surfaces §4.5), with the run as origin. Errors `unknownControl`, `unsupported` |
 | `setBrightness` | `{level: number}` (0 to 1) | none | device | **(Later)** Needs surface-wide outputs |
 
-### 3.2 `flow@1`, on `{conn: "core", key: <flow ID>}`
+### 3.2 On a flow, `{conn: "core", key: <flow ID>}`
 
 | Action | Params | Result | Effect | Notes |
 |---|---|---|---|---|
@@ -64,9 +64,9 @@ Running another flow is the `call` step, not an action: it can wait for the call
 ## 6. Decisions
 
 ### 6.1 The core is a connection
-- **Decided:** a built-in connection, ID and alias `core`, always present and connected, owns everything Covalence itself can do. Its collections are targets with interfaces (`surface@1`, `flow@1`), its state is the core's roots (with `core` reserved as a root), and `ActionDef.effect` (`internal` or `device`) lets simulate mode suppress only device effects, so a rehearsal still navigates decks. No new step kinds: `call`, `set`, `wait` and the blocks stay steps because they're about the run itself.
+- **Decided:** a built-in connection, ID and alias `core`, always present and connected, owns everything Covalence itself can do. Its collections' items are targets (`surfaces`, `flows`), its state is the core's roots (with `core` reserved as a root), and `ActionDef.effect` (`internal` or `device`) lets simulate mode suppress only device effects, so a rehearsal still navigates decks. No new step kinds: `call`, `set`, `wait` and the blocks stay steps because they're about the run itself.
 - **Why:** actions already have typed parameters and results, journaling, the output gate, simulate mode, idempotency and dynamic targets. So flows navigate, inject and cancel with the step they already have, "navigate the selected deck" uses a target in state, and sinks and composites can drive core actions (an encoder `select` reducer paging through layers).
 - **Rejected:**
   - *New step kinds* (`navigate`, `inject`): each a one-off with its own editor, typing and gate rules, and none works with dynamic targets.
-  - *A `core` target that isn't a connection:* a special case everywhere connections are listed, manifests checked or interfaces resolved.
+  - *A `core` target that isn't a connection:* a special case everywhere connections are listed, manifests checked or targets resolved.
   - *One connection per surface:* surfaces already have a provider connection, and two for one device would confuse the UI.

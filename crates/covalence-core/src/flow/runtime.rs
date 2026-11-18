@@ -274,8 +274,7 @@ impl Runtime {
             .unwrap_or_else(|e| e.into_inner()) = Arc::new(aliases);
     }
 
-    /// Sets the connections target selectors pick from: each one's plugin and
-    /// the interfaces it implements.
+    /// Sets the connections target selectors pick from, with each one's plugin.
     pub fn set_targets(&self, targets: Vec<TargetView>) {
         *self
             .inner
@@ -2010,12 +2009,18 @@ impl RunTask {
         };
         let resolved: super::ConnRef = serde_json::from_value(value.clone())
             .map_err(|_| no_target(format!("{value} isn't a target: {{conn, key}}")))?;
-        let wanted = constraint.map(|c| c.interface.as_str());
-        let has = core_conn::interface_of(action).map(|i| i.id.as_str());
-        if resolved.conn != core_conn::CORE || resolved.key.is_none() || wanted != has {
+        let wanted = constraint
+            .and_then(|c| c.core_collection())
+            .map(|c| c.id.as_str());
+        let has = core_conn::collection_of(action).map(|c| c.id.as_str());
+        if resolved.conn != core_conn::CORE
+            || resolved.key.is_none()
+            || wanted.is_none()
+            || wanted != has
+        {
             return Err(no_target(format!(
-                "{value} isn't a {} target",
-                wanted.unwrap_or("core")
+                "{value} isn't one of core's {}",
+                wanted.unwrap_or("surfaces or flows")
             )));
         }
         Ok(resolved)
@@ -2283,7 +2288,6 @@ pub(crate) fn source_matches(
             let view = view.unwrap_or_else(|| TargetView {
                 conn: conn.clone(),
                 plugin: String::new(),
-                interfaces: Vec::new(),
             });
             match target.resolve(&[view], Some(&mut *eval)) {
                 Ok(picked) if !picked.is_empty() => Some((None, Some(Target::conn(conn.clone())))),

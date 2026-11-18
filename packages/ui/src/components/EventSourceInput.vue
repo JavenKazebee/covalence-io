@@ -18,8 +18,8 @@ import { controlEvents, eventHelp } from "../surfaces/model";
 
 /**
  * Where an event trigger's events come from (dataflow §3.1), and which
- * events: a key on a layer or a surface, a connection by ID, plugin or
- * interface, or any node by path, with `*` patterns.
+ * events: a key on a layer or a surface, a connection by ID or plugin, or
+ * any node by path, with `*` patterns.
  */
 const props = defineProps<{ index: number; problems: ShownProblem[] }>();
 const trigger = defineModel<Extract<Trigger, { kind: "event" }>>({ required: true });
@@ -86,16 +86,15 @@ const controlsOf = computed(() => {
   return [];
 });
 
-// ---- Targets: by connection, plugin or interface ----
+// ---- Targets: by connection or plugin ----
 
-type TargetForm = "conn" | "plugin" | "interface" | "other";
+type TargetForm = "conn" | "plugin" | "other";
 const targetSelector = computed(() => from.value.target as Json);
 const targetForm = computed<TargetForm>(() => {
   const t = targetSelector.value;
   if (typeof t === "string") return "conn";
   if (t !== null && typeof t === "object" && !Array.isArray(t)) {
     if ("plugin" in t) return "plugin";
-    if ("interface" in t) return "interface";
   }
   return "other";
 });
@@ -103,7 +102,6 @@ const targetForm = computed<TargetForm>(() => {
 function setTargetForm(form: TargetForm) {
   if (form === "conn") from.value.target = plugins.value[0]?.id ?? "";
   if (form === "plugin") from.value.target = { plugin: plugins.value[0]?.plugin ?? "" };
-  if (form === "interface") from.value.target = { interface: "" };
 }
 
 const pluginIds = computed(() => [...new Set(plugins.value.map((c) => c.plugin))]);
@@ -278,9 +276,6 @@ const fieldProblems = (field: string) => props.problems.filter((p) => p.path[2] 
         <option value="plugin">
           Any of a plugin's
         </option>
-        <option value="interface">
-          Any implementing
-        </option>
         <option
           v-if="targetForm === 'other'"
           value="other"
@@ -320,14 +315,6 @@ const fieldProblems = (field: string) => props.problems.filter((p) => p.path[2] 
           {{ p }}
         </option>
       </select>
-      <input
-        v-else-if="targetForm === 'interface'"
-        v-model="(from.target as Record<string, string>).interface"
-        :aria-label="`${label} interface`"
-        placeholder="tally@1"
-        class="mono"
-        spellcheck="false"
-      >
     </template>
 
     <span

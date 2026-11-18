@@ -1326,23 +1326,21 @@ async fn layer_sources_pick_controls_and_the_payload_carries_context() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn an_interface_source_matches_every_implementer() {
+async fn a_plugin_source_matches_every_connection_of_it() {
     let world = World::new();
     world.runtime.set_targets(vec![
         TargetView {
             conn: VH.into(),
             plugin: "videohub".into(),
-            interfaces: vec!["test@1".into()],
         },
         TargetView {
             conn: VH2.into(),
-            plugin: "videohub".into(),
-            interfaces: vec![],
+            plugin: "atem".into(),
         },
     ]);
     world.add(flow_with(
         "tally",
-        json!([{ "kind": "event", "from": { "target": { "interface": "test@1" } }, "event": "routeChanged" }]),
+        json!([{ "kind": "event", "from": { "target": { "plugin": "videohub" } }, "event": "routeChanged" }]),
     ));
     world.emit(VH2, json!({}));
     world.emit(VH, json!({}));
@@ -1409,7 +1407,7 @@ async fn a_target_held_in_vars_is_checked_against_its_constraint() {
         json!({
             "id": id, "kind": "action",
             "target": { "ref": { "root": "vars", "path": ["deck"] } },
-            "constraint": { "interface": "surface@1" },
+            "constraint": { "plugin": "core", "collection": "surfaces" },
             "action": "navigate", "params": { "layer": null },
         })
     };

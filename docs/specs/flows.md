@@ -111,9 +111,9 @@ type Target = { conn: string; key?: PathSegment };          // plugin protocol s
 // (M6) An action step's target is a Source (dataflow §1): a literal Target is fixed;
 // a ref or an expression is dynamic, and then `constraint` is required.
 type TargetConstraint =
-  | { plugin: string }                // every connection of a plugin, and its items
-  | { template: string }              // (M9) every instance of a composite template, and its items (composition §6.5)
-  | { interface: string };            // one of the core's: "surface@1", "flow@1"
+  | { plugin: string; collection?: string }   // a plugin's connections, or the items of one of its collections:
+                                              // {plugin: "core", collection: "surfaces"}
+  | { template: string };             // (M9) every instance of a composite template, and its items (composition §6.5)
 ```
 
 - **(M6) Parameters are `Source`s,** one per top-level parameter: a literal, `{ref}`, `{expr}` or a stateless transform. This generalises M4's `{expr}` parameters (§8.3), which are already in this shape.
@@ -173,7 +173,7 @@ Types are checked **when editing**. Values stay dynamic at runtime.
   - each action's `result` schema, for `steps.<id>.result`
   - `local` names, inferred from `set` steps. A `local` may also be declared with a schema in `editor.locals`
   - the state schema and plugin manifests, as in [§11.2](#112-expressions-and-scripts-one-language-sandboxed-by-where-code-runs)
-  - for a dynamic target, the constraint's actions: the plugin's manifest, the composite template's actions, or the core interface's
+  - for a dynamic target, the constraint's actions: the plugin's manifest (its collection's, for items) or the composite template's actions
 - Action `params` are checked against the action's schema, taken from the target's constraint when the target is dynamic.
 - **Errors block publishing. Warnings don't.** Drafts can be saved with errors ([state spec §7.5](state-and-event-log.md#75-multi-user-editing-designed-not-built)).
   - Errors: unknown action, missing required parameter, type mismatch, a `break` outside a loop, a reference to a step ID that doesn't exist.

@@ -1,9 +1,8 @@
 //! The core connection (core actions spec, core actions spec §6.1): everything Covalence
 //! itself can do, as actions on a built-in connection `core`.
 //!
-//! Its actions are those of the interfaces it implements, kept in
-//! `protocol/interfaces/`: `surface@1` on its surfaces and `flow@1` on its
-//! flows, each item named by `key`. They run in-process: [`crate::Core`]
+//! Its actions act on the items of its two collections (core actions spec §2),
+//! `surfaces` and `flows`, each item named by `key`. They run in-process: [`crate::Core`]
 //! journals and gates them like any other action and hands them to the
 //! [`CoreActions`] the server sets, which owns surfaces and flows.
 
@@ -20,42 +19,46 @@ use crate::journal::{Origin, Seq};
 /// The core connection's ID and alias. Reserved: no connection can take it.
 pub const CORE: &str = "core";
 
-/// An interface: a named set of actions (plugin protocol spec §13.9).
+/// One of `core`'s collections, and the actions on its items (core actions spec §2).
 #[derive(Clone, Debug, Deserialize)]
-pub struct Interface {
+pub struct Collection {
+    /// `surfaces` or `flows`: what a target's `key` names.
     pub id: String,
     pub name: String,
     pub actions: Vec<ActionDef>,
 }
 
-/// `surface@1` and `flow@1`, as `protocol/interfaces/` defines them.
-pub fn interfaces() -> &'static [Interface] {
-    static INTERFACES: OnceLock<Vec<Interface>> = OnceLock::new();
-    INTERFACES.get_or_init(|| {
+pub const SURFACES: &str = "surfaces";
+pub const FLOWS: &str = "flows";
+
+/// `surfaces` and `flows`.
+pub fn collections() -> &'static [Collection] {
+    static COLLECTIONS: OnceLock<Vec<Collection>> = OnceLock::new();
+    COLLECTIONS.get_or_init(|| {
         [
-            include_str!("../../../protocol/interfaces/surface@1.json"),
-            include_str!("../../../protocol/interfaces/flow@1.json"),
+            include_str!("core_conn/surfaces.json"),
+            include_str!("core_conn/flows.json"),
         ]
         .iter()
-        .map(|json| serde_json::from_str(json).expect("protocol/interfaces parse"))
+        .map(|json| serde_json::from_str(json).expect("a core collection parses"))
         .collect()
     })
 }
 
-/// The interface an action of `core` belongs to, and so what its `key` names.
-pub fn interface_of(action: &str) -> Option<&'static Interface> {
-    interfaces()
+/// The collection an action of `core` acts on, and so what its `key` names.
+pub fn collection_of(action: &str) -> Option<&'static Collection> {
+    collections()
         .iter()
-        .find(|i| i.actions.iter().any(|a| a.id == action))
+        .find(|c| c.actions.iter().any(|a| a.id == action))
 }
 
 /// The core connection's manifest, served like a plugin's (core actions §1).
 pub fn manifest() -> &'static Manifest {
     static MANIFEST: OnceLock<Manifest> = OnceLock::new();
     MANIFEST.get_or_init(|| {
-        let actions: Vec<ActionDef> = interfaces()
+        let actions: Vec<ActionDef> = collections()
             .iter()
-            .flat_map(|i| i.actions.iter().cloned())
+            .flat_map(|c| c.actions.iter().cloned())
             .collect();
         serde_json::from_value(serde_json::json!({
             "id": CORE,
@@ -112,7 +115,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_manifest_has_every_interface_action_and_all_are_internal() {
+    fn the_manifest_has_every_collection_action_and_all_are_internal() {
         let ids: Vec<&str> = manifest().actions.iter().map(|a| a.id.as_str()).collect();
         assert_eq!(ids, ["navigate", "inject", "cancelRuns", "setEnabled"]);
         assert!(
@@ -121,7 +124,7 @@ mod tests {
                 .iter()
                 .all(|a| a.effect() == covalence_protocol::plugin::Effect::Internal)
         );
-        assert_eq!(interface_of("inject").unwrap().id, "surface@1");
-        assert_eq!(interface_of("setEnabled").unwrap().id, "flow@1");
+        assert_eq!(collection_of("inject").unwrap().id, SURFACES);
+        assert_eq!(collection_of("setEnabled").unwrap().id, FLOWS);
     }
 }
