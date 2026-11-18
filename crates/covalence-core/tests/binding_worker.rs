@@ -8,7 +8,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use covalence_core::Shared;
-use covalence_core::binding::{ControlBinding, Prop};
+use covalence_core::binding::ControlBinding;
 use covalence_core::engine::{ActionOutcome, ActionRequest, Actions, CoreError};
 use covalence_core::expr::QuickJs;
 use covalence_core::flow::{Flow, Runtime};
@@ -232,15 +232,15 @@ async fn missing_values_fall_back_and_errors_are_reported() {
     );
     let problems = w.surfaces.binding_problems();
     assert!(
-        problems[&("b1".to_owned(), Prop::Background)].contains("isn't a colour"),
+        problems[&("b1".to_owned(), "background".to_owned())].contains("isn't a colour"),
         "{problems:?}"
     );
     assert!(
-        problems[&("b2".to_owned(), Prop::Label)].contains("toUpperCase"),
+        problems[&("b2".to_owned(), "label".to_owned())].contains("toUpperCase"),
         "{problems:?}"
     );
     assert!(
-        !problems.contains_key(&("b1".to_owned(), Prop::Label)),
+        !problems.contains_key(&("b1".to_owned(), "label".to_owned())),
         "undefined isn't an error"
     );
 
@@ -325,7 +325,7 @@ async fn only_shown_pages_are_evaluated() {
     assert!(
         w.surfaces
             .binding_problems()
-            .contains_key(&("b1".to_owned(), Prop::Label))
+            .contains_key(&("b1".to_owned(), "label".to_owned()))
     );
     draws(&mut link);
 }
@@ -929,4 +929,45 @@ async fn a_surface_scoped_helper_keeps_one_value_per_surface() {
         )
     };
     assert_eq!(events, [at("on"), at("off")]);
+}
+
+#[test]
+fn gesture_settings_must_be_durations() {
+    let layers: BTreeMap<String, covalence_core::surface::Layer> =
+        [(CAMS.to_owned(), common::deck_layer(CAMS, "cams", 5, 3))].into();
+    let conns = [VH.to_owned()].into();
+    let ctx = covalence_core::binding::Context {
+        layers: &layers,
+        conns: &conns,
+        taken: &Default::default(),
+        evaluator: &covalence_core::expr::QuickJs::default(),
+    };
+    let problems = |gestures| {
+        let b = ControlBinding::parse(&json!({
+            "id": "b", "layer": CAMS, "control": "k0", "gestures": gestures,
+        }))
+        .unwrap();
+        covalence_core::binding::validate(&b, &ctx)
+            .errors
+            .iter()
+            .map(|p| {
+                let p = serde_json::to_value(p).unwrap();
+                (p["path"].clone(), p["code"].clone())
+            })
+            .collect::<Vec<_>>()
+    };
+    assert!(problems(json!({ "longAfter": "800ms", "holdEvery": 100, "doubleWindow": { "expr": "vars.slow ? 600 : 300" } })).is_empty());
+    assert_eq!(
+        problems(json!({ "longAfter": "soon", "holdEvery": 0 })),
+        [
+            (json!(["gestures", "longAfter"]), json!("badValue")),
+            (json!(["gestures", "holdEvery"]), json!("badValue")),
+        ]
+    );
+    assert!(
+        ControlBinding::parse(&json!({
+            "id": "b", "layer": CAMS, "control": "k0", "gestures": { "tripleWindow": 9 },
+        }))
+        .is_err()
+    );
 }

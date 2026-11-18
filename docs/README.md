@@ -11,7 +11,7 @@
 - [M5: Surfaces and bindings](milestones/m5-surfaces-and-bindings.md) (done)
 - [M6: Primitives](milestones/m6-primitives.md) (done; redraw budget to re-measure): sources, selectors, events by path, the core connection
 - [M7: Surfaces from plugins](milestones/m7-surfaces-from-plugins.md) (done, except checks on hardware: Phase 7 waits on a real MK.2 and the M3): devices, transports, surfaces over the plugin host, the Stream Deck plugin
-- [M8: Dataflow](milestones/m8-dataflow.md) (in progress: Phases 0–3 done, Phase 4 under way): reducers, cells, variables, sinks, helpers, layer resolution
+- [M8: Dataflow](milestones/m8-dataflow.md) (in progress: Phases 0–4 done): reducers, cells, variables, sinks, helpers, layer resolution
 - [M9: Composition](milestones/m9-composition.md) (planned): one template primitive, composites, components, nesting, `forEach`, plugin transforms
 
 ## Specs (drafts)
@@ -62,7 +62,7 @@
 | [0032](adr/0032-one-template-primitive.md) | One reuse primitive: templates and instances, for layers, composites, components and flows | Proposed |
 | [0033](adr/0033-execution-model.md) | Execution model: one turn thread writes state; flows, scripts and drawing run beside it | Accepted |
 | [0034](adr/0034-live-edits.md) | Editing a running show: changesets, pinned runs and kept state | Proposed (revised: kept state settled for M8; the rest waits for M9's Phase 0) |
-| [0035](adr/0035-level-outputs-echoes-and-control-settings.md) | Level outputs, echoes, gesture timing and per-surface helpers | Proposed |
+| [0035](adr/0035-level-outputs-echoes-and-control-settings.md) | Level outputs, echoes, gesture timing and per-surface helpers | Accepted |
 
 Each record covers its context, the decision, its consequences and the alternatives considered. Don't edit an accepted record to change its decision; write a new one that supersedes it.
 

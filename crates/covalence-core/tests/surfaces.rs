@@ -1049,3 +1049,82 @@ async fn echoes_marked_by_the_host_are_state_only() {
     settle(&w.surfaces).await;
     assert_eq!(names(&w.shared), ["fader:change"]);
 }
+
+fn set_var(shared: &Shared, name: &str, v: Value) {
+    use covalence_core::state::{Meta, Quality, Source};
+    let at = StatePath::new("vars", vec![PathSegment::Key(name.into())]);
+    let meta = Meta {
+        ts: 0,
+        seq: 1,
+        quality: Quality::Good,
+        source: Source::Core,
+    };
+    shared.state.mutate(|tree| ((), tree.set(&at, &v, &meta)));
+}
+
+/// ADR 0035: a binding's `gestures` set its control's timing. `longAfter`
+/// and `holdEvery` are read when the control goes down and kept for the
+/// press; `doubleWindow` at the next press.
+#[tokio::test(start_paused = true)]
+async fn a_binding_sets_its_controls_gesture_timing_at_each_press() {
+    let w = world();
+    set_var(&w.shared, "every", 200.into());
+    w.surfaces.set_binding(
+        covalence_core::binding::ControlBinding::parse(&json!({
+            "id": "b0", "layer": CAMS, "control": "k0",
+            "gestures": {
+                "longAfter": "1s",
+                "holdEvery": { "ref": { "root": "vars", "path": ["every"] } },
+                "doubleWindow": 50,
+            },
+        }))
+        .unwrap(),
+    );
+    let link = w.surfaces.attach(DECK, deck()).unwrap();
+    send(&link, "k0", InputKind::Down, 0.0).await;
+    settle(&w.surfaces).await;
+    tokio::time::sleep(Duration::from_millis(1_100)).await;
+    settle(&w.surfaces).await;
+    assert_eq!(names(&w.shared), ["k0:press", "k0:long", "k0:hold1"]);
+
+    // A change during the press applies from the next one.
+    set_var(&w.shared, "every", 50.into());
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    settle(&w.surfaces).await;
+    assert_eq!(names(&w.shared).len(), 4, "hold2 at 1.2 s, and no sooner");
+    send(&link, "k0", InputKind::Up, 1_250.0).await;
+
+    // 60 ms between presses is more than its 50 ms window; 30 ms isn't.
+    send(&link, "k0", InputKind::Down, 1_310.0).await;
+    send(&link, "k0", InputKind::Up, 1_320.0).await;
+    send(&link, "k0", InputKind::Down, 1_350.0).await;
+    send(&link, "k0", InputKind::Up, 1_360.0).await;
+    settle(&w.surfaces).await;
+    assert_eq!(
+        names(&w.shared)[5..],
+        [
+            "k0:press",
+            "k0:release",
+            "k0:press",
+            "k0:double",
+            "k0:release"
+        ]
+    );
+    // Other keys keep the defaults.
+    send(&link, "k1", InputKind::Down, 2_000.0).await;
+    send(&link, "k1", InputKind::Up, 2_010.0).await;
+    send(&link, "k1", InputKind::Down, 2_200.0).await;
+    settle(&w.surfaces).await;
+    assert_eq!(names(&w.shared).last().unwrap(), "k1:double");
+    assert!(w.surfaces.binding_problems().is_empty());
+
+    // A setting that isn't a duration gives the default, and is reported.
+    set_var(&w.shared, "every", "often".into());
+    send(&link, "k0", InputKind::Down, 3_000.0).await;
+    settle(&w.surfaces).await;
+    let problems = w.surfaces.binding_problems();
+    assert!(
+        problems[&("b0".to_owned(), "gestures.holdEvery".to_owned())].contains("not a duration"),
+        "{problems:?}"
+    );
+}

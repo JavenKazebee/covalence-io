@@ -544,6 +544,12 @@ struct Inner {
     bindings: Bindings,
     sessions: AtomicU64,
     on_shown: Mutex<Option<OnShown>>,
+    /// Each control's `gestures`, by `(layer, control)`, with its binding.
+    gestures: Mutex<BTreeMap<(LayerId, String), (String, crate::binding::Gestures)>>,
+    /// The connection aliases gesture settings' expressions read.
+    aliases: Mutex<Arc<BTreeMap<String, crate::state::ConnId>>>,
+    /// Evaluates gesture settings' expressions, with a binding's limit.
+    evaluator: crate::expr::QuickJs,
 }
 
 #[derive(Default)]
@@ -599,6 +605,12 @@ impl Surfaces {
                 book: Mutex::new(Book::default()),
                 sessions: AtomicU64::new(0),
                 on_shown: Mutex::new(None),
+                gestures: Mutex::new(BTreeMap::new()),
+                aliases: Mutex::new(Arc::new(BTreeMap::new())),
+                evaluator: crate::expr::QuickJs::new(crate::expr::Limits {
+                    time: crate::binding::worker::EXPR_TIME,
+                    ..crate::expr::Limits::default()
+                }),
             }),
         }
     }
@@ -725,15 +737,27 @@ impl Surfaces {
 
     /// Adds or replaces a control binding.
     pub fn set_binding(&self, binding: ControlBinding) {
+        {
+            let mut gestures = lock(&self.inner.gestures);
+            gestures.retain(|_, (id, _)| *id != binding.id);
+            if let Some(g) = &binding.gestures {
+                gestures.insert(
+                    (binding.layer.clone(), binding.control.clone()),
+                    (binding.id.clone(), g.clone()),
+                );
+            }
+        }
         self.inner.bindings.set(binding);
     }
 
     pub fn remove_binding(&self, id: &str) {
+        lock(&self.inner.gestures).retain(|_, (b, _)| b != id);
         self.inner.bindings.remove(id);
     }
 
     /// The connection aliases `expr` bindings read, by alias.
     pub fn set_aliases(&self, aliases: BTreeMap<String, crate::state::ConnId>) {
+        *lock(&self.inner.aliases) = Arc::new(aliases.clone());
         self.inner.bindings.set_aliases(aliases);
     }
 
@@ -1478,9 +1502,18 @@ impl Task {
                 layer
             }
         };
-        let found = self
-            .recogniser
-            .change(&input.control, write.change, input.ts, Instant::now());
+        // A press reads its control's timing, and keeps it (ADR 0035).
+        let timing = match write.change {
+            Change::Pressed(true) => self.inner.press_timing(layer.as_deref(), &input.control),
+            _ => self.inner.timing,
+        };
+        let found = self.recogniser.change_timed(
+            &input.control,
+            write.change,
+            input.ts,
+            Instant::now(),
+            timing,
+        );
         // An echo is state only: nothing reacts to a device moving itself.
         if !input.echo {
             self.journal_events(layer.as_deref(), found, Some(seq));
@@ -1595,9 +1628,54 @@ impl Task {
     }
 }
 
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 impl Inner {
     fn book(&self) -> MutexGuard<'_, Book> {
-        self.book.lock().unwrap_or_else(|e| e.into_inner())
+        lock(&self.book)
+    }
+
+    /// A control's gesture timing at a press (ADR 0035): from the binding on
+    /// the layer controlling it, each setting read now, or the default. A
+    /// setting that fails is reported as the binding's problem.
+    fn press_timing(&self, layer: Option<&str>, control: &str) -> Timing {
+        let mut timing = self.timing;
+        let Some(layer) = layer else { return timing };
+        let Some((binding, gestures)) = lock(&self.gestures)
+            .get(&(layer.to_owned(), control.to_owned()))
+            .cloned()
+        else {
+            return timing;
+        };
+        let aliases = lock(&self.aliases).clone();
+        let scope = crate::expr::Scope::new(&self.shared.state, &aliases);
+        for (name, setting) in gestures.settings() {
+            let Some(source) = setting else { continue };
+            let value = match source.evaluate(&scope, &self.evaluator).value {
+                Ok(Some(v)) => crate::binding::gesture_duration(&v),
+                Ok(None) => source
+                    .fallback()
+                    .map_or(Err("it has no value".to_owned()), |f| {
+                        crate::binding::gesture_duration(f)
+                    }),
+                Err(e) => Err(e.to_string()),
+            };
+            let prop = format!("gestures.{name}");
+            match value {
+                Ok(d) => {
+                    self.bindings.note(&binding, &prop, None);
+                    match name {
+                        "doubleWindow" => timing.double_window = d,
+                        "longAfter" => timing.long_after = d,
+                        _ => timing.hold_every = d,
+                    }
+                }
+                Err(e) => self.bindings.note(&binding, &prop, Some(e)),
+            }
+        }
+        timing
     }
 
     fn meta(seq: Seq) -> Meta {

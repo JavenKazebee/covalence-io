@@ -1,6 +1,6 @@
 # 0035 – Level outputs, echoes, gesture timing and per-surface helpers
 
-- **Status:** Proposed
+- **Status:** Accepted (implemented in M8 Phase 4)
 - **Date:** 2026-11-17
 - **Revised in place while Proposed:** echoes are marked by the device's plugin, not recognised by the core (2026-11-17)
 - **Answers:** the rest of [M8 Phase 4](../milestones/m8-dataflow.md): echoes, the virtual encoder and fader, `gestures`, and helpers with `scope: "surface"`

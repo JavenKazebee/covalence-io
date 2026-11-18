@@ -79,12 +79,14 @@ struct Down {
     at: Instant,
     /// `hold`s fired so far. The first comes with `long`.
     holds: i64,
+    /// The timing it started with, kept for the whole press (ADR 0035).
+    timing: Timing,
 }
 
 impl Down {
     /// When the next `hold` (and, for the first, `long`) is due.
-    fn due(&self, timing: &Timing) -> Instant {
-        self.at + timing.long_after + timing.hold_every * self.holds as u32
+    fn due(&self) -> Instant {
+        self.at + self.timing.long_after + self.timing.hold_every * self.holds as u32
     }
 
     /// Fires the next `hold`, with `long` before the first.
@@ -131,6 +133,20 @@ impl Recogniser {
         now: Instant,
     ) -> Vec<Detected> {
         let timing = self.timing;
+        self.change_timed(control, change, ts, now, timing)
+    }
+
+    /// [`change`](Self::change) with the control's own timing, read when it
+    /// was pressed (ADR 0035): a press uses it for `double` and keeps it for
+    /// its `long` and `hold`s.
+    pub fn change_timed(
+        &mut self,
+        control: &str,
+        change: Change,
+        ts: f64,
+        now: Instant,
+        timing: Timing,
+    ) -> Vec<Detected> {
         let state = self.controls.entry(control.to_owned()).or_default();
         let mut out = Vec::new();
         match change {
@@ -151,6 +167,7 @@ impl Recogniser {
                     ts,
                     at: now,
                     holds: 0,
+                    timing,
                 });
             }
             Change::Pressed(false) => {
@@ -160,9 +177,9 @@ impl Recogniser {
                 // A late release can show the control was held longer than
                 // the timer has seen: fire what was due before its `ts`.
                 let held = ts - down.ts;
-                let long = millis(timing.long_after);
+                let long = millis(down.timing.long_after);
                 if held >= long {
-                    let due = 1 + ((held - long) / millis(timing.hold_every)) as i64;
+                    let due = 1 + ((held - long) / millis(down.timing.hold_every)) as i64;
                     while down.holds < due {
                         down.fire(control, &mut out);
                     }
@@ -198,7 +215,7 @@ impl Recogniser {
         self.controls
             .values()
             .filter_map(|c| c.down.as_ref())
-            .map(|d| d.due(&self.timing))
+            .map(Down::due)
             .min()
     }
 
@@ -207,7 +224,7 @@ impl Recogniser {
         let mut out = Vec::new();
         for (control, state) in &mut self.controls {
             if let Some(down) = &mut state.down {
-                while down.due(&self.timing) <= now {
+                while down.due() <= now {
                     down.fire(control, &mut out);
                 }
             }

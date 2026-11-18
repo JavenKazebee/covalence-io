@@ -41,6 +41,53 @@ pub struct ControlBinding {
     /// Reducers on the control's input, by key (bindings §5).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub helpers: BTreeMap<String, Helper>,
+    /// The control's gesture timing while this binding's layer controls it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gestures: Option<Gestures>,
+}
+
+/// Gesture timing for one control (bindings §1, ADR 0035). Each is a
+/// duration (`400ms`) or a number of milliseconds, read when it's needed:
+/// `longAfter` and `holdEvery` when the control goes down, `doubleWindow`
+/// at the next press. A failure, or a value that isn't a duration, gives
+/// that setting its default.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Gestures {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub double_window: Option<Binding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub long_after: Option<Binding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hold_every: Option<Binding>,
+}
+
+impl Gestures {
+    /// Each setting, by its name.
+    pub fn settings(&self) -> [(&'static str, Option<&Binding>); 3] {
+        [
+            ("doubleWindow", self.double_window.as_ref()),
+            ("longAfter", self.long_after.as_ref()),
+            ("holdEvery", self.hold_every.as_ref()),
+        ]
+    }
+}
+
+/// A gesture setting's value as a duration: a duration's text, or a
+/// positive number of milliseconds.
+pub fn gesture_duration(value: &Json) -> Result<std::time::Duration, String> {
+    match value {
+        Json::Number(n) => match n.as_f64() {
+            Some(ms) if (1.0..=3_600_000.0).contains(&ms) => {
+                Ok(std::time::Duration::from_millis(ms as u64))
+            }
+            _ => Err(format!("{n} isn't a duration: use 1 ms to an hour")),
+        },
+        Json::String(s) => s.parse::<crate::flow::Duration>().map(|d| d.get()),
+        v => Err(format!(
+            "a duration is text like \"400ms\" or a number of milliseconds, not {v}"
+        )),
+    }
 }
 
 /// A helper (bindings §5, surfaces §4.3): a reducer whose `on` and input
@@ -541,6 +588,25 @@ pub fn validate(binding: &ControlBinding, ctx: &Context) -> Report {
     }
     for (name, helper) in &binding.helpers {
         v.helper(helper, &[key("helpers"), key(name)]);
+    }
+    if let Some(gestures) = &binding.gestures {
+        for (name, setting) in gestures.settings() {
+            let Some(s) = setting else { continue };
+            let base = [key("gestures"), key(name)];
+            v.sources(s, &base, false);
+            let literals = match s {
+                Source::Literal(l) => vec![(l, base.to_vec())],
+                _ => s
+                    .fallback()
+                    .map(|f| vec![(f, at(&base, &[key("fallback")]))])
+                    .unwrap_or_default(),
+            };
+            for (l, path) in literals {
+                if let Err(message) = gesture_duration(l) {
+                    v.error(path, Code::BadValue, message);
+                }
+            }
+        }
     }
     Report {
         errors: v.errors,

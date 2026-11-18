@@ -208,7 +208,7 @@ type OutputKind = OutputCap["kind"];
 - **Timing uses the device's `ts`**, so jitter between the device and the core doesn't change what a gesture is.
 - **`long` and `hold` need a timer,** because no input arrives while a key is held. The core starts one when the `down` arrives. If the `up` arrives first and its `ts` shows the key was held for `longAfter` or more (late delivery), `long` fires before `release`. A `hold` repeat that would fire after the `up`'s `ts` doesn't fire.
 - **Layer-relative input is events, not state.** Two surfaces can each be under one layer and each hold its `k0`, so `layer.<slug>` has no `pressed`. An event trigger on `{layer, controls}` is matched per surface (§7).
-- **(M8)** The timing settings are configurable per control with `gestures` on its control binding (bindings §5). It configures events rather than computing a value, so it's a setting, not a helper.
+- **(M8)** The timing settings are configurable per control with `gestures` on its control binding (bindings §1). It configures events rather than computing a value, so it's a setting, not a helper. Each is a `Source`: a duration (`400ms`), a number of milliseconds, a `{ref}` or an `{expr}`. They're read when needed, from the binding on the layer controlling the control on that surface: `longAfter` and `holdEvery` when it goes down, `doubleWindow` at the next press. A press keeps the timing it started with, even if the layer changes during it. A failure, or a value that isn't a duration, gives that setting its default and is reported as the binding's problem, `gestures.<setting>` ([ADR 0035](../adr/0035-level-outputs-echoes-and-control-settings.md)).
 
 ### 4.3 Helpers (M8)
 

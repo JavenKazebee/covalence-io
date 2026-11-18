@@ -167,7 +167,7 @@ async fn binding_problems(State(app): State<Arc<App>>) -> Json<Vec<JsonValue>> {
             .binding_problems()
             .into_iter()
             .map(|((binding, prop), message)| {
-                json!({ "binding": binding, "prop": prop.as_str(), "message": message })
+                json!({ "binding": binding, "prop": prop, "message": message })
             })
             .collect(),
     )

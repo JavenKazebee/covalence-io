@@ -34,8 +34,9 @@ use crate::surface::{
 /// An `expr` binding's time limit (ADR 0023).
 pub const EXPR_TIME: Duration = Duration::from_millis(10);
 
-/// The last error of each binding property, by binding ID: what the editor shows.
-pub type Problems = BTreeMap<(String, Prop), String>;
+/// The last error of each binding property, by binding ID and the
+/// property's name (`label`, `gestures.longAfter`): what the editor shows.
+pub type Problems = BTreeMap<(String, String), String>;
 
 /// A handle on the worker thread. Dropping it stops the thread.
 pub struct Bindings {
@@ -44,7 +45,7 @@ pub struct Bindings {
 }
 
 enum Command {
-    Set(ControlBinding),
+    Set(Box<ControlBinding>),
     Remove(String),
     Aliases(Arc<BTreeMap<String, ConnId>>),
     /// A surface shows `layer` (or nothing) through `outputs`.
@@ -94,7 +95,7 @@ impl Bindings {
 
     /// Adds or replaces a binding.
     pub fn set(&self, binding: ControlBinding) {
-        self.send(Command::Set(binding));
+        self.send(Command::Set(Box::new(binding)));
     }
 
     pub fn remove(&self, id: &str) {
@@ -132,6 +133,12 @@ impl Bindings {
         lock(&self.problems).clone()
     }
 
+    /// Records, or clears, a property's error found outside the worker,
+    /// such as a gesture setting read at a press. Logged when it changes.
+    pub fn note(&self, binding: &str, prop: &str, error: Option<String>) {
+        note(&self.problems, binding, prop, error);
+    }
+
     /// Returns once the worker has handled every command sent before, and
     /// every state change published before. It spins rather than sleeps, so
     /// a paused test clock doesn't move while it waits.
@@ -152,6 +159,22 @@ impl Bindings {
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn note(problems: &Mutex<Problems>, id: &str, prop: &str, error: Option<String>) {
+    let mut problems = lock(problems);
+    let key = (id.to_owned(), prop.to_owned());
+    match error {
+        Some(message) => {
+            if problems.get(&key) != Some(&message) {
+                tracing::warn!(binding = %id, prop, "binding failed: {message}");
+                problems.insert(key, message);
+            }
+        }
+        None => {
+            problems.remove(&key);
+        }
+    }
 }
 
 struct Worker {
@@ -345,7 +368,7 @@ impl Worker {
                 self.forget(&binding.id);
                 let key = (binding.layer.clone(), binding.control.clone());
                 self.by_control.insert(key.clone(), binding.id.clone());
-                self.bindings.insert(binding.id.clone(), binding);
+                self.bindings.insert(binding.id.clone(), *binding);
                 if self.is_visible(&key.0) {
                     self.resolve(&key);
                     self.draw_all();
@@ -510,19 +533,7 @@ impl Worker {
     }
 
     fn note(&self, id: &str, prop: Prop, error: Option<String>) {
-        let mut problems = lock(&self.problems);
-        let key = (id.to_owned(), prop);
-        match error {
-            Some(message) => {
-                if problems.get(&key) != Some(&message) {
-                    tracing::warn!(binding = %id, prop = prop.as_str(), "binding failed: {message}");
-                    problems.insert(key, message);
-                }
-            }
-            None => {
-                problems.remove(&key);
-            }
-        }
+        note(&self.problems, id, prop.as_str(), error);
     }
 
     fn look(&self, resolved: &Resolved) -> Look {
