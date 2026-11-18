@@ -516,59 +516,45 @@ fn order_key(c: &ControlView, i: usize) -> (bool, u32, u32, usize) {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Targets;
 
-/// A connection, or an item within one (plugin protocol spec §13.9). A string is a connection ID.
+/// A connection (plugin protocol spec §13.9), by ID: `"vh"`, or `{conn: "vh"}` as a step
+/// stores it.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Target {
     pub conn: ConnId,
-    pub key: Option<String>,
 }
 
 impl Target {
     pub fn conn(conn: impl Into<ConnId>) -> Self {
-        Target {
-            conn: conn.into(),
-            key: None,
-        }
+        Target { conn: conn.into() }
     }
 }
 
 impl<'de> Deserialize<'de> for Target {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum Wire {
-            Conn(ConnId),
-            Item {
-                conn: ConnId,
-                #[serde(default)]
-                key: Option<String>,
-            },
-        }
         // `deny_unknown_fields` can't be combined with `untagged`, so the
         // object form is checked by hand.
         let json = Json::deserialize(deserializer)?;
-        if let Json::Object(map) = &json
-            && let Some(extra) = map.keys().find(|k| *k != "conn" && *k != "key")
-        {
-            return Err(D::Error::custom(format!(
-                "{extra:?} isn't part of a target, which is {{conn, key?}}"
-            )));
-        }
-        match serde_json::from_value(json)
-            .map_err(|_| D::Error::custom("a target is a connection ID or {conn, key?}"))?
-        {
-            Wire::Conn(conn) => Ok(Target::conn(conn)),
-            Wire::Item { conn, key } => Ok(Target { conn, key }),
+        match &json {
+            Json::String(conn) => Ok(Target::conn(conn.as_str())),
+            Json::Object(map) => {
+                if let Some(extra) = map.keys().find(|k| *k != "conn") {
+                    return Err(D::Error::custom(format!(
+                        "{extra:?} isn't part of a target, which is a connection: {{conn}}"
+                    )));
+                }
+                match map.get("conn") {
+                    Some(Json::String(conn)) => Ok(Target::conn(conn.as_str())),
+                    _ => Err(D::Error::custom("a target is a connection ID or {conn}")),
+                }
+            }
+            _ => Err(D::Error::custom("a target is a connection ID or {conn}")),
         }
     }
 }
 
 impl Serialize for Target {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match &self.key {
-            None => self.conn.serialize(serializer),
-            Some(key) => serde_json::json!({ "conn": self.conn, "key": key }).serialize(serializer),
-        }
+        self.conn.serialize(serializer)
     }
 }
 
@@ -593,9 +579,7 @@ pub struct TargetView {
 }
 
 impl Selector<Targets> {
-    /// The connections it picks, by connection ID. Items within a
-    /// connection (`key`) wait for plugin protocol spec §13.9's targets, so a target with a
-    /// key resolves to nothing.
+    /// The connections it picks, by connection ID.
     pub fn resolve(
         &self,
         conns: &[TargetView],
@@ -603,12 +587,7 @@ impl Selector<Targets> {
     ) -> Result<Vec<Target>, ExprError> {
         let mut sorted: Vec<&TargetView> = conns.iter().collect();
         sorted.sort_by(|a, b| a.conn.cmp(&b.conn));
-        let index_of = |t: &Target| {
-            t.key
-                .is_none()
-                .then(|| sorted.iter().position(|c| c.conn == t.conn))
-                .flatten()
-        };
+        let index_of = |t: &Target| sorted.iter().position(|c| c.conn == t.conn);
         let from_expr = |v: &Json| serde_json::from_value::<Target>(v.clone()).ok();
         let form = |f: &TargetForm| -> BTreeSet<usize> {
             (0..sorted.len())
@@ -999,12 +978,7 @@ impl Selector<Targets> {
     pub fn problems(&self, known: &dyn Fn(&ConnId) -> bool) -> Vec<(Path, Issue)> {
         let mut out = Vec::new();
         self.each_id(&mut Vec::new(), &mut |at, t| {
-            if t.key.is_some() {
-                out.push((
-                    at.clone(),
-                    Issue::Bad("items within a connection aren't supported yet".into()),
-                ));
-            } else if !known(&t.conn) {
+            if !known(&t.conn) {
                 out.push((
                     at.clone(),
                     Issue::Unknown(format!("no connection {:?}", t.conn)),

@@ -200,7 +200,7 @@ type Helper = ReducerSource & {                 // {use: "toggle" | "position" |
 
 ## 7. Plugin presets become components (M9)
 
-Manifest `presets` ([plugin protocol §4](plugin-protocol.md#4-manifest)) become **components** ([composition §8](composition.md)): a reusable control with its look, helpers, flows and parameters, such as "tally key" or "record toggle". A component written against an interface works for any target that implements it, so placing "tally of the selected camera" needs no typing.
+Manifest `presets` ([plugin protocol §4](plugin-protocol.md#4-manifest)) become **components** ([composition §8](composition.md)): a reusable control with its look, helpers, flows and parameters, such as "tally key" or "record toggle". A component whose `camera` param is constrained to a composite template works for every camera of that template, so placing "tally of the selected camera" needs no typing.
 
 ---
 

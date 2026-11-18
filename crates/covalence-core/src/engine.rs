@@ -39,8 +39,6 @@ pub struct ActionRequest {
     pub cause: Option<Seq>,
     pub run: Option<String>,
     pub conn: ConnId,
-    /// The item within the connection: a surface or flow of `core`.
-    pub key: Option<String>,
     pub action: String,
     pub params: Value,
     /// Milliseconds.
@@ -61,7 +59,6 @@ impl ActionRequest {
             cause: None,
             run: None,
             conn: conn.into(),
-            key: None,
             action: action.into(),
             params,
             deadline: None,
@@ -186,7 +183,6 @@ impl Core {
                     Record::ActionRequested(ActionRequestedRecord {
                         call: call.clone(),
                         conn: req.conn.clone(),
-                        key: req.key.clone(),
                         action: req.action.clone(),
                         params: req.params.clone(),
                         deadline: req.deadline,
@@ -238,7 +234,6 @@ impl Core {
                             origin,
                             run: req.run.clone(),
                             requested,
-                            key: req.key.clone(),
                             action: invoke.action,
                             params: invoke.params,
                         })
@@ -249,11 +244,6 @@ impl Core {
                     "core actions aren't available yet",
                 )),
             }
-        } else if req.key.is_some() {
-            Err(ProtocolError::new(
-                ErrorCode::InvalidParams,
-                "items within a plugin's connection aren't supported yet",
-            ))
         } else {
             self.host
                 .invoke(&req.conn, &invoke, Some(requested))

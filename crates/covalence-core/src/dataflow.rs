@@ -1585,7 +1585,6 @@ impl Turn<'_> {
                         action.action.clone(),
                         Value::Map(params),
                     );
-                    request.key = target.key.clone();
                     request.cause = patch;
                     let rate = action
                         .rate_limit

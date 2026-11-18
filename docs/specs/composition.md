@@ -132,7 +132,7 @@ type ForEach = (
 - **They're never saved.** The entity is the one instance with `forEach`. Its items come from state each time it's loaded.
 - **At most 256 items.** Extra items aren't instanced, and the instance reports `tooMany`.
 - **Per kind:**
-  - **A composite with `forEach` is a connection with a collection** (§6.4): each item is a target.
+  - **A composite with `forEach`** makes each item a target (§6.4).
   - **A layer with `forEach`** is one layer per item, each navigated by `{layer, item: key}` ([core actions §3.1](core-actions.md)).
   - **A flow with `forEach`** is one flow per item, each with its own runs and concurrency: a watchdog per recorder.
   - **Placements per item** are what a control group does (surfaces §6), since it also decides which control each item takes, and scrolls. Its `use` is an instance without `forEach`.
@@ -213,8 +213,8 @@ interface CompositeEvent {
 ### 6.3 Events
 - Each event is re-emitted at the instance's home, `<alias>:<id>` (or `<alias>.items[<key>]:<id>`), with `cause` → the event it came from. `trigger` is in scope in `filter` and `payload`.
 
-### 6.4 Collections
-- **A composite with `forEach` is one connection with a collection.** Each item is a target, `{conn, key: ["items", <key>]}`, with its state at `<alias>.items[<key>]`.
+### 6.4 Composites per item
+- **Each item of a composite with `forEach` is a target,** with its state at `<alias>.items[<key>]`. A target is a connection with nothing within it (plugin protocol §13.9), so each item is a connection of its own; how it's identified and listed is open (§10).
 - **Each item is an instance of the template,** so `{template}` selects each item as it does a single instance (§6.5).
 - **Actions and events are per item:** an action on an item's target runs with that item's `params`, and an item's events carry its key in `instance`.
 
@@ -268,7 +268,7 @@ params:
   input:    { expr: "item.input" }
 ```
 
-`cams.items["Cam A"].tally.program` follows the switcher, and `{conn: cams, key: ["items", "Cam A"]}` is accepted by `{template: <Camera's ID>}`. A recorder that isn't set reads as disconnected. A rig with a second make of PTZ widens `ptz` to an unconstrained target and makes `recallPreset` an owned flow that branches on `target(params.ptz).plugin`.
+`cams.items["Cam A"].tally.program` follows the switcher, and the "Cam A" item, as a target, is accepted by `{template: <Camera's ID>}`. A recorder that isn't set reads as disconnected. A rig with a second make of PTZ widens `ptz` to an unconstrained target and makes `recallPreset` an owned flow that branches on `target(params.ptz).plugin`.
 
 ---
 
@@ -410,6 +410,7 @@ bindings:
 4. Should surfaces, control groups, variables and sources become template kinds? A **source template** (a `Source` with `params`) would let a configured chain, such as "audio taper with a dead zone" or "seconds remaining → `MM:SS`, amber under 60 s", be named and reused without writing a project transform in JS. Or are layers, composites, components and flows enough until real projects ask?
 5. Is 256 the right `forEach` limit, or should it follow the turn budget, as dataflow open question 4 asks for cell depth?
 6. **Params that hold a template.** Should a `ParamDef` be able to hold a component, a flow or a source, so a template declares where it can vary? A camera strip with a `recordKey: component` param, defaulting to the standard one, lets one camera differ without Detach, which today is the only way out and cuts the instance off from every later fix to its template.
+7. **How a `forEach` composite's items are targets** (§6.4). A target is a connection, so each item is one: is its ID derived from the instance and the item's key, is it listed with the connections, and what does its alias read as (`cams.items["Cam A"]`)? Settled with the template primitive.
 
 ---
 
@@ -436,7 +437,7 @@ Why composition works this way, and what was rejected. This is one proposed desi
   - *Merging flow `inputs` into `params`:* every call would create an instance with a state home and a lifetime, for something that already has a run.
 
 ### 11.3 One instance per item of a live list
-- **Decided:** `forEach` makes one instance per item of a list or target selector (§4), keyed so a reorder doesn't reset them, created and removed with the list and journaled with `cause`, at most 256. A composite with `forEach` is a connection with a collection. A control group is the `forEach` of placements.
+- **Decided:** `forEach` makes one instance per item of a list or target selector (§4), keyed so a reorder doesn't reset them, created and removed with the list and journaled with `cause`, at most 256. Each item of a composite with `forEach` is a target. A control group is the `forEach` of placements.
 - **Why:** lists that change while the show runs were handled in one place only (control groups). A composite per camera, a layer per deck or a watchdog flow per recorder would otherwise need a copy per item. Per-item instances are never saved: the entity is the one `forEach` instance and its items come from state, so the core still never edits the project.
 - **Rejected:** per-item copies made by the editor; copies don't follow the list while the show runs.
 

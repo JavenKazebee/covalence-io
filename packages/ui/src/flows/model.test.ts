@@ -116,21 +116,27 @@ describe("flow model", () => {
     expect(describeTrigger(flow.triggers[5]!, (c) => c)).toBe("surface.*.controls.*.pressed (rising)");
   });
 
-  it("keeps a core target, and one held in vars with its constraint", () => {
+  it("keeps a core action's surface, and a target held in vars with its constraint", () => {
     const flow: Flow = {
       id: "f", name: "f", slug: "f", enabled: true, triggers: [{ kind: "api" }], concurrency: "ignore", failover: "abort",
       body: [
-        { id: "a", kind: "action", target: { conn: "core", key: "S1" }, action: "navigate", params: { layer: "L" } },
+        { id: "a", kind: "action", target: { conn: "core" }, action: "navigate", params: { surface: "S1", layer: "L" } },
         {
-          id: "b", kind: "action", target: { ref: { root: "vars", path: ["deck"] } }, constraint: { plugin: "core", collection: "surfaces" },
-          action: "inject", params: { control: "k1", input: "down", value: { value: { ref: "not a source" } } },
+          id: "b", kind: "action", target: { conn: "core" }, action: "inject",
+          params: { surface: { ref: { root: "vars", path: ["deck"] } }, control: "k1", input: "down", value: { value: { ref: "not a source" } } },
+        },
+        {
+          id: "c", kind: "action", target: { ref: { root: "vars", path: ["cam"] } }, constraint: { plugin: "io.example.ptz" },
+          action: "recall", params: { preset: 1 },
         },
       ],
     };
     const draft = toDraft(flow, () => null);
-    expect(draft.body[0]!.targetKey).toBe("S1");
-    expect(draft.body[1]!.targetSource).toEqual({ ref: { root: "vars", path: ["deck"] } });
+    expect(draft.body[0]!.params.surface).toBe("S1");
+    expect(draft.body[1]!.sources.surface).toEqual({ ref: { root: "vars", path: ["deck"] } });
     expect(draft.body[1]!.params.value).toEqual({ ref: "not a source" });
+    expect(draft.body[2]!.targetSource).toEqual({ ref: { root: "vars", path: ["cam"] } });
+    expect(draft.body[2]!.constraint).toBe("io.example.ptz");
     expect(fromDraft(draft, () => null)).toEqual({ ok: true, flow });
   });
 

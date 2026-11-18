@@ -978,20 +978,18 @@ async fn flows_drive_the_deck_and_other_flows_through_core() {
             "name": "Go to audio", "enabled": true, "concurrency": "ignore",
             "triggers": [{ "kind": "api" }],
             "body": [
-                { "id": "pick", "kind": "set", "path": "vars.deck", "value": format!("({{conn: 'core', key: '{}'}})", id(&deck)) },
+                { "id": "pick", "kind": "set", "path": "vars.deck", "value": format!("'{}'", id(&deck)) },
                 {
-                    "id": "nav", "kind": "action",
-                    "target": { "ref": { "root": "vars", "path": ["deck"] } },
-                    "constraint": { "plugin": "core", "collection": "surfaces" },
-                    "action": "navigate", "params": { "layer": id(&audio) },
+                    "id": "nav", "kind": "action", "target": { "conn": "core" }, "action": "navigate",
+                    "params": { "surface": { "ref": { "root": "vars", "path": ["deck"] } }, "layer": id(&audio) },
                 },
                 {
-                    "id": "down", "kind": "action", "target": { "conn": "core", "key": id(&deck) },
-                    "action": "inject", "params": { "control": "k3", "input": "down" },
+                    "id": "down", "kind": "action", "target": { "conn": "core" },
+                    "action": "inject", "params": { "surface": id(&deck), "control": "k3", "input": "down" },
                 },
                 {
-                    "id": "up", "kind": "action", "target": { "conn": "core", "key": id(&deck) },
-                    "action": "inject", "params": { "control": "k3", "input": "up" },
+                    "id": "up", "kind": "action", "target": { "conn": "core" },
+                    "action": "inject", "params": { "surface": id(&deck), "control": "k3", "input": "up" },
                 },
             ],
         }),
@@ -1026,7 +1024,7 @@ async fn flows_drive_the_deck_and_other_flows_through_core() {
         .collect();
     assert_eq!(requested.len(), 3);
     for r in &requested {
-        assert_eq!(r["data"]["key"], id(&deck));
+        assert_eq!(r["data"]["params"]["surface"], id(&deck));
         assert_eq!(
             kinds_of(r["data"]["call"].as_str().unwrap()),
             ["action.requested", "action.dispatched", "action.result"]
@@ -1079,8 +1077,8 @@ async fn flows_drive_the_deck_and_other_flows_through_core() {
             "name": "Stop it", "enabled": true, "concurrency": "ignore",
             "triggers": [{ "kind": "api" }],
             "body": [
-                { "id": "cancel", "kind": "action", "target": { "conn": "core", "key": id(&victim) }, "action": "cancelRuns", "params": {} },
-                { "id": "off", "kind": "action", "target": { "conn": "core", "key": id(&victim) }, "action": "setEnabled", "params": { "enabled": false } },
+                { "id": "cancel", "kind": "action", "target": { "conn": "core" }, "action": "cancelRuns", "params": { "flow": id(&victim) } },
+                { "id": "off", "kind": "action", "target": { "conn": "core" }, "action": "setEnabled", "params": { "flow": id(&victim), "enabled": false } },
             ],
         }),
     )
@@ -1092,14 +1090,14 @@ async fn flows_drive_the_deck_and_other_flows_through_core() {
     let stored = server.get(&format!("/flows/{}", id(&victim))).await;
     assert_eq!(stored["enabled"], false, "{stored}");
 
-    // A core target that names nothing is caught on save.
+    // A surface that doesn't exist is caught on save.
     let (status, body) = server
         .post(
             "/flows",
             json!({
                 "name": "Bad", "enabled": true, "concurrency": "ignore",
                 "triggers": [{ "kind": "api" }],
-                "body": [{ "id": "nav", "kind": "action", "target": { "conn": "core", "key": "nope" }, "action": "navigate", "params": { "layer": null } }],
+                "body": [{ "id": "nav", "kind": "action", "target": { "conn": "core" }, "action": "navigate", "params": { "surface": "nope", "layer": null } }],
             }),
         )
         .await;
@@ -1107,7 +1105,7 @@ async fn flows_drive_the_deck_and_other_flows_through_core() {
     assert_eq!(
         codes(&body),
         [(
-            json!(["body", 0, "target", "key"]),
+            json!(["body", 0, "params", "surface"]),
             "unknownTarget".to_owned()
         )]
     );

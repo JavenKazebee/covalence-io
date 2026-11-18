@@ -3,7 +3,7 @@ import { computed, watch } from "vue";
 import { stepsBefore } from "../flows/expr";
 import {
   CORE,
-  coreCollectionOf,
+  coreItemOf,
   freshStepId,
   isDuration,
   newArmDraft,
@@ -97,12 +97,8 @@ function retarget(connId: string, actionId: string) {
   s.action = actionId;
   s.params = {};
   s.sources = {};
-  if (connId !== CORE) {
-    s.targetKey = "";
-    s.targetSource = null;
-  } else if (s.targetSource !== null) {
-    s.constraint = coreCollectionOf(actionId) ?? "";
-  }
+  s.targetSource = null;
+  s.constraint = "";
   const schema = catalog.connections.find((c) => c.id === connId);
   const def = schema === undefined ? undefined : catalog.manifest(schema.plugin)?.actions.find((a) => a.id === actionId);
   s.values = def === undefined || connId === CORE ? {} : initialValues(fieldsOf(def.params));
@@ -116,40 +112,52 @@ function pickConn(connId: string) {
   retarget(connId, list.some((a) => a.id === step.value.action) ? step.value.action : (list[0]?.id ?? ""));
 }
 
-// ---- core: a surface or a flow, and its action's own form ----
+// ---- core: a surface or a flow, by parameter, and its action's own form ----
 
 const isCore = computed(() => step.value.conn === CORE);
-const coreCollection = computed(() => coreCollectionOf(step.value.action));
+/** `surface` or `flow`: the parameter that names what the action acts on (core actions §2). */
+const coreItem = computed(() => coreItemOf(step.value.action));
 /** The surfaces or flows the action can act on. */
 const coreItems = computed<{ id: string; name: string }[]>(() =>
-  coreCollection.value === "flows"
+  coreItem.value === "flow"
     ? flows.flows.map((f) => ({ id: f.id, name: f.name }))
     : surfaces.surfaces.map((x) => ({ id: x.id, name: x.name })),
 );
 const STATE = "\u0000state";
+/** The picked surface or flow's ID, or "" when it follows state. */
+const coreItemId = computed(() => {
+  const item = coreItem.value;
+  if (item === null || item in step.value.sources) return "";
+  const v = step.value.params[item];
+  return typeof v === "string" ? v : "";
+});
 
-function setCoreTarget(value: string) {
+function setCoreItem(value: string) {
   const s = step.value;
+  const item = coreItem.value;
+  if (item === null) return;
   if (value === STATE) {
-    s.targetSource = { ref: { root: "vars", path: [coreCollection.value === "flows" ? "flow" : "deck"] } };
-    s.constraint = coreCollection.value ?? "";
-    s.targetKey = "";
+    s.sources[item] = { ref: { root: "vars", path: [item === "flow" ? "flow" : "deck"] } };
+    delete s.params[item];
   } else {
-    s.targetSource = null;
-    s.constraint = "";
-    s.targetKey = value;
+    delete s.sources[item];
+    s.params[item] = value;
   }
 }
 
-/** A fresh `core` action's params: show nothing, press the first key, enable. */
+/** A fresh `core` action's params: the first surface or flow, show nothing, press the first key, enable. */
 function coreDefaults(action: string): Record<string, Json> {
+  const surface = surfaces.surfaces[0]?.id ?? "";
+  const flow = flows.flows[0]?.id ?? "";
   switch (action) {
     case "navigate":
-      return { layer: surfaces.layers[0]?.id ?? null };
+      return { surface, layer: surfaces.layers[0]?.id ?? null };
     case "inject":
-      return { control: "k0", input: "down" };
+      return { surface, control: "k0", input: "down" };
+    case "cancelRuns":
+      return { flow };
     case "setEnabled":
-      return { enabled: true };
+      return { flow, enabled: true };
     default:
       return {};
   }
@@ -306,21 +314,21 @@ function toggleElse() {
         </div>
       </div>
       <div
-        v-if="isCore && coreCollection !== null"
+        v-if="isCore && coreItem !== null"
         class="row core"
       >
         <div class="field">
-          <label :for="`${prefix}-key`">{{ coreCollection === "flows" ? "Flow" : "Surface" }}</label>
+          <label :for="`${prefix}-item`">{{ coreItem === "flow" ? "Flow" : "Surface" }}</label>
           <select
-            :id="`${prefix}-key`"
-            :value="step.targetSource !== null ? STATE : step.targetKey"
-            @change="setCoreTarget(($event.target as HTMLSelectElement).value)"
+            :id="`${prefix}-item`"
+            :value="coreItem in step.sources ? STATE : coreItemId"
+            @change="setCoreItem(($event.target as HTMLSelectElement).value)"
           >
             <option
-              v-if="step.targetSource === null && !coreItems.some((i) => i.id === step.targetKey)"
-              :value="step.targetKey"
+              v-if="!(coreItem in step.sources) && !coreItems.some((i) => i.id === coreItemId)"
+              :value="coreItemId"
             >
-              {{ step.targetKey || `Pick a ${coreCollection === "flows" ? "flow" : "surface"}` }}
+              {{ coreItemId || `Pick a ${coreItem}` }}
             </option>
             <option
               v-for="item in coreItems"
@@ -335,19 +343,19 @@ function toggleElse() {
           </select>
         </div>
         <div
-          v-if="step.targetSource !== null"
+          v-if="coreItem in step.sources"
           class="field"
         >
           <label>Held in</label>
           <SourceInput
-            v-model="step.targetSource"
-            label="Target"
+            v-model="step.sources[coreItem]!"
+            :label="coreItem === 'flow' ? 'Flow' : 'Surface'"
             :forms="['ref', 'expr']"
-            :problems="at('target')"
+            :problems="at('params', coreItem)"
             :known="known"
             :all="ctx.all"
           />
-          <small class="hint">A {{ coreCollection === "flows" ? "flow" : "surface" }}: <code>{conn: "core", key}</code>.</small>
+          <small class="hint">A {{ coreItem }}'s ID.</small>
         </div>
 
         <template v-if="step.action === 'navigate'">

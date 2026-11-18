@@ -152,7 +152,7 @@ type OutputKind = OutputCap["kind"];
 | `layer.<slug>.parts.<placement>` | a placement | **(M9)** Its params, its parts and its flows' status (composition §8) |
 
 - `surface` and `layer` are reserved roots: a connection alias can't be either (state spec §1.1). **(Now)** `layer` replaces M5's `page` root.
-- **(M6) Each surface is a target** of the `core` connection, `{conn: "core", key: <surface ID>}`, an item of its `surfaces` collection. `target(t)` on it reads `surface.<slug>` ([core actions §2](core-actions.md)).
+- **(M6) The `core` connection's actions name a surface by ID,** in their `surface` parameter: `navigate`, `inject` ([core actions §2](core-actions.md)).
 - Surface state is held while the surface is detached, with `connected: false`, so a binding that shows a surface's layer keeps working. Input state is the exception (§4.1).
 - **Control IDs that aren't state segments** (`pad.36`) use bracket syntax in text paths: `surface.mixer.controls["pad.36"].pressed` (state spec §1.1).
 

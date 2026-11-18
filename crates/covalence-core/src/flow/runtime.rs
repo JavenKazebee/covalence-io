@@ -24,7 +24,6 @@ use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
 use super::{Cond, Edge, EventSource, Flow, FlowId, OnError, SetTarget, Step, StepKind, Trigger};
-use crate::core_conn;
 use crate::engine::{ActionRequest, Actions, CoreError};
 use crate::expr::{Evaluation, Evaluator, ExprError, Reads, Scope, truthy};
 use crate::gate::Verdict;
@@ -1936,7 +1935,6 @@ impl RunTask {
             action.to_owned(),
             covalence_protocol::to_value(&computed).expect("JSON encodes as MessagePack"),
         );
-        req.key = target.key.clone();
         req.cause = Some(step_started);
         req.run = Some(self.run.clone());
         req.deadline = timeout.map(|t| t.as_millis().min(u32::MAX as u128) as u32);
@@ -1987,43 +1985,21 @@ impl RunTask {
         }
     }
 
-    /// An action step's target: its literal, or what its source gives now,
-    /// checked against the constraint (`no_target`). Only `core`'s surfaces
-    /// and flows can be followed so far.
+    /// An action step's target. Validation refuses one that follows state
+    /// (plugin protocol spec §13.9), so only a literal gets here.
     fn resolve_target(
         &self,
         target: &Source<super::ConnRef>,
-        constraint: Option<&super::TargetConstraint>,
-        action: &str,
+        _constraint: Option<&super::TargetConstraint>,
+        _action: &str,
     ) -> Result<super::ConnRef, RunError> {
-        if let Source::Literal(t) = target {
-            return Ok(t.clone());
+        match target {
+            Source::Literal(t) => Ok(t.clone()),
+            _ => Err(RunError::new(
+                "no_target",
+                "targets that follow state aren't supported yet",
+            )),
         }
-        let no_target = |why: String| RunError::new("no_target", why);
-        let value = match (self.eval_raw(target), target.fallback()) {
-            (Ok(Some(v)), _) => v,
-            (Err(e), _) if e.code == "cancelled" => return Err(e),
-            (_, Some(f)) => serde_json::to_value(f).expect("a target encodes as JSON"),
-            (Ok(None), None) => return Err(no_target("the target is undefined".into())),
-            (Err(e), None) => return Err(e),
-        };
-        let resolved: super::ConnRef = serde_json::from_value(value.clone())
-            .map_err(|_| no_target(format!("{value} isn't a target: {{conn, key}}")))?;
-        let wanted = constraint
-            .and_then(|c| c.core_collection())
-            .map(|c| c.id.as_str());
-        let has = core_conn::collection_of(action).map(|c| c.id.as_str());
-        if resolved.conn != core_conn::CORE
-            || resolved.key.is_none()
-            || wanted.is_none()
-            || wanted != has
-        {
-            return Err(no_target(format!(
-                "{value} isn't one of core's {}",
-                wanted.unwrap_or("surfaces or flows")
-            )));
-        }
-        Ok(resolved)
     }
 
     /// Sleeps, or returns `cancelled` when the run is cancelled.

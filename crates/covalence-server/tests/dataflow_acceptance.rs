@@ -506,8 +506,8 @@ async fn an_encoder_pages_a_deck_through_navigate() {
             json!({
                 "layer": id(layer), "control": "e0",
                 "helpers": { "page": { "use": "select", "items": pages, "scope": "surface",
-                    "to": [{ "action": { "target": { "conn": "core", "key": id(&surface) },
-                                         "action": "navigate", "param": "layer" } }] } },
+                    "to": [{ "action": { "target": "core", "action": "navigate", "param": "layer",
+                                         "params": { "surface": id(&surface) } } }] } },
             }),
         )
         .await;

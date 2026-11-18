@@ -56,7 +56,6 @@ impl Actions for FakeCore {
                         Record::ActionRequested(ActionRequestedRecord {
                             call: call.clone(),
                             conn: req.conn.clone(),
-                            key: req.key.clone(),
                             action: req.action.clone(),
                             params: req.params,
                             deadline: req.deadline,
@@ -1400,45 +1399,31 @@ async fn a_pattern_state_trigger_fires_per_path() {
     assert_eq!(world.var("last").unwrap()[1], json!(["mixer", "b2"]));
 }
 
+/// Which surface a `core` action acts on is a parameter, so it can follow
+/// state like any other (core actions spec §2).
 #[tokio::test(start_paused = true)]
-async fn a_target_held_in_vars_is_checked_against_its_constraint() {
+async fn a_core_action_takes_its_surface_from_state() {
     let world = World::new();
-    let step = |id: &str| {
-        json!({
-            "id": id, "kind": "action",
-            "target": { "ref": { "root": "vars", "path": ["deck"] } },
-            "constraint": { "plugin": "core", "collection": "surfaces" },
-            "action": "navigate", "params": { "layer": null },
-        })
-    };
-    world.add(api_flow("nav", "parallel", json!([step("nav")])));
-
-    // A plugin's connection isn't a surface.
-    world.set_state(
-        "vars",
-        &["deck"],
-        Value::Map(vec![("conn".into(), VH.into())]),
-    );
-    let run = world.start("nav");
-    let info = world.finished(&run).await;
-    assert_eq!(info.error.unwrap().code, "no_target");
-
-    // A surface of `core` is, and its key goes with the request.
-    world.set_state(
-        "vars",
-        &["deck"],
-        Value::Map(vec![
-            ("conn".into(), "core".into()),
-            ("key".into(), "S1".into()),
-        ]),
-    );
+    world.add(api_flow(
+        "nav",
+        "parallel",
+        json!([{
+            "id": "nav", "kind": "action", "target": { "conn": "core" }, "action": "navigate",
+            "params": { "surface": { "ref": { "root": "vars", "path": ["deck"] } }, "layer": null },
+        }]),
+    ));
+    world.set_state("vars", &["deck"], "S1".into());
     let run = world.start("nav");
     assert_eq!(world.finished(&run).await.status, RunPhase::Ok);
     let requested = world.last_of(|e| matches!(e.record, Record::ActionRequested(_)));
     let Record::ActionRequested(r) = &requested.record else {
         unreachable!()
     };
-    assert_eq!((r.conn.as_str(), r.key.as_deref()), ("core", Some("S1")));
+    assert_eq!(r.conn, "core");
+    assert_eq!(
+        covalence_core::expr::to_json(&r.params)["surface"],
+        json!("S1")
+    );
 }
 
 /// A `state` trigger on a computed variable: it sees the cell

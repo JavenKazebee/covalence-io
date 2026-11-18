@@ -288,9 +288,6 @@ struct RequestAction {
     action: String,
     #[serde(default)]
     params: JsonValue,
-    /// The item within the connection: a surface or flow of `core`.
-    #[serde(default)]
-    key: Option<String>,
     /// Milliseconds.
     deadline: Option<u32>,
 }
@@ -325,7 +322,6 @@ async fn request_action(
     };
     let mut request =
         ActionRequest::new(origin, conn_id, action.clone(), json_to_value(&req.params));
-    request.key = req.key;
     request.deadline = req.deadline;
     let outcome = app
         .core

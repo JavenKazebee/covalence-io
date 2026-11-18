@@ -266,24 +266,9 @@ fn unsupported_steps(
             }
             Some("action") => {
                 let target = step.get("target");
-                let core_collection = step
-                    .get("constraint")
-                    .and_then(|c| serde_json::from_value::<super::TargetConstraint>(c.clone()).ok())
-                    .is_some_and(|c| c.core_collection().is_some());
-                let on_core = target
-                    .and_then(|t| t.get("conn"))
-                    .is_some_and(|c| c == core_conn::CORE);
                 if target.is_some_and(|t| ["expr", "ref", "use"].iter().any(|k| t.get(k).is_some()))
                 {
-                    // Only `core`'s items can be followed yet.
-                    if !core_collection {
-                        not_yet(
-                            at("target"),
-                            "dynamic targets other than core's surfaces and flows",
-                        );
-                    }
-                } else if target.is_some_and(|t| t.get("key").is_some()) && !on_core {
-                    not_yet(at("target"), "items within a plugin's connection");
+                    not_yet(at("target"), "targets that follow state");
                 }
             }
             Some("branch") => {
@@ -450,27 +435,29 @@ impl<'a> Validation<'a> {
         self.report.warnings.push(Problem::new(path, code, message));
     }
 
-    /// Reports an expression that doesn't compile.
-    /// A fixed `core` target's key: a surface or a flow, by the action's collection.
-    fn core_key(&mut self, collection: &str, key: Option<&str>, at: Path) {
-        let Some(key) = key else {
-            self.error(
-                at,
-                Code::UnknownTarget,
-                format!("an action on core's {collection} needs `key`: which one"),
-            );
-            return;
-        };
-        let (known, what) = match collection {
-            core_conn::SURFACES => (self.ctx.surfaces.contains(key), "surface"),
-            _ => (self.ctx.flows.contains(key), "flow"),
-        };
-        if !known {
-            self.error(
-                join(&at, &[PathSegment::Key("key".into())]),
-                Code::UnknownTarget,
-                format!("no {what} {key:?}"),
-            );
+    /// A `core` action's literal `surface` or `flow` parameters name ones that
+    /// exist (core actions spec §2). Ones that follow state are checked when the step runs.
+    fn core_items(
+        &mut self,
+        action: &str,
+        params: &BTreeMap<String, Source<Value>>,
+        at: &[PathSegment],
+    ) {
+        for (name, item) in core_conn::items_of(action) {
+            let Some(Value::String(id)) = params.get(&name).and_then(|p| p.literal()) else {
+                continue;
+            };
+            let known = match item {
+                core_conn::Item::Surface => self.ctx.surfaces.contains(id.as_str()),
+                core_conn::Item::Flow => self.ctx.flows.contains(id.as_str()),
+            };
+            if !known {
+                self.error(
+                    join(at, &[key("params"), key(&name)]),
+                    Code::UnknownTarget,
+                    format!("no {} {id:?}", item.as_str()),
+                );
+            }
         }
     }
 
@@ -737,48 +724,28 @@ impl<'a> Validation<'a> {
         match &step.kind {
             StepKind::Action {
                 target,
-                constraint,
+                constraint: _,
                 action,
                 params,
             } => {
                 for (name, param) in params {
                     self.source(join(here, &[key("params"), key(name)]), param);
                 }
-                let manifest: &Manifest = match (target.literal(), constraint) {
-                    (Some(t), _) if t.conn == core_conn::CORE => {
-                        let Some(collection) = core_conn::collection_of(action) else {
-                            let message = format!("core has no action {action:?}");
-                            self.error(at("action"), Code::UnknownAction, message);
-                            return;
-                        };
-                        self.core_key(collection.id.as_str(), t.key.as_deref(), at("target"));
+                let manifest: &Manifest = match target.literal() {
+                    Some(t) if t.conn == core_conn::CORE => {
+                        self.core_items(action, params, here);
                         core_conn::manifest()
                     }
-                    (Some(t), _) => {
+                    Some(t) => {
                         self.acted_on.insert(t.conn.clone());
                         let Some(manifest) = self.manifest_of(&t.conn, at("target")) else {
                             return;
                         };
                         manifest
                     }
-                    // `find_unsupported` lets only `core`'s collections through.
-                    (None, Some(c)) => {
+                    // `find_unsupported` reports targets that follow state.
+                    None => {
                         self.source(at("target"), target);
-                        let wanted = c.collection.as_deref().unwrap_or_default();
-                        if core_conn::collection_of(action).is_none_or(|x| x.id != wanted) {
-                            let message = format!("core's {wanted} have no action {action:?}");
-                            self.error(at("action"), Code::UnknownAction, message);
-                            return;
-                        }
-                        core_conn::manifest()
-                    }
-                    (None, None) => {
-                        self.error(
-                            at("constraint"),
-                            Code::Invalid,
-                            "a target that follows state needs a constraint: {plugin, collection}"
-                                .into(),
-                        );
                         return;
                     }
                 };

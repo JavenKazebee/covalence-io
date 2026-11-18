@@ -1,7 +1,7 @@
 // One-line descriptions of journal entries (state spec §2.2).
 
 import { formatPath, type Segment } from "../live/paths";
-import { coreCollectionOf } from "../flows/model";
+import { CORE, coreItemOf } from "../flows/model";
 import type { JournalEntry, Origin } from "../live/protocol";
 
 export interface SummaryContext {
@@ -189,12 +189,12 @@ export function describe(entry: JournalEntry, ctx: SummaryContext): string {
     }
     case "action.requested": {
       const name = `${ctx.alias(String(d.conn))}.${String(d.action)}`;
-      // A `core` item: its surface or flow by name.
-      const key = d.key === undefined ? "" : String(d.key);
+      // A `core` action's surface or flow, by name (core actions §2).
+      const which = d.conn === CORE ? coreItemOf(String(d.action)) : null;
+      const params = d.params as Record<string, unknown> | undefined;
+      const id = which === null || typeof params?.[which] !== "string" ? "" : String(params[which]);
       const item =
-        key === ""
-          ? ""
-          : ` [${(coreCollectionOf(String(d.action)) === "flows" ? ctx.flowName?.(key) : ctx.surfaceName?.(key)) ?? key}]`;
+        id === "" ? "" : ` [${(which === "flow" ? ctx.flowName?.(id) : ctx.surfaceName?.(id)) ?? id}]`;
       return `${name}${item} ${json(d.params)}`;
     }
     case "action.dispatched":

@@ -106,14 +106,13 @@ type Duration = string;  // "500ms", "2s", "1m30s"
 | `break` / `continue` | none | only inside a `loop` |
 
 ```ts
-type Target = { conn: string; key?: PathSegment };          // plugin protocol spec §13.9
+type Target = { conn: string };      // a connection; what's within it is a parameter (plugin protocol spec §13.9)
 
-// (M6) An action step's target is a Source (dataflow §1): a literal Target is fixed;
+// An action step's target is a Source (dataflow §1): a literal Target is fixed;
 // a ref or an expression is dynamic, and then `constraint` is required.
 type TargetConstraint =
-  | { plugin: string; collection?: string }   // a plugin's connections, or the items of one of its collections:
-                                              // {plugin: "core", collection: "surfaces"}
-  | { template: string };             // (M9) every instance of a composite template, and its items (composition §6.5)
+  | { plugin: string }                // a plugin's connections
+  | { template: string };             // (M9) every instance of a composite template (composition §6.5)
 ```
 
 - **(M6) Parameters are `Source`s,** one per top-level parameter: a literal, `{ref}`, `{expr}` or a stateless transform. This generalises M4's `{expr}` parameters (§8.3), which are already in this shape.
@@ -173,7 +172,7 @@ Types are checked **when editing**. Values stay dynamic at runtime.
   - each action's `result` schema, for `steps.<id>.result`
   - `local` names, inferred from `set` steps. A `local` may also be declared with a schema in `editor.locals`
   - the state schema and plugin manifests, as in [§11.2](#112-expressions-and-scripts-one-language-sandboxed-by-where-code-runs)
-  - for a dynamic target, the constraint's actions: the plugin's manifest (its collection's, for items) or the composite template's actions
+  - for a dynamic target, the constraint's actions: the plugin's manifest or the composite template's actions
 - Action `params` are checked against the action's schema, taken from the target's constraint when the target is dynamic.
 - **Errors block publishing. Warnings don't.** Drafts can be saved with errors ([state spec §7.5](state-and-event-log.md#75-multi-user-editing-designed-not-built)).
   - Errors: unknown action, missing required parameter, type mismatch, a `break` outside a loop, a reference to a step ID that doesn't exist.
@@ -194,7 +193,7 @@ Types are checked **when editing**. Values stay dynamic at runtime.
 
 ### 5.3 Journaling
 - Each step logs `run.step` `started`, then `done`, `failed` or `skipped`. `detail` carries the step's position and, on failure, the error.
-- Actions log `action.requested` with `cause` → the `run.step` entry. A dynamic target also records the resolved `conn` and `key` ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-proposed)).
+- Actions log `action.requested` with `cause` → the `run.step` entry. A dynamic target also records the resolved `conn` ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-proposed)).
 - `retry` attempts each journal a `run.step` entry, with `attempt` in `detail`.
 
 ### 5.4 Flow status in state
@@ -325,7 +324,7 @@ Common fields: `id`, `kind`, `name?`, `enabled?`, `timeout?`, `onError?`. `retry
 
 | Kind | Fields | Result (`steps.<id>.result`) | Notes |
 |---|---|---|---|
-| `action` | `target: {conn}`, `action`, `params` | The action's result | A fixed target with no `key`. **(M4)** Each top-level parameter is a literal value or `{expr: Expr}`. See below |
+| `action` | `target: {conn}`, `action`, `params` | The action's result | A fixed target. **(M4)** Each top-level parameter is a literal value or `{expr: Expr}`. See below |
 | `wait` | `for: Duration` or **(M4)** `{expr: Expr}` | none | The expression must give a duration string or a number of milliseconds ≥ 0. Anything else fails the step with `invalidDuration` |
 | `waitUntil` **(M4)** | `until: Expr`, `timeout?` | `{value}` | Evaluated when the step starts, and done straight away if truthy (level, not edge). Otherwise re-evaluated whenever its read set changes, until truthy. `timeout` fails it with `timeout` |
 | `set` **(M4)** | `path: "local.<name>" \| "vars.<name>"`, `value: Expr` | none | `<name>` is one segment, `[A-Za-z_][A-Za-z0-9_]*`. See below |

@@ -26,8 +26,8 @@ export type Selector<Id> = Id | Id[] | Record<string, Json>;
 /** A path a selector names: text for a reserved root (`"sys"`), or a ref by ID. */
 export type PathId = string | Ref;
 
-/** A connection by ID, or `{conn, key?}`. */
-export type TargetId = string | { conn: string; key?: string };
+/** A connection by ID, or `{conn}`. */
+export type TargetId = string | { conn: string };
 
 /** Where an event trigger's events come from (dataflow §3.1). */
 export type EventSource =
@@ -75,27 +75,26 @@ interface StepCommon {
 /** The core connection's ID and alias (core actions §1). */
 export const CORE = "core";
 
-/** Which of `core`'s collections each of its actions acts on, and so what `key` names (core actions §2). */
-const coreCollections: Record<string, "surfaces" | "flows"> = {
-  navigate: "surfaces",
-  inject: "surfaces",
-  cancelRuns: "flows",
-  setEnabled: "flows",
+/** The parameter each of `core`'s actions names its surface or flow in, by ID (core actions §2). */
+const coreItems: Record<string, "surface" | "flow"> = {
+  navigate: "surface",
+  inject: "surface",
+  cancelRuns: "flow",
+  setEnabled: "flow",
 };
 
-export const coreCollectionOf = (action: string): "surfaces" | "flows" | null => coreCollections[action] ?? null;
+export const coreItemOf = (action: string): "surface" | "flow" | null => coreItems[action] ?? null;
 
-/** A fixed target: a connection, or one of `core`'s surfaces or flows by `key`. */
+/** A fixed target: a connection (plugin protocol §13.9). */
 export interface Target {
   conn: string;
-  key?: string;
 }
 
 export interface ActionStep extends StepCommon {
   kind: "action";
   /** A fixed target, or a source giving one, with `constraint` beside it. */
   target: Target | Source;
-  constraint?: { plugin: string; collection?: string };
+  constraint?: { plugin: string };
   action: string;
   /** Each a source (dataflow §1). */
   params: Record<string, Source>;
@@ -243,9 +242,7 @@ export interface StepDraft {
   timeout: string;
   onError: "fail" | "continue";
   conn: string;
-  /** A `core` target's surface or flow. */
-  targetKey: string;
-  /** A target that follows state, with its constraint's `core` collection; null for a fixed one. */
+  /** A target that follows state, with its constraint's plugin; null for a fixed one. */
   targetSource: Source | null;
   constraint: string;
   action: string;
@@ -332,7 +329,6 @@ export function newStepDraft(kind: StepKind, id: string): StepDraft {
     timeout: "",
     onError: "fail",
     conn: "",
-    targetKey: "",
     targetSource: null,
     constraint: "",
     action: "",
@@ -422,11 +418,9 @@ function stepToDraft(step: Step, schemaOf: ParamsSchema): StepDraft {
       if (formOf(step.target as Source) === "literal") {
         const target = literalOf(step.target as Source) as unknown as Target;
         draft.conn = target.conn;
-        draft.targetKey = target.key ?? "";
       } else {
-        draft.conn = "core";
         draft.targetSource = copyJson(step.target as Source);
-        draft.constraint = step.constraint?.collection ?? "";
+        draft.constraint = step.constraint?.plugin ?? "";
       }
       draft.action = step.action;
       for (const [k, v] of Object.entries(step.params)) {
@@ -502,9 +496,7 @@ function stepFromDraft(d: StepDraft, schemaOf: ParamsSchema, errors: Map<number,
       const step: ActionStep = { ...common, kind: "action", target: { conn: d.conn }, action: d.action, params: out };
       if (d.targetSource !== null) {
         step.target = copyJson(d.targetSource);
-        step.constraint = { plugin: CORE, collection: d.constraint };
-      } else if (d.targetKey.trim() !== "") {
-        step.target = { conn: d.conn, key: d.targetKey.trim() };
+        step.constraint = { plugin: d.constraint };
       }
       return step;
     }
@@ -601,7 +593,7 @@ export function describeSource(
   if ("layer" in from) return `${layerName(from.layer)} ${selectorText(from.controls, (c) => c)}`;
   if ("surface" in from) return `${surfaceName(from.surface)} ${selectorText(from.controls, (c) => c)}`;
   if ("target" in from) {
-    return selectorText(from.target, (t: TargetId) => (typeof t === "string" ? alias(t) : `${alias(t.conn)}/${t.key ?? ""}`));
+    return selectorText(from.target, (t: TargetId) => alias(typeof t === "string" ? t : t.conn));
   }
   return selectorText(from.path, (p: PathId) => (typeof p === "string" ? p : JSON.stringify(p)));
 }

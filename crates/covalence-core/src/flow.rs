@@ -12,7 +12,6 @@ use std::time::Duration as StdDuration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::core_conn;
 use crate::select::{Controls, Paths, Selector, Targets};
 use crate::source::Source;
 use crate::state::ConnId;
@@ -202,43 +201,26 @@ pub enum Edge {
     Change,
 }
 
-/// A target: a connection, or an item within one (plugin protocol spec §13.9). Only `core`
-/// has items so far: its surfaces and flows.
+/// A target: a connection, and nothing within it (plugin protocol spec §13.9). Which
+/// device, output or surface behind the connection is the action's parameter.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConnRef {
     pub conn: ConnId,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub key: Option<String>,
 }
 
 impl ConnRef {
     pub fn conn(conn: impl Into<ConnId>) -> Self {
-        ConnRef {
-            conn: conn.into(),
-            key: None,
-        }
+        ConnRef { conn: conn.into() }
     }
 }
 
-/// What a target that follows state must be (plugin protocol spec §13.9): a plugin, and
-/// one of its collections. Only `core`'s (`surfaces`, `flows`) run so far.
+/// What a target that follows state must be (plugin protocol spec §13.9): a connection
+/// of this plugin.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TargetConstraint {
     pub plugin: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub collection: Option<String>,
-}
-
-impl TargetConstraint {
-    /// The `core` collection it names, if it names one.
-    pub fn core_collection(&self) -> Option<&'static core_conn::Collection> {
-        let id = self.collection.as_deref()?;
-        (self.plugin == core_conn::CORE)
-            .then(|| core_conn::collections().iter().find(|c| c.id == id))
-            .flatten()
-    }
 }
 
 /// One step of a flow's body. On the wire the common fields and the

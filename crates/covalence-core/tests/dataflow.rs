@@ -553,7 +553,6 @@ impl covalence_core::engine::Actions for Recorder {
                         Record::ActionRequested(covalence_core::journal::ActionRequestedRecord {
                             call: "call".into(),
                             conn: req.conn.clone(),
-                            key: req.key.clone(),
                             action: req.action.clone(),
                             params: req.params.clone(),
                             deadline: None,

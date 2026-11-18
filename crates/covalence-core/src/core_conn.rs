@@ -1,10 +1,11 @@
 //! The core connection (core actions spec, core actions spec §6.1): everything Covalence
 //! itself can do, as actions on a built-in connection `core`.
 //!
-//! Its actions act on the items of its two collections (core actions spec §2),
-//! `surfaces` and `flows`, each item named by `key`. They run in-process: [`crate::Core`]
-//! journals and gates them like any other action and hands them to the
-//! [`CoreActions`] the server sets, which owns surfaces and flows.
+//! A target is a connection and nothing within it (plugin protocol spec §13.9), so each
+//! action names the surface or flow it acts on in a parameter, `surface` or `flow`, by ID
+//! (core actions spec §2). They run in-process: [`crate::Core`] journals and gates them
+//! like any other action and hands them to the [`CoreActions`] the server sets, which
+//! owns surfaces and flows.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -12,54 +13,57 @@ use std::sync::OnceLock;
 
 use covalence_protocol::plugin::{ActionDef, Manifest};
 use covalence_protocol::{ErrorCode, ProtocolError, Value};
-use serde::Deserialize;
 
 use crate::journal::{Origin, Seq};
 
 /// The core connection's ID and alias. Reserved: no connection can take it.
 pub const CORE: &str = "core";
 
-/// One of `core`'s collections, and the actions on its items (core actions spec §2).
-#[derive(Clone, Debug, Deserialize)]
-pub struct Collection {
-    /// `surfaces` or `flows`: what a target's `key` names.
-    pub id: String,
-    pub name: String,
-    pub actions: Vec<ActionDef>,
+/// What an action parameter names, by its schema's `format` (core actions spec §2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Item {
+    Surface,
+    Flow,
 }
 
-pub const SURFACES: &str = "surfaces";
-pub const FLOWS: &str = "flows";
+impl Item {
+    /// `surface` or `flow`: the parameter's name and its `format`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Item::Surface => "surface",
+            Item::Flow => "flow",
+        }
+    }
+}
 
-/// `surfaces` and `flows`.
-pub fn collections() -> &'static [Collection] {
-    static COLLECTIONS: OnceLock<Vec<Collection>> = OnceLock::new();
-    COLLECTIONS.get_or_init(|| {
-        [
-            include_str!("core_conn/surfaces.json"),
-            include_str!("core_conn/flows.json"),
-        ]
+/// The parameters of a `core` action that name a surface or a flow.
+pub fn items_of(action: &str) -> Vec<(String, Item)> {
+    let Some(def) = manifest().actions.iter().find(|a| a.id == action) else {
+        return Vec::new();
+    };
+    let schema = serde_json::to_value(&def.params).expect("manifest values encode as JSON");
+    let Some(props) = schema.get("properties").and_then(|p| p.as_object()) else {
+        return Vec::new();
+    };
+    props
         .iter()
-        .map(|json| serde_json::from_str(json).expect("a core collection parses"))
+        .filter_map(|(name, prop)| {
+            let item = match prop.get("format").and_then(|f| f.as_str()) {
+                Some("surface") => Item::Surface,
+                Some("flow") => Item::Flow,
+                _ => return None,
+            };
+            Some((name.clone(), item))
+        })
         .collect()
-    })
-}
-
-/// The collection an action of `core` acts on, and so what its `key` names.
-pub fn collection_of(action: &str) -> Option<&'static Collection> {
-    collections()
-        .iter()
-        .find(|c| c.actions.iter().any(|a| a.id == action))
 }
 
 /// The core connection's manifest, served like a plugin's (core actions §1).
 pub fn manifest() -> &'static Manifest {
     static MANIFEST: OnceLock<Manifest> = OnceLock::new();
     MANIFEST.get_or_init(|| {
-        let actions: Vec<ActionDef> = collections()
-            .iter()
-            .flat_map(|c| c.actions.iter().cloned())
-            .collect();
+        let actions: Vec<ActionDef> = serde_json::from_str(include_str!("core_conn/actions.json"))
+            .expect("core's actions parse");
         serde_json::from_value(serde_json::json!({
             "id": CORE,
             "name": "Covalence",
@@ -89,8 +93,6 @@ pub struct CoreCall {
     pub run: Option<String>,
     /// The `action.requested` entry: what the action's own changes are caused by.
     pub requested: Seq,
-    /// The item: a surface ID or a flow ID.
-    pub key: Option<String>,
     pub action: String,
     pub params: Value,
 }
@@ -115,7 +117,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_manifest_has_every_collection_action_and_all_are_internal() {
+    fn the_manifest_has_every_action_and_all_are_internal() {
         let ids: Vec<&str> = manifest().actions.iter().map(|a| a.id.as_str()).collect();
         assert_eq!(ids, ["navigate", "inject", "cancelRuns", "setEnabled"]);
         assert!(
@@ -124,7 +126,7 @@ mod tests {
                 .iter()
                 .all(|a| a.effect() == covalence_protocol::plugin::Effect::Internal)
         );
-        assert_eq!(collection_of("inject").unwrap().id, SURFACES);
-        assert_eq!(collection_of("setEnabled").unwrap().id, FLOWS);
+        assert_eq!(items_of("inject"), [("surface".to_owned(), Item::Surface)]);
+        assert_eq!(items_of("setEnabled"), [("flow".to_owned(), Item::Flow)]);
     }
 }

@@ -21,6 +21,7 @@ pub(crate) struct AppCore(pub Weak<App>);
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Navigate {
+    surface: String,
     #[serde(default)]
     group: Option<String>,
     layer: Option<String>,
@@ -29,6 +30,7 @@ struct Navigate {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Inject {
+    surface: String,
     control: String,
     input: InputKind,
     #[serde(default)]
@@ -38,7 +40,14 @@ struct Inject {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SetEnabled {
+    flow: String,
     enabled: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CancelRuns {
+    flow: String,
 }
 
 fn params<T: serde::de::DeserializeOwned>(
@@ -58,13 +67,6 @@ impl CoreActions for AppCore {
                     "shutting down",
                 ));
             };
-            let Some(key) = call.key.clone() else {
-                return Err(error(
-                    ErrorCode::InvalidParams,
-                    "no_target",
-                    format!("{} needs a key: which surface or flow", call.action),
-                ));
-            };
             let json = to_json(&call.params);
             match call.action.as_str() {
                 "navigate" => {
@@ -74,13 +76,13 @@ impl CoreActions for AppCore {
                         .as_deref()
                         .unwrap_or(covalence_core::surface::MAIN_GROUP);
                     app.surfaces()
-                        .navigate(&key, group, p.layer.as_deref(), call.origin)
+                        .navigate(&p.surface, group, p.layer.as_deref(), call.origin)
                         .map_err(|e| match e {
                             ShowError::BadGroup(_) => {
                                 error(ErrorCode::InvalidParams, "invalid", e.to_string())
                             }
                             ShowError::UnknownSurface(_) => {
-                                error(ErrorCode::NotFound, "no_target", e.to_string())
+                                error(ErrorCode::NotFound, "unknownSurface", e.to_string())
                             }
                             ShowError::UnknownLayer(_) => {
                                 error(ErrorCode::InvalidParams, "unknownLayer", e.to_string())
@@ -101,7 +103,7 @@ impl CoreActions for AppCore {
                     let p: Inject = params(json)?;
                     app.surfaces()
                         .inject(
-                            &key,
+                            &p.surface,
                             &p.control,
                             p.input,
                             p.value,
@@ -110,8 +112,11 @@ impl CoreActions for AppCore {
                         )
                         .await
                         .map_err(|e| match e {
-                            InjectError::UnknownSurface(_) | InjectError::NotAttached(_) => {
-                                error(ErrorCode::NotFound, "no_target", e.to_string())
+                            InjectError::UnknownSurface(_) => {
+                                error(ErrorCode::NotFound, "unknownSurface", e.to_string())
+                            }
+                            InjectError::NotAttached(_) => {
+                                error(ErrorCode::NotConnected, "notAttached", e.to_string())
                             }
                             InjectError::UnknownControl(_) => {
                                 error(ErrorCode::InvalidParams, "unknownControl", e.to_string())
@@ -123,14 +128,15 @@ impl CoreActions for AppCore {
                     Ok(None)
                 }
                 "cancelRuns" => {
-                    if !app.flows().contains_key(&key) {
+                    let p: CancelRuns = params(json)?;
+                    if !app.flows().contains_key(&p.flow) {
                         return Err(error(
                             ErrorCode::NotFound,
-                            "no_target",
-                            format!("no flow {key}"),
+                            "unknownFlow",
+                            format!("no flow {}", p.flow),
                         ));
                     }
-                    let cancelled = app.runtime().cancel_flow(&key);
+                    let cancelled = app.runtime().cancel_flow(&p.flow);
                     Ok(Some(Value::Map(vec![(
                         "cancelled".into(),
                         (cancelled as u64).into(),
@@ -138,11 +144,11 @@ impl CoreActions for AppCore {
                 }
                 "setEnabled" => {
                     let p: SetEnabled = params(json)?;
-                    let Some(mut flow) = app.flows().get(&key).cloned() else {
+                    let Some(mut flow) = app.flows().get(&p.flow).cloned() else {
                         return Err(error(
                             ErrorCode::NotFound,
-                            "no_target",
-                            format!("no flow {key}"),
+                            "unknownFlow",
+                            format!("no flow {}", p.flow),
                         ));
                     };
                     if flow.enabled != p.enabled {

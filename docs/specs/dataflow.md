@@ -69,7 +69,7 @@ type Path = PathSegment[];                    // plugin protocol spec §13.3
 | `Opt<T>` in helper options | `Source<T>` |
 | `{expr}` action parameters | `Source<T>` per parameter |
 | `wait.for: Duration \| {expr}` | `Source<Duration>` |
-| `TargetSpec` `{conn, key?} \| {expr, constraint}` | `target: Source<Target>`, and `constraint` beside it when the target isn't a literal |
+| `TargetSpec` `{conn} \| {expr, constraint}` | `target: Source<Target>`, and `constraint` beside it when the target isn't a literal |
 | A layer's `rank: number \| {expr}`, `when: {while} \| {expr}` | `Source<number>`, `Source<boolean>` (surfaces §5) |
 
 ---
@@ -92,7 +92,7 @@ type Selector<Id> =
 | Domain | `Id` | Extra forms | Universe for `not` |
 |---|---|---|---|
 | **Controls** | a control ID | `{region: Rect}`, `{near: "left" \| "right" \| "above" \| "below", of: string}`, `{has: {inputs?, outputs?}}` | the controls of the layer, surface or group it's on |
-| **Targets** | `Target` (`{conn, key?}`; a string is a connection ID) | `{plugin: string}`, `{template: string}` (M9) | every connection and item |
+| **Targets** | `Target` (`{conn}`; a string is a connection ID) | `{plugin: string}`, `{template: string}` (M9) | every connection |
 | **Paths** | `Ref` | `{match: PathPattern}` | none: `not` only inside `all` |
 | **Entities** | an entity ID | `{tag: string}` (Later) | every entity of the type |
 
@@ -118,7 +118,7 @@ Every event happens **at a node in the state tree** and has a **name**. The text
 | A composite's (M9) | the composite's root | `camA:tallyChanged` |
 | The core's | `sys` | `sys:startup` with `{reason: boot \| failover \| publish}` |
 
-- **Events are journaled as one kind,** `event` ([state spec §2.2](state-and-event-log.md)), with the node's path in ID form, the name, the payload and its context: `surface`, `layer`, `control` and `item` for control input; `conn` and `key` for a target's. `input.event` is folded into it.
+- **Events are journaled as one kind,** `event` ([state spec §2.2](state-and-event-log.md)), with the node's path in ID form, the name, the payload and its context: `surface`, `layer`, `control` and `item` for control input; `conn` for a target's. `input.event` is folded into it.
 - **The payload is the event's own data:** `{delta}` for `turn` and `hold`, `{value}` for `change`, the `EventDef` payload for a plugin's.
 
 ### 3.1 Event sources

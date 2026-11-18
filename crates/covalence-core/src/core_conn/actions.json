@@ -1,0 +1,138 @@
+[
+  {
+    "id": "navigate",
+    "name": "Navigate",
+    "description": "Shows a layer on the surface, or nothing, and answers once the surface has been sent its outputs.",
+    "params": {
+      "type": "object",
+      "properties": {
+        "surface": {
+          "type": "string",
+          "format": "surface",
+          "description": "The surface, by ID."
+        },
+        "group": {
+          "type": "string",
+          "default": "main"
+        },
+        "layer": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "surface",
+        "layer"
+      ],
+      "additionalProperties": false
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "layer": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "idempotent": true,
+    "durationHint": "instant",
+    "effect": "internal"
+  },
+  {
+    "id": "inject",
+    "name": "Press a control",
+    "description": "Applies an input as if the surface had sent it.",
+    "params": {
+      "type": "object",
+      "properties": {
+        "surface": {
+          "type": "string",
+          "format": "surface",
+          "description": "The surface, by ID."
+        },
+        "control": {
+          "type": "string"
+        },
+        "input": {
+          "enum": [
+            "down",
+            "up",
+            "turn",
+            "value",
+            "touch"
+          ]
+        },
+        "value": {}
+      },
+      "required": [
+        "surface",
+        "control",
+        "input"
+      ],
+      "additionalProperties": false
+    },
+    "durationHint": "instant",
+    "effect": "internal"
+  },
+  {
+    "id": "cancelRuns",
+    "name": "Cancel runs",
+    "description": "Cancels every active and queued run of the flow.",
+    "params": {
+      "type": "object",
+      "properties": {
+        "flow": {
+          "type": "string",
+          "format": "flow",
+          "description": "The flow, by ID."
+        }
+      },
+      "required": [
+        "flow"
+      ],
+      "additionalProperties": false
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "cancelled": {
+          "type": "integer"
+        }
+      }
+    },
+    "idempotent": true,
+    "durationHint": "instant",
+    "effect": "internal"
+  },
+  {
+    "id": "setEnabled",
+    "name": "Enable or disable",
+    "description": "Enables or disables the flow, as a project change.",
+    "params": {
+      "type": "object",
+      "properties": {
+        "flow": {
+          "type": "string",
+          "format": "flow",
+          "description": "The flow, by ID."
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "flow",
+        "enabled"
+      ],
+      "additionalProperties": false
+    },
+    "idempotent": true,
+    "durationHint": "instant",
+    "effect": "internal"
+  }
+]

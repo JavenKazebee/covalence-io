@@ -235,13 +235,10 @@ fn target_forms_by_connection_id() {
     assert_eq!(resolve(json!({ "conn": "B" })), ["B"]);
     assert_eq!(resolve(json!({ "plugin": "videohub" })), ["A", "C"]);
     assert_eq!(resolve(json!({ "not": { "plugin": "videohub" } })), ["B"]);
-    assert_eq!(
-        resolve(json!({ "conn": "A", "key": "out1" })),
-        Vec::<String>::new()
-    );
+    // A target is a connection; what's within it is a parameter (plugin protocol §13.9).
+    assert!(Selector::<Targets>::from_json(json!({ "conn": "A", "key": "out1" })).is_err());
 
-    let s =
-        Selector::<Targets>::from_json(json!(["A", { "conn": "A", "key": "out1" }, "Z"])).unwrap();
+    let s = Selector::<Targets>::from_json(json!(["A", "Y", "Z"])).unwrap();
     let known = |c: &String| conns().iter().any(|v| &v.conn == c);
     let issues: Vec<Json> = s
         .problems(&known)

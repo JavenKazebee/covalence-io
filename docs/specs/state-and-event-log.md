@@ -48,7 +48,7 @@ type Value =
 
 The **state schema** (declared by the plugin manifest, or by the user for variables) adds meaning to the plain types:
 - `unit`: `ms`, `s`, `dB`, `%`, `Hz`, `K`, `fps`
-- `kind`: `duration`, `timestamp`, `color`, `enum` (with labels), `percent`, `id`, `target` (a connection or item, with an optional constraint: a plugin and one of its collections, or a composite template; proposed in [plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-proposed))
+- `kind`: `duration`, `timestamp`, `color`, `enum` (with labels), `percent`, `id`, `target` (a connection, with an optional constraint: a plugin or a composite template; proposed in [plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-proposed))
 - `range`, `step`
 - `readOnly`
 - `description`
@@ -168,7 +168,7 @@ Ordering is defined **only** by `seq` within a log. `ts` is for display.
 | `input.raw` | `{surface, control, kind: down\|up\|turn\|touch\|value, value?, deviceTs}` | **(M5)** `surface` is the entity ID. `deviceTs` is the host's clock: the browser's, or the Orbital's if remote. **(Now)** Replaced by a `state.patch` on the control's input state |
 | `input.gesture` | `{surface, page?, control, gesture: press\|release\|double\|long\|hold\|turn, delta?}` | **(M5)** `page` is the page ID shown when the input arrived. `cause` → the `input.raw` entry. **(Now)** Replaced by `input.event` |
 | `input.event` | `{surface, layer?, control, event, delta?, value?, echo?, item?}` | **(Now)** An event derived from a control's input state ([surfaces spec §4.2](surfaces.md)). `layer` is the layer that controlled the control, absent if none did. `cause` → the input's `state.patch`, or for a timed `long` or `hold`, the `down`'s. **(Later)** `item` is the control group item it showed. **(M6)** Folded into `event` |
-| `event` | `{source, event, payload}` | From a plugin, the core or a script. From a plugin action: `cause` → the `action.requested` entry. **(M6)** `{path, event, payload?, conn?, key?, surface?, layer?, control?, item?, echo?}`: `path` is the node it happened at, in ID form ([dataflow §3](dataflow.md)); the other fields are context. Control input events, helper events, flow events and `sys:startup` are all `event` entries |
+| `event` | `{source, event, payload}` | From a plugin, the core or a script. From a plugin action: `cause` → the `action.requested` entry. **(M6)** `{path, event, payload?, conn?, surface?, layer?, control?, item?, echo?}`: `path` is the node it happened at, in ID form ([dataflow §3](dataflow.md)); the other fields are context. Control input events, helper events, flow events and `sys:startup` are all `event` entries |
 | `state.patch` | `{ops: [{path, value} \| {path, delete: true}], deviceTs?}` | Paths stored in ID form. From a plugin action: `cause` → the `action.requested` entry ([plugin protocol](plugin-protocol.md) §6 `call`). **(Now)** From control input: origin the surface, and `deviceTs` the host's clock |
 | `state.quality` | `{subtree, quality}` | Marks a subtree stale or good |
 | `trigger.matched` | `{flow, trigger, blocked?, reason?}` | `cause` → the event, input event or patch. `reason` says why it was blocked ([flow spec](flows.md) §8.5) |
@@ -176,7 +176,7 @@ Ordering is defined **only** by `seq` within a log. `ts` is for display.
 | `run.step` | `{run, step, status: started\|done\|failed\|skipped, detail?}` | |
 | `run.checkpoint` | `{run, step, locals}` | For `resume` on failover |
 | `run.finished` | `{run, status: ok\|failed\|cancelled\|aborted, error?}` | |
-| `action.requested` | `{call, conn, key?, action, params, deadline?}` | `call` is the idempotency key. `key` records the item of a resolved dynamic target ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-proposed)) |
+| `action.requested` | `{call, conn, action, params, deadline?}` | `call` is the idempotency key. `conn` is the resolved connection of a dynamic target ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-proposed)) |
 | `action.dispatched` | `{call}` | Passed the output gate |
 | `action.suppressed` | `{call, reason: standby\|simulate\|showLock\|permission\|staleTerm}` | |
 | `action.result` | `{call, ok, result?, error?, durationMs}` | |
