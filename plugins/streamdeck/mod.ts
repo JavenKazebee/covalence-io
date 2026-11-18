@@ -9,7 +9,7 @@
  *   the core renders each key in the deck's own format and turn, and this
  *   plugin sends the image.
  * - Models with only keys are supported. The MK.2 is the one checked by
- *   hand. Dials, touch strips and LCD strips are out of scope (M7).
+ *   hand. Dials, touch strips and LCD strips aren't.
  * - Unplugged, the surface detaches; plugged back in, it attaches again and
  *   the core redraws it.
  *

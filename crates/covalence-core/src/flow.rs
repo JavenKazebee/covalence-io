@@ -72,7 +72,7 @@ pub enum Concurrency {
 }
 
 /// What a standby node does with this flow's runs on failover (state spec §7.4).
-/// M3 has only `abort`.
+/// Only `abort` is implemented.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Failover {
@@ -201,8 +201,8 @@ pub enum Edge {
     Change,
 }
 
-/// A target: a connection, or an item within one (plugin protocol spec §13.9). M6 has items
-/// only on `core`: its surfaces and flows.
+/// A target: a connection, or an item within one (plugin protocol spec §13.9). Only `core`
+/// has items so far: its surfaces and flows.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConnRef {
@@ -220,8 +220,8 @@ impl ConnRef {
     }
 }
 
-/// What a target that follows state must be (plugin protocol spec §13.9): M6 checks the
-/// interface, and only `core`'s (`surface@1`, `flow@1`) run.
+/// What a target that follows state must be (plugin protocol spec §13.9): the interface is
+/// checked, and only `core`'s (`surface@1`, `flow@1`) run.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TargetConstraint {
@@ -252,7 +252,7 @@ impl Step {
 pub enum StepKind {
     Action {
         /// A literal target, or one that follows state with a `constraint`;
-        /// M6 runs those on `core` only.
+        /// those run on `core` only.
         target: Source<ConnRef>,
         constraint: Option<TargetConstraint>,
         /// The action's ID in the plugin manifest, e.g. `route`.

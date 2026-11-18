@@ -66,7 +66,7 @@ const byControl = computed(() => new Map(bindings.value.map((b) => [b.control, b
 const { results } = usePreviews(() => bindings.value);
 const grid = computed(() => gridOf(layer.value?.controls ?? []));
 const controls = computed(() => grid.value.cells.map((c) => c.control.id));
-/** Whether a control shows an image, which is all M5's bindings can set. */
+/** Whether a control shows an image, which is all the key editor's bindings set. */
 const hasImage = (control: string) =>
   layer.value?.controls.find((c) => c.id === control)?.outputs?.includes("image") ?? false;
 const failing = (control: string) => {

@@ -1989,8 +1989,8 @@ impl RunTask {
     }
 
     /// An action step's target: its literal, or what its source gives now,
-    /// checked against the constraint (`no_target`). M6 follows only `core`'s
-    /// surfaces and flows.
+    /// checked against the constraint (`no_target`). Only `core`'s surfaces
+    /// and flows can be followed so far.
     fn resolve_target(
         &self,
         target: &Source<super::ConnRef>,
@@ -2243,7 +2243,7 @@ pub(crate) fn source_matches(
         tracing::warn!("an event source's expression failed, matching nothing: {e}");
     };
     // A control selector, tried on the one control the event is from.
-    // M6 implements IDs, lists and combinators here; the other forms
+    // IDs, lists and combinators are implemented here; the other forms
     // are `unsupported` until a field needs them.
     let control_in = |controls: &Option<crate::select::Selector<crate::select::Controls>>,
                       eval: &mut Eval<'_>| {

@@ -89,7 +89,7 @@ export interface Model {
 }
 
 /**
- * The surface models the UI can be. Only the virtual deck in M5; it declares
+ * The surface models the UI can be. Only the virtual deck; it declares
  * 144 px keys so they stay sharp on high-density screens (surfaces spec §8).
  */
 export const VIRTUAL_DECK = "virtual.deck15";

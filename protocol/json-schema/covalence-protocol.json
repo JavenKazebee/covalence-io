@@ -981,7 +981,7 @@
                 },
                 "ts": {
                     "type": "number",
-                    "description": "(M7) When the core read it: milliseconds since the Unix epoch, on the core's clock."
+                    "description": "When the core read it: milliseconds since the Unix epoch, on the core's clock."
                 }
             },
             "required": [
@@ -1979,7 +1979,7 @@
                     "const": "rgb"
                 }
             ],
-            "description": "(M7) `rgb`: raw 8-bit RGB, rows top to bottom, for devices whose driver packs images itself."
+            "description": "`rgb`: raw 8-bit RGB, rows top to bottom, for devices whose driver packs images itself."
         },
         "SurfaceLevel": {
             "$schema": "https://json-schema.org/draft/2020-12/schema",

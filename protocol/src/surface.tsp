@@ -132,7 +132,7 @@ model SurfaceInput {
   echo?: boolean;
 }
 
-/** (M7) `rgb`: raw 8-bit RGB, rows top to bottom, for devices whose driver packs images itself. */
+/** `rgb`: raw 8-bit RGB, rows top to bottom, for devices whose driver packs images itself. */
 union ImageFormat {
   "jpeg",
   "bmp",

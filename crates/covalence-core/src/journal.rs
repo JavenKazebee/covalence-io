@@ -363,7 +363,8 @@ pub struct RunFinishedRecord {
     pub error: Option<RunError>,
 }
 
-/// How a run ended. `aborted` is for failover, which M3 doesn't do.
+/// How a run ended. There's no `aborted` yet: runs aren't ended by failover
+/// (state spec §7.4).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RunStatus {

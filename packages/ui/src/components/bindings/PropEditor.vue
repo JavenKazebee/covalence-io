@@ -23,7 +23,7 @@ const model = defineModel<Binding | undefined>({ required: true });
 const type = computed(() => propType(props.prop));
 const name = computed(() => propNames[props.prop]);
 
-/** The forms a property is bound with first: M5's five choices, and a path. */
+/** The forms a property is bound with first: a literal, a path, `template`, `rules`, `map` and `expr`. */
 const firstForms: readonly Form[] = ["literal", "ref", "template", "rules", "map", "expr"];
 const offered = computed(() => firstForms.filter((f) => f !== "template" || type.value === "text"));
 

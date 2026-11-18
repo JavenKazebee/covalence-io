@@ -1,7 +1,7 @@
 //! Stateless transforms (dataflow spec §4.1, §10.1): functions over
 //! sources, used as `{use: <id>, …options}` wherever a source can be.
 //!
-//! `format`, `template`, `rules` and `map` are M5's binding kinds; `compare`,
+//! `format`, `template`, `rules` and `map` are the bindings' kinds; `compare`,
 //! `all`, `any` and `not` let conditions combine. Their options are sources,
 //! so they chain. Each is evaluated natively ([`Transform::evaluate`]),
 //! following the rules of bindings §2.1, and compiles to an expression
@@ -85,8 +85,8 @@ pub struct Rule {
     pub value: Source<Json>,
 }
 
-/// How a value becomes text. `auto` is `String(v)` in M5; formatting by the
-/// schema's `kind` comes later.
+/// How a value becomes text. `auto` is `String(v)`; formatting by the
+/// schema's `kind` isn't built.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Format {

@@ -70,7 +70,7 @@ model IoWrite {
 model IoData {
   handle: string;
   data: Bytes;
-  /** (M7) When the core read it: milliseconds since the Unix epoch, on the core's clock. */
+  /** When the core read it: milliseconds since the Unix epoch, on the core's clock. */
   ts?: float64;
 }
 

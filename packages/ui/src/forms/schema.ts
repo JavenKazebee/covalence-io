@@ -1,5 +1,5 @@
 // Forms generated from the JSON Schemas in plugin manifests: connection config
-// and action params. Flat objects of scalars are all M2 needs.
+// and action params. Only flat objects of scalars are supported.
 
 import type { JsonSchema } from "../api";
 import { splitPath, type Segment } from "../live/paths";

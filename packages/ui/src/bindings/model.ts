@@ -19,7 +19,7 @@ import {
   type Source,
 } from "../sources/model";
 
-/** The properties M5 draws on a key, in the order the editor shows them. */
+/** The properties the editor binds on a key, in the order the editor shows them. */
 export const props = ["label", "textColor", "background"] as const;
 export type Prop = (typeof props)[number];
 

@@ -1,6 +1,6 @@
 # Spec: State model and event log
 
-- **Status:** Draft v0.3 (M8 Phase 0: journal tiers, `project.applied`, `inputCause`, reducer metadata)
+- **Status:** Draft v0.3
 - **Related:** [plugin protocol](plugin-protocol.md), [dataflow](dataflow.md)
 - **Markers:** **(M6)**, **(M8)** and **(M9)** name the milestone that implements a rule, as in the [dataflow spec](dataflow.md).
 
@@ -283,7 +283,7 @@ Secrets aren't stored here (§7.2).
 ## 6. Open questions
 
 1. Should integers be a distinct type in expressions, or should we always use f64 in JS and keep `int` only as a schema hint? (Leaning towards the hint.)
-2. ~~Journal retention defaults on a Raspberry Pi with an SD card. How much should we write, and how do we limit wear?~~ Decided in §2.4 (M8 Phase 0): only inputs reach the disk, batched, with high-rate values sampled; derived entries stay in memory.
+2. ~~Journal retention defaults on a Raspberry Pi with an SD card. How much should we write, and how do we limit wear?~~ Decided in §2.4: only inputs reach the disk, batched, with high-rate values sampled; derived entries stay in memory.
 3. Should `run.checkpoint` be automatic at every step, or opt-in per flow? Automatic is simpler; opt-in costs less.
 4. Should state patches from a connection be journaled in full, or sampled for very high-rate values (meters, timecode)? Proposal: the schema flag `journal: sampled(100ms)`. **(M8)** Decided for cells and helpers: `journal: {sampled: "100ms"}` applies every value to state, journals the latest per interval, and a final entry when it settles ([dataflow §5.1](dataflow.md)). Connections' schemas get the same flag when a plugin needs it.
 5. How should drafts interact with multi-user editing? Is one draft shared per layer, or does each user have their own?
