@@ -41,6 +41,7 @@ pub(crate) fn routes() -> Router<Arc<App>> {
         .route("/surfaces/{id}/current", post(navigate))
         .route("/surfaces/{id}/controls", get(surface_controls))
         .route("/surface/{id}", get(crate::web_surface::upgrade))
+        .route("/layers/problems", get(layer_problems))
         .route("/control-bindings/problems", get(binding_problems))
         .route("/control-bindings/preview", post(preview))
 }
@@ -159,6 +160,20 @@ async fn surface_controls(
             format!("surface {id:?} hasn't attached since the server started"),
         )
     })
+}
+
+/// Each layer field that failed when last evaluated (surfaces spec §5.2):
+/// `[{layer, field, message}]`, `field` being `on`, `when` or `rank`.
+async fn layer_problems(State(app): State<Arc<App>>) -> Json<Vec<JsonValue>> {
+    Json(
+        app.surfaces()
+            .layer_problems()
+            .into_iter()
+            .map(|((layer, field), message)| {
+                json!({ "layer": layer, "field": field, "message": message })
+            })
+            .collect(),
+    )
 }
 
 async fn binding_problems(State(app): State<Arc<App>>) -> Json<Vec<JsonValue>> {

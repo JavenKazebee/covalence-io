@@ -1,5 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { deckControls, eventsFor, gridOf, missingControls, neighbour, toLayerControl, virtualDeck, type Layer } from "./model";
+import {
+  candidatesText,
+  deckControls,
+  eventsFor,
+  gridOf,
+  missingControls,
+  neighbour,
+  presetOf,
+  presetWhen,
+  shiftKey,
+  toLayerControl,
+  virtualDeck,
+  whenExpr,
+  type Layer,
+} from "./model";
 
 const layer = (controls: Layer["controls"]): Layer => ({ id: "l", name: "L", slug: "l", controls });
 
@@ -48,5 +62,42 @@ describe("layers", () => {
     expect(eventsFor({ id: "dial", inputs: ["relative", "momentary"] })).toContain("turn");
     expect(eventsFor({ id: "fader", inputs: ["absolute", "touch"] })).toEqual(["change", "touch", "untouch"]);
     expect(eventsFor({ id: "led" })).toEqual([]);
+  });
+});
+
+describe("layer fields", () => {
+  const none = { alias: () => undefined, conn: () => undefined };
+  const keys = (ids: string[]) => ids.map((id) => ({ id }));
+
+  it("read their when as a preset and back", () => {
+    expect(presetOf(undefined)).toBe("nav");
+    expect(presetOf({ nav: "popover" })).toBe("popover");
+    expect(presetOf(presetWhen("shift", "k15"))).toBe("shift");
+    expect(shiftKey(presetWhen("shift", "k15"))).toBe("k15");
+    expect(presetOf({ while: { expr: "self.controls.k15.pressed && vars.armed" } })).toBe("while");
+    expect(presetOf({ always: true })).toBe("always");
+  });
+
+  it("show the expression a preset compiles to", () => {
+    expect(whenExpr(undefined, "cams", none)).toBe('self.current.main == "cams"');
+    expect(whenExpr({ always: true }, "strip", none)).toBe("true");
+    expect(whenExpr(presetWhen("shift", "k15"), "shift", none)).toBe("self.controls.k15.pressed");
+  });
+
+  it("list a control's candidates, highest first", () => {
+    const cams: Layer = { id: "c", name: "Cameras", slug: "cams", controls: keys(["k3", "k4"]) };
+    const shift: Layer = {
+      id: "s",
+      name: "Shift",
+      slug: "shift",
+      controls: keys(["k3"]),
+      level: "over",
+      when: presetWhen("shift", "k15"),
+    };
+    const strip: Layer = { id: "t", name: "Strip", slug: "strip", controls: keys(["k3"]), level: "under", rank: 50, when: { always: true } };
+    expect(candidatesText("k3", [strip, cams, shift])).toBe(
+      "k3: Shift (over, while k15 is held), otherwise Cameras (main), otherwise Strip (under, always)",
+    );
+    expect(candidatesText("k9", [cams])).toBe("k9: no layer covers it");
   });
 });

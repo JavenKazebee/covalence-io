@@ -4,6 +4,7 @@ import type { ControlBinding, Preview, RuntimeProblem, SavedBinding } from "./bi
 import type { Evaluated, FireResult, Flow, Problem, RunInfo, Saved } from "./flows/model";
 import type { HostStatus, JournalEntry } from "./live/protocol";
 import type { ControlDef, Layer, SavedLayer, SavedSurface, Surface } from "./surfaces/model";
+import type { CellProblem, SavedVariable, Variable } from "./variables/model";
 
 /** A JSON Schema, as plugin manifests write them. Only what the forms read is typed. */
 export interface JsonSchema {
@@ -226,12 +227,12 @@ export const api = {
   updateSurface: (surface: Surface) =>
     call<SavedSurface>("PUT", `/surfaces/${encodeURIComponent(surface.id)}`, surface),
   deleteSurface: (id: string) => call<null>("DELETE", `/surfaces/${encodeURIComponent(id)}`),
-  /** Navigates the surface's `main` group. Answers once the surface has been sent its keys. */
-  navigate: (surface: string, layer: string | null) =>
+  /** Navigates one of the surface's groups, `main` by default. Answers once the surface has been sent its keys. */
+  navigate: (surface: string, layer: string | null, group?: string) =>
     call<{ surface: string; group: string; layer: string | null }>(
       "POST",
       `/surfaces/${encodeURIComponent(surface)}/current`,
-      { layer },
+      group === undefined ? { layer } : { group, layer },
     ),
   /** The controls the surface last attached with; 404 if it hasn't attached since the server started. */
   surfaceControls: (surface: string) => call<ControlDef[]>("GET", `/surfaces/${encodeURIComponent(surface)}/controls`),
@@ -245,6 +246,14 @@ export const api = {
     call<SavedBinding>("PUT", `/control-bindings/${encodeURIComponent(binding.id)}`, binding),
   deleteBinding: (id: string) => call<null>("DELETE", `/control-bindings/${encodeURIComponent(id)}`),
   bindingProblems: () => call<RuntimeProblem[]>("GET", "/control-bindings/problems"),
+  /** Each layer field that failed when last evaluated (surfaces spec §5.2). */
+  layerProblems: () => call<{ layer: string; field: string; message: string }[]>("GET", "/layers/problems"),
+  variables: () => call<Variable[]>("GET", "/variables"),
+  createVariable: (v: Variable) => call<SavedVariable>("POST", "/variables", v),
+  updateVariable: (v: Variable) => call<SavedVariable>("PUT", `/variables/${encodeURIComponent(v.id)}`, v),
+  deleteVariable: (id: string) => call<null>("DELETE", `/variables/${encodeURIComponent(id)}`),
+  /** Each failing cell's problem: variables' and helpers' (dataflow §5). */
+  cellProblems: () => call<CellProblem[]>("GET", "/cells/problems"),
   previewBinding: (binding: ControlBinding, size?: number) =>
     call<Preview>("POST", "/control-bindings/preview", size === undefined ? { binding } : { binding, size }),
 };

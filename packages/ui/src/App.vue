@@ -11,6 +11,7 @@ import FlowsView from "./views/FlowsView.vue";
 import JournalView from "./views/JournalView.vue";
 import StateView from "./views/StateView.vue";
 import SurfacesView from "./views/SurfacesView.vue";
+import VariablesView from "./views/VariablesView.vue";
 import { useSurfacesStore } from "./stores/surfaces";
 import { useLiveClient } from "./live/useLiveState";
 
@@ -25,6 +26,7 @@ const titles: Record<Tab, string> = {
   state: "State",
   actions: "Actions",
   surfaces: "Surfaces",
+  variables: "Variables",
   flows: "Flows",
   journal: "Journal",
 };
@@ -70,6 +72,10 @@ watch(
       :surface="route.surface"
       :layer="route.layer"
       :control="route.control"
+    />
+    <VariablesView
+      v-else-if="route.tab === 'variables'"
+      :variable="route.variable"
     />
     <FlowsView
       v-else-if="route.tab === 'flows'"

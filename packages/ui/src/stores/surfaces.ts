@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { computed, ref } from "vue";
+import { computed, ref, shallowRef } from "vue";
 import { api } from "../api";
 import type { Layer, SavedLayer, SavedSurface, Surface } from "../surfaces/model";
 
@@ -10,7 +10,8 @@ import type { Layer, SavedLayer, SavedSurface, Surface } from "../surfaces/model
  */
 export const useSurfacesStore = defineStore("surfaces", () => {
   const surfaces = ref<Surface[]>([]);
-  const layers = ref<Layer[]>([]);
+  // Replaced whole on each load; shallow, as `rank` and `when` sources nest deeply.
+  const layers = shallowRef<Layer[]>([]);
   const loaded = ref(false);
   const error = ref<string | null>(null);
 

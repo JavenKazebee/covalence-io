@@ -9,8 +9,26 @@ import { hrefOf, navigate } from "../nav";
 import { useCatalogStore } from "../stores/catalog";
 import { useFlowsStore } from "../stores/flows";
 import { useSurfacesStore } from "../stores/surfaces";
-import { gridOf, neighbour, type Layer } from "../surfaces/model";
+import { useAliases } from "../bindings/editing";
+import type { Source } from "../sources/model";
+import {
+  candidatesText,
+  gridOf,
+  levels,
+  literalRank,
+  MAIN_GROUP,
+  neighbour,
+  presetNames,
+  presetOf,
+  presetWhen,
+  shiftKey,
+  whenExpr,
+  type Layer,
+  type Level,
+  type Preset,
+} from "../surfaces/model";
 import BindingEditor from "./bindings/BindingEditor.vue";
+import SourceInput from "./SourceInput.vue";
 
 /**
  * A layer: its controls where they are on the surface, keys drawn by the core
@@ -109,16 +127,26 @@ const runtimeFor = computed(() => {
 // ---- Where it's shown ----
 
 const live = useLiveState("surface");
+/** Surfaces where it's active now (surfaces spec §5.2). */
 const shownOn = computed(() =>
   surfaces.surfaces.filter((s) => {
-    const leaf = live.leaves.value.find((l) => l.path === `surface.${s.slug}.current.main`);
-    return layer.value !== undefined && leaf?.value === layer.value.slug;
+    const leaf = live.leaves.value.find((l) => l.path === `surface.${s.slug}.layers`);
+    return layer.value !== undefined && Array.isArray(leaf?.value) && leaf.value.includes(layer.value.slug);
   }),
+);
+/** Which layers could control the selected control, highest first. */
+const candidates = computed(() =>
+  props.control === undefined ? null : candidatesText(props.control, surfaces.layers),
 );
 
 // ---- Settings ----
 
-const draft = ref<Layer | null>(null);
+// Shallow, as its sources nest deeply: changed by replacing it (`patch`).
+const draft = shallowRef<Layer | null>(null);
+
+function patch(fields: Partial<Layer>) {
+  if (draft.value !== null) draft.value = { ...draft.value, ...fields };
+}
 const saveError = ref<string | null>(null);
 const savedNote = ref<string | null>(null);
 
@@ -131,6 +159,61 @@ watch(
   },
   { immediate: true },
 );
+
+// ---- When, level and rank (surfaces spec §5.2, §5.3) ----
+
+const aliases = useAliases();
+const preset = computed(() => presetOf(draft.value?.when));
+const presets = Object.keys(presetNames) as Preset[];
+const group = computed({
+  get: () => {
+    const w = draft.value?.when;
+    return w !== undefined && "nav" in w ? w.nav : MAIN_GROUP;
+  },
+  set: (nav: string) => {
+    patch({ when: nav === MAIN_GROUP ? undefined : { nav } });
+  },
+});
+const shift = computed({
+  get: () => shiftKey(draft.value?.when) ?? "",
+  set: (key: string) => {
+    patch({ when: presetWhen("shift", key.trim() || "k0") });
+  },
+});
+const condition = computed<Source>({
+  get: () => {
+    const w = draft.value?.when;
+    return w !== undefined && "while" in w ? w.while : true;
+  },
+  set: (source) => {
+    patch({ when: { while: source } });
+  },
+});
+const compiled = computed(() =>
+  draft.value === null ? null : whenExpr(draft.value.when, draft.value.slug, aliases.value),
+);
+const rank = computed<number | null>({
+  get: () => literalRank(draft.value?.rank),
+  set: (n) => {
+    patch({ rank: n === null || n === 0 ? undefined : Math.max(0, Math.min(99, n)) });
+  },
+});
+const level = computed<Level>({
+  get: () => draft.value?.level ?? "normal",
+  set: (l) => {
+    patch({ level: l === "normal" ? undefined : l });
+  },
+});
+
+function pickPreset(next: Preset) {
+  const d = draft.value;
+  if (d === null) return;
+  const when = next === "nav" ? undefined : presetWhen(next, shiftKey(d.when) ?? "k0");
+  // A popover or a shift sits over the page, and an always-on strip under
+  // it, unless a level was chosen.
+  const level = d.level ?? (next === "popover" || next === "shift" ? "over" : next === "always" ? "under" : undefined);
+  patch({ when, level });
+}
 
 async function saveSettings() {
   if (draft.value === null) return;
@@ -234,6 +317,12 @@ async function remove() {
         </div>
         <div class="selected-key">
           <p
+            v-if="candidates !== null && controls.includes(control!)"
+            class="muted candidates"
+          >
+            {{ candidates }}
+          </p>
+          <p
             v-if="control !== undefined && controls.includes(control) && !hasImage(control)"
             class="muted"
           >
@@ -276,8 +365,9 @@ async function remove() {
           <label for="layer-name">Name</label>
           <input
             id="layer-name"
-            v-model="draft.name"
+            :value="draft.name"
             autocomplete="off"
+            @input="patch({ name: ($event.target as HTMLInputElement).value })"
           >
           <small class="hint">
             {{ layer.controls.length }} {{ layer.controls.length === 1 ? "control" : "controls" }}, copied from a
@@ -285,6 +375,100 @@ async function remove() {
           </small>
         </div>
       </div>
+      <div class="row">
+        <div class="field">
+          <label for="layer-when">Active</label>
+          <select
+            id="layer-when"
+            :value="preset"
+            @change="pickPreset(($event.target as HTMLSelectElement).value as Preset)"
+          >
+            <option
+              v-for="p in presets"
+              :key="p"
+              :value="p"
+            >
+              {{ presetNames[p] }}
+            </option>
+          </select>
+        </div>
+        <div
+          v-if="preset === 'nav'"
+          class="field"
+        >
+          <label for="layer-group">Group</label>
+          <input
+            id="layer-group"
+            v-model.lazy="group"
+            autocomplete="off"
+          >
+          <small class="hint">Active while it's the group's current layer. Pages are in <code>main</code>.</small>
+        </div>
+        <div
+          v-else-if="preset === 'shift'"
+          class="field"
+        >
+          <label for="layer-shift">Held key</label>
+          <input
+            id="layer-shift"
+            v-model.lazy="shift"
+            autocomplete="off"
+          >
+          <small class="hint">A key on the surface. For a latching shift, use a condition on a toggle helper.</small>
+        </div>
+        <div
+          v-else-if="preset === 'popover'"
+          class="field"
+        >
+          <small class="hint">Opened by navigating the <code>popover</code> group to it, closed by navigating it to
+            nothing.</small>
+        </div>
+        <div class="field">
+          <label for="layer-level">Level</label>
+          <select
+            id="layer-level"
+            v-model="level"
+          >
+            <option
+              v-for="l in levels"
+              :key="l"
+              :value="l"
+            >
+              {{ l }}
+            </option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="layer-rank">Rank</label>
+          <input
+            v-if="rank !== null"
+            id="layer-rank"
+            type="number"
+            min="0"
+            max="99"
+            :value="rank"
+            @change="rank = Number(($event.target as HTMLInputElement).value) || 0"
+          >
+          <small
+            v-else
+            class="hint"
+          >Follows state</small>
+          <small class="hint">Within its level: higher wins, then whichever became active last.</small>
+        </div>
+      </div>
+      <SourceInput
+        v-if="preset === 'while'"
+        v-model="condition"
+        label="Condition"
+        expect="boolean"
+        top
+      />
+      <p
+        v-if="compiled !== null && preset !== 'while'"
+        class="muted"
+      >
+        Active when <code>{{ compiled }}</code>
+      </p>
       <div class="row">
         <button type="submit">
           Save
@@ -387,6 +571,10 @@ async function remove() {
   height: 7px;
   border-radius: 50%;
   background: #6b9cf0;
+}
+
+.candidates {
+  margin-top: 0;
 }
 
 .selected-key {

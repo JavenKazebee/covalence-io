@@ -1,6 +1,6 @@
 import { readonly, ref } from "vue";
 
-export const tabs = ["connections", "state", "actions", "surfaces", "flows", "journal"] as const;
+export const tabs = ["connections", "state", "actions", "surfaces", "variables", "flows", "journal"] as const;
 export type Tab = (typeof tabs)[number];
 
 export interface Route {
@@ -19,6 +19,8 @@ export interface Route {
   layer?: string;
   /** `#/surfaces/layers/<id>/k3`: the control selected on it. */
   control?: string;
+  /** `#/variables/<id>`: the variable being edited, or `new`. */
+  variable?: string;
 }
 
 /**
@@ -35,6 +37,7 @@ export function parseHash(hash: string): Route {
   if (tab === "state" && rest !== "") return { tab, path: rest };
   if (tab === "journal" && /^[1-9]\d*$/.test(rest)) return { tab, seq: Number(rest) };
   if (tab === "flows" && rest !== "") return { tab, flow: rest };
+  if (tab === "variables" && rest !== "") return { tab, variable: rest };
   if (tab === "surfaces" && rest !== "") {
     // Surface IDs are ULIDs, so never `layers`.
     const [first, layer, control] = rest.split("/");
@@ -57,6 +60,7 @@ export function hrefOf(route: Route): string {
   if (route.tab === "state" && route.path) return `#/state/${encodeURIComponent(route.path)}`;
   if (route.tab === "journal" && route.seq !== undefined) return `#/journal/${route.seq}`;
   if (route.tab === "flows" && route.flow) return `#/flows/${encodeURIComponent(route.flow)}`;
+  if (route.tab === "variables" && route.variable) return `#/variables/${encodeURIComponent(route.variable)}`;
   if (route.tab === "surfaces" && route.layer) {
     const layer = `#/surfaces/layers/${encodeURIComponent(route.layer)}`;
     return route.control ? `${layer}/${encodeURIComponent(route.control)}` : layer;

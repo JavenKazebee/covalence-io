@@ -36,6 +36,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/actions", post(request_action))
         .route("/journal", get(journal))
         .route("/journal/{seq}/why", get(why))
+        .route("/cells/problems", get(cell_problems))
         .route("/ws", get(crate::ws::upgrade))
         .merge(crate::flows::routes())
         .merge(crate::surfaces::routes())
@@ -388,6 +389,18 @@ async fn journal(
     } else {
         body.into_response()
     })
+}
+
+/// Each failing cell's problem (dataflow §5): a variable's `variable:<id>`,
+/// a helper's `helper:<binding>/<key>`, with `code` and `message`.
+async fn cell_problems(State(app): State<Arc<App>>) -> Json<Vec<serde_json::Value>> {
+    Json(
+        app.dataflow
+            .problems()
+            .into_iter()
+            .map(|(cell, p)| json!({ "cell": cell, "code": p.code, "message": p.message }))
+            .collect(),
+    )
 }
 
 async fn why(State(app): State<Arc<App>>, Path(seq): Path<Seq>) -> ApiResult<Json<Vec<Entry>>> {

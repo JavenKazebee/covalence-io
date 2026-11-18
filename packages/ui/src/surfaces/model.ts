@@ -2,6 +2,7 @@
 // by hand.
 
 import type { Problem } from "../flows/model";
+import { toExpr, type Aliases, type Source } from "../sources/model";
 
 export interface Layout {
   cols: number;
@@ -69,6 +70,115 @@ export interface Layer {
   name: string;
   slug: string;
   controls: LayerControl[];
+  /** The surfaces it may appear on, by ID; every surface when absent (surfaces spec §1). */
+  on?: string | string[] | { expr: string } | { any: unknown[] } | { all: unknown[] } | { not: unknown };
+  /** When it's active; `{nav: "main"}` when absent (surfaces spec §5.3). */
+  when?: When;
+  /** Its band; `normal` when absent. */
+  level?: Level;
+  /** Its order within its level, 0 to 99. */
+  rank?: Source;
+}
+
+/** When a layer is active (surfaces spec §5.3). Mirrors `covalence_core::surface::When`. */
+export type When = { nav: string } | { always: true } | { while: Source };
+
+export const levels = ["under", "normal", "over"] as const;
+export type Level = (typeof levels)[number];
+
+/** The navigation group every surface has. */
+export const MAIN_GROUP = "main";
+
+/** The structures the editor offers for `when` (surfaces spec §5.3). */
+export type Preset = "nav" | "popover" | "shift" | "while" | "always";
+
+export const presetNames: Record<Preset, string> = {
+  nav: "Navigation group",
+  popover: "Popover",
+  shift: "Shift (while a key is held)",
+  while: "While a condition holds",
+  always: "Always on",
+};
+
+const SHIFT = /^self\.controls\.([A-Za-z0-9_.-]+)\.pressed$/;
+
+/** The key a shift layer's `when` holds, if it's the shift preset. */
+export function shiftKey(when: When | undefined): string | undefined {
+  if (when === undefined || !("while" in when)) return undefined;
+  const w = when.while;
+  if (typeof w !== "object" || w === null || Array.isArray(w) || !("expr" in w)) return undefined;
+  return SHIFT.exec(String(w.expr).trim())?.[1];
+}
+
+/** Which preset a layer's `when` is. */
+export function presetOf(when: When | undefined): Preset {
+  if (when === undefined || "nav" in when) return when === undefined || when.nav !== "popover" ? "nav" : "popover";
+  if ("always" in when) return "always";
+  return shiftKey(when) !== undefined ? "shift" : "while";
+}
+
+/** A fresh `when` for a preset. A popover or shift goes `over` by default. */
+export function presetWhen(preset: Preset, key = "k0"): When {
+  switch (preset) {
+    case "nav":
+      return { nav: MAIN_GROUP };
+    case "popover":
+      return { nav: "popover" };
+    case "shift":
+      return { while: { expr: `self.controls.${key}.pressed` } };
+    case "while":
+      return { while: { ref: { root: "vars", path: [] } } };
+    case "always":
+      return { always: true };
+  }
+}
+
+/** The expression a `when` compiles to, as the editor shows it (surfaces spec §5.3). */
+export function whenExpr(when: When | undefined, slug: string, aliases: Aliases): string | null {
+  const w = when ?? { nav: MAIN_GROUP };
+  if ("nav" in w) return `self.current.${w.nav} == ${JSON.stringify(slug)}`;
+  if ("always" in w) return "true";
+  return toExpr(w.while, aliases);
+}
+
+/** "while k15 is held", "in main", "always": how a layer's `when` reads. */
+export function whenText(when: When | undefined): string {
+  const w = when ?? { nav: MAIN_GROUP };
+  if ("nav" in w) return w.nav === MAIN_GROUP ? "main" : `in ${w.nav}`;
+  if ("always" in w) return "always";
+  const key = shiftKey(w);
+  return key !== undefined ? `while ${key} is held` : "while its condition holds";
+}
+
+/** A rank that's a literal number, or null when it follows state. */
+export function literalRank(rank: Source | undefined): number | null {
+  if (rank === undefined) return 0;
+  return typeof rank === "number" ? rank : null;
+}
+
+/**
+ * The layers that could control a control, highest first, as far as their
+ * literal fields tell: by level, then literal rank (a computed one counts as
+ * 0). Recency isn't known ahead, so ties keep the order given.
+ */
+export function candidates(control: string, layers: readonly Layer[]): Layer[] {
+  const order = (l: Layer) => levels.indexOf(l.level ?? "normal") * 100 + (literalRank(l.rank) ?? 0);
+  return layers
+    .filter((l) => l.controls.some((c) => c.id === control))
+    .map((l, i) => ({ l, i }))
+    .sort((a, b) => order(b.l) - order(a.l) || a.i - b.i)
+    .map(({ l }) => l);
+}
+
+/** "k3: Shift (over, while k15 is held), otherwise Cameras (main)". */
+export function candidatesText(control: string, layers: readonly Layer[]): string {
+  const found = candidates(control, layers);
+  if (found.length === 0) return `${control}: no layer covers it`;
+  const one = (l: Layer) => {
+    const level = l.level !== undefined && l.level !== "normal" ? `${l.level}, ` : "";
+    return `${l.name} (${level}${whenText(l.when)})`;
+  };
+  return `${control}: ${found.map(one).join(", otherwise ")}`;
 }
 
 export interface SavedSurface {
