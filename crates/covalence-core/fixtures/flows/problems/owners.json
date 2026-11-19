@@ -1,0 +1,25 @@
+{
+  "flow": {
+    "name": "Owned elsewhere",
+    "slug": "ownedElsewhere",
+    "enabled": true,
+    "owner": "01JBZ7P0D3F5G7H9J1K3L5M7ZZ",
+    "params": {
+      "camera": { "type": "integer", "default": 1 }
+    },
+    "triggers": [
+      {
+        "kind": "event",
+        "from": { "controls": "k0" },
+        "event": "press"
+      }
+    ],
+    "concurrency": "ignore",
+    "body": []
+  },
+  "errors": [
+    { "path": ["owner"], "code": "unknownLayer" },
+    { "path": ["params"], "code": "invalid" }
+  ],
+  "warnings": []
+}

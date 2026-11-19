@@ -434,6 +434,16 @@ impl EntityKind for Layer {
         for b in bindings {
             app.sync_helpers_on(&b, &self.slug);
         }
+        // So do its flows' homes (composition spec §2).
+        let flows = read(&app.flows).clone();
+        let mut layers = read(&app.layers).clone();
+        layers.insert(self.id.clone(), self.clone());
+        for flow in flows
+            .values()
+            .filter(|f| f.owner.as_deref() == Some(self.id.as_str()))
+        {
+            crate::flows::place(&app.runtime, flow, &flows, &layers);
+        }
         Ok(())
     }
 

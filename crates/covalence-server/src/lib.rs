@@ -406,7 +406,7 @@ impl App {
             runtime.set_read_only(variables::read_only(&variables));
             runtime.set_cells(dataflow.clone());
             for flow in flows.values() {
-                flows::place(&runtime, flow, &flows);
+                flows::place(&runtime, flow, &flows, &layers);
             }
             if let Err(e) = runtime.startup("boot") {
                 tracing::error!("cannot journal sys:startup: {e}");

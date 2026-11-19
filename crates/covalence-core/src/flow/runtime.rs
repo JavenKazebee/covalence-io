@@ -187,27 +187,58 @@ struct Inner {
 }
 
 /// Where a placed flow runs (composition spec §1.1): its home in the state
-/// tree, and the instances it's inside.
+/// tree, where its `params` are, and the instances it's inside.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Place {
     /// `flow.<slug>`, or for an item of a `forEach` instance,
-    /// `flow.<slug>.items[<key>]`.
+    /// `flow.<slug>.items[<key>]`, or for an owned flow,
+    /// `<owner's home>.flows.<slug>` (composition spec §2).
     pub home: StatePath,
+    /// `params` in its expressions: `<home>.params`, or an owned flow's
+    /// owner's.
+    pub params: StatePath,
     pub instance: Option<InstanceChain>,
 }
 
 impl Place {
     /// A flow's own home, outside any instance.
     pub fn of(flow: &Flow) -> Place {
+        Place::at(StatePath::new(
+            STATE_ROOT,
+            vec![PathSegment::Key(flow.slug.clone())],
+        ))
+    }
+
+    /// A home with its own `params`, outside any instance.
+    fn at(home: StatePath) -> Place {
         Place {
-            home: StatePath::new(STATE_ROOT, vec![PathSegment::Key(flow.slug.clone())]),
+            params: home.key("params"),
+            home,
             instance: None,
         }
     }
 
-    /// `params` in its expressions: `<home>.params`.
     fn named(&self) -> Vec<(String, StatePath)> {
-        vec![("params".to_owned(), self.home.key("params"))]
+        vec![("params".to_owned(), self.params.clone())]
+    }
+}
+
+/// The layer that owns a flow, as it's placed (composition spec §2).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Owner {
+    /// The layer's ID, which `{controls}` event sources imply.
+    pub layer: crate::surface::LayerId,
+    /// Its home, `layer.<slug>`: the flow's status is under
+    /// `<home>.flows.<slug>`, and its `params` are `<home>.params`.
+    pub home: StatePath,
+}
+
+impl Owner {
+    pub fn of(layer: &crate::surface::Layer) -> Owner {
+        Owner {
+            layer: layer.id.clone(),
+            home: StatePath::new("layer", vec![PathSegment::Key(layer.slug.clone())]),
+        }
     }
 }
 
@@ -233,6 +264,8 @@ pub struct Placement {
     /// Each param's source: the instance's binding, or the default.
     pub bound: Vec<(String, Source<serde_json::Value>)>,
     pub for_each: Option<ForEach>,
+    /// The layer that owns it.
+    pub owner: Option<Owner>,
 }
 
 impl Placement {
@@ -244,6 +277,7 @@ impl Placement {
             (Some(_), Some(t)) => Some(Placement {
                 bound: compose::bound(&t.params, &flow.bindings),
                 for_each: flow.for_each.clone(),
+                owner: None,
                 flow: flow.instance_of(t),
             }),
             (Some(_), None) => None,
@@ -251,9 +285,28 @@ impl Placement {
             (None, _) => Some(Placement {
                 bound: compose::bound(&flow.params, &BTreeMap::new()),
                 for_each: None,
+                owner: None,
                 flow: flow.clone(),
             }),
         }
+    }
+
+    /// Runs it as `owner`'s (composition spec §2): its status under the
+    /// layer's home, the layer's `params`, and its `{controls}` event
+    /// sources on the layer's controls.
+    pub fn owned_by(mut self, owner: Owner) -> Placement {
+        for trigger in &mut self.flow.triggers {
+            if let Trigger::Event { from, .. } = trigger
+                && let EventSource::Owner { controls } = from
+            {
+                *from = EventSource::Layer {
+                    layer: owner.layer.clone(),
+                    controls: Some(controls.clone()),
+                };
+            }
+        }
+        self.owner = Some(owner);
+        self
     }
 }
 
@@ -444,15 +497,22 @@ impl Runtime {
         match placement.for_each.clone() {
             None => {
                 inner.drop_list(&id);
-                let place = Place {
-                    instance: placement.flow.template.as_ref().map(|t| {
-                        vec![Link {
-                            template: t.clone(),
-                            instance: id.clone(),
-                            key: None,
-                        }]
-                    }),
-                    ..Place::of(&placement.flow)
+                let place = match &placement.owner {
+                    Some(owner) => Place {
+                        home: owner.home.key("flows").key(&placement.flow.slug),
+                        params: owner.home.key("params"),
+                        instance: None,
+                    },
+                    None => Place {
+                        instance: placement.flow.template.as_ref().map(|t| {
+                            vec![Link {
+                                template: t.clone(),
+                                instance: id.clone(),
+                                key: None,
+                            }]
+                        }),
+                        ..Place::of(&placement.flow)
+                    },
                 };
                 inner.put_cells(
                     &compose::param_prefix(&id, None),
@@ -719,6 +779,9 @@ fn source_roots(from: &EventSource) -> Option<Vec<String>> {
             "layer".to_owned(),
         ]),
         EventSource::Surface { .. } => Some(vec![crate::surface::STATE_ROOT.to_owned()]),
+        // Placing an owned flow makes these layer sources; one that isn't
+        // placed as owned matches nothing.
+        EventSource::Owner { .. } => Some(Vec::new()),
     }
 }
 
@@ -2000,8 +2063,8 @@ impl Inner {
                 continue;
             }
             let place = Place {
-                home: root.key("items").child(key.clone()),
                 instance: Some(chain(key)),
+                ..Place::at(root.key("items").child(key.clone()))
             };
             self.put_cells(
                 &compose::param_prefix(id, Some(key)),
@@ -2253,12 +2316,7 @@ impl RunTask {
 
     /// The flow a param of kind `flow` holds: its ID, at `<home>.params`.
     fn flow_param(&self, param: &str) -> Result<FlowId, RunError> {
-        match self
-            .inner
-            .shared
-            .state
-            .value(&self.place.home.key("params").key(param))
-        {
+        match self.inner.shared.state.value(&self.place.params.key(param)) {
             Some(Value::String(id)) => Ok(id.as_str().unwrap_or_default().to_owned()),
             _ => Err(RunError::new(
                 "unboundParam",
@@ -2362,12 +2420,7 @@ impl RunTask {
 
         // The params it starts with, recorded so `why` can say which camera
         // it was after they've moved on (composition spec §5).
-        let params: Option<Object> = match self
-            .inner
-            .shared
-            .state
-            .value(&self.place.home.key("params"))
-        {
+        let params: Option<Object> = match self.inner.shared.state.value(&self.place.params) {
             Some(Value::Map(entries)) if !entries.is_empty() => Some(
                 entries
                     .into_iter()
@@ -3265,6 +3318,7 @@ pub(crate) fn source_matches(
         EventSource::Surface { surface, controls } => (event.surface.as_ref() == Some(surface)
             && control_in(controls, eval))
         .then_some((None, None)),
+        EventSource::Owner { .. } => None,
     }
 }
 

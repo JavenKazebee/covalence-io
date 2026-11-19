@@ -34,14 +34,17 @@ export type EventSource =
   | { path: Selector<PathId> }
   | { target: Selector<TargetId> }
   | { layer: string; controls?: Selector<string> }
-  | { surface: string; controls?: Selector<string> };
+  | { surface: string; controls?: Selector<string> }
+  /** In an owned flow, its layer's controls (composition §2). */
+  | { controls: Selector<string> };
 
-export type EventSourceKind = "path" | "target" | "layer" | "surface";
+export type EventSourceKind = "path" | "target" | "layer" | "surface" | "owner";
 
 export function eventSourceKind(from: EventSource): EventSourceKind {
   if ("layer" in from) return "layer";
   if ("surface" in from) return "surface";
   if ("target" in from) return "target";
+  if ("controls" in from) return "owner";
   return "path";
 }
 
@@ -172,6 +175,8 @@ export interface Flow {
   failover?: "abort";
   /** A template's params (composition §1): `params.<name>` in its steps. */
   params?: Record<string, ParamDef>;
+  /** The layer that owns it (composition §2), and whose controls `{controls}` names. */
+  owner?: string;
   /** Bound each time it starts (flow spec §8.1): `input.<name>`. */
   inputs?: Record<string, ParamDef>;
   /** What a `stop` step hands back to a caller. */
@@ -347,6 +352,8 @@ export interface FlowDraft {
   concurrency: Concurrency;
   /** A template's params, kept as they are: the editor doesn't change them yet. */
   params: Record<string, ParamDef>;
+  /** The layer that owns it, kept as it is. */
+  owner?: string;
   inputs: Record<string, ParamDef>;
   outputs: Record<string, JsonSchema>;
   body: StepDraft[];
@@ -546,6 +553,7 @@ export function toDraft(flow: Flow, schemaOf: ParamsSchema): FlowDraft {
     conditions: [...(flow.conditions ?? [])],
     concurrency: flow.concurrency,
     params: copyJson(flow.params ?? {}),
+    owner: flow.owner,
     inputs: copyJson(flow.inputs ?? {}),
     outputs: copyJson(flow.outputs ?? {}),
     editor: flow.editor,
@@ -639,6 +647,7 @@ export function fromDraft(draft: FlowDraft, schemaOf: ParamsSchema): DraftResult
     name: draft.name,
     slug: draft.slug.trim(),
     enabled: draft.enabled,
+    ...(draft.owner === undefined ? {} : { owner: draft.owner }),
     triggers,
     concurrency: draft.concurrency,
     failover: "abort",
@@ -714,6 +723,7 @@ export function describeSource(
   if ("target" in from) {
     return selectorText(from.target, (t: TargetId) => alias(typeof t === "string" ? t : t.conn));
   }
+  if ("controls" in from) return `Its layer's ${selectorText(from.controls, (c) => c)}`;
   return selectorText(from.path, (p: PathId) => (typeof p === "string" ? p : JSON.stringify(p)));
 }
 

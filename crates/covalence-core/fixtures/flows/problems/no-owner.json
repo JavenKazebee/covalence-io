@@ -1,0 +1,20 @@
+{
+  "flow": {
+    "name": "No owner",
+    "slug": "noOwner",
+    "enabled": true,
+    "triggers": [
+      {
+        "kind": "event",
+        "from": { "controls": "k0" },
+        "event": "press"
+      }
+    ],
+    "concurrency": "ignore",
+    "body": []
+  },
+  "errors": [
+    { "path": ["triggers", 0, "from", "controls"], "code": "notInScope" }
+  ],
+  "warnings": []
+}

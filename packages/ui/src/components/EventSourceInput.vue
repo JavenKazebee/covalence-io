@@ -21,7 +21,12 @@ import { controlEvents, eventHelp } from "../surfaces/model";
  * events: a key on a layer or a surface, a connection by ID or plugin, or
  * any node by path, with `*` patterns.
  */
-const props = defineProps<{ index: number; problems: ShownProblem[] }>();
+const props = defineProps<{
+  index: number;
+  problems: ShownProblem[];
+  /** The layer that owns the flow, whose controls `{controls}` names (composition §2). */
+  owner?: string;
+}>();
 const trigger = defineModel<Extract<Trigger, { kind: "event" }>>({ required: true });
 
 const catalog = useCatalogStore();
@@ -32,16 +37,27 @@ const label = computed(() => `Trigger ${props.index + 1}`);
 const kind = computed(() => eventSourceKind(trigger.value.from));
 const plugins = computed(() => catalog.connections.filter((c) => !c.builtIn));
 
-const kindNames: Record<EventSourceKind, string> = {
+const allKindNames: Record<EventSourceKind, string> = {
+  owner: "A key on its layer",
   layer: "A key on a layer",
   surface: "A key on a surface",
   target: "A connection",
   path: "A path",
 };
+/** Only an owned flow has a layer of its own. */
+const kindNames = computed(() =>
+  Object.fromEntries(
+    Object.entries(allKindNames).filter(([k]) => k !== "owner" || props.owner !== undefined || kind.value === "owner"),
+  ),
+);
 
 function setKind(next: EventSourceKind) {
   const t = trigger.value;
   switch (next) {
+    case "owner":
+      t.from = { controls: surfaces.layer(props.owner ?? "")?.controls[0]?.id ?? "k0" };
+      t.event = "press";
+      break;
     case "layer":
       t.from = { layer: surfaces.layers[0]?.id ?? "" };
       t.event = "press";
@@ -77,12 +93,14 @@ function setControls(text: string) {
     .split(",")
     .map((s) => s.trim())
     .filter((s) => s !== "");
-  if (ids.length === 0) delete from.value.controls;
-  else from.value.controls = ids.length === 1 ? ids[0] : ids;
+  // An owner source always names its controls.
+  if (ids.length === 0 && kind.value !== "owner") delete from.value.controls;
+  else if (ids.length > 0) from.value.controls = ids.length === 1 ? ids[0] : ids;
 }
 
 const controlsOf = computed(() => {
   if (kind.value === "layer") return surfaces.layer(String(from.value.layer))?.controls.map((c) => c.id) ?? [];
+  if (kind.value === "owner") return surfaces.layer(props.owner ?? "")?.controls.map((c) => c.id) ?? [];
   return [];
 });
 
@@ -164,7 +182,7 @@ function setNames(text: string) {
 
 /** Names to suggest: a control's events, or the connection's. */
 const suggested = computed<{ id: string; name: string }[]>(() => {
-  if (kind.value === "layer" || kind.value === "surface") return controlEvents.map((e) => ({ id: e, name: eventHelp[e] }));
+  if (kind.value === "layer" || kind.value === "surface" || kind.value === "owner") return controlEvents.map((e) => ({ id: e, name: eventHelp[e] }));
   if (kind.value === "target" && targetForm.value === "conn") {
     const conn = catalog.connections.find((c) => c.id === targetSelector.value);
     return (conn === undefined ? [] : (catalog.manifest(conn.plugin)?.events ?? [])).map((e) => ({ id: e.id, name: e.name }));
@@ -243,14 +261,14 @@ const fieldProblems = (field: string) => props.problems.filter((p) => p.path[2] 
         </option>
       </select>
     </template>
-    <template v-if="kind === 'layer' || kind === 'surface'">
+    <template v-if="kind === 'layer' || kind === 'surface' || kind === 'owner'">
       <input
         :value="controlsText"
         :aria-label="`${label} controls`"
         :list="`${listId}-controls`"
         :disabled="controls !== undefined && controlIds === null"
         :title="controls !== undefined && controlIds === null ? 'Written as a selector; edit it in the flow’s JSON' : 'One or more control IDs, or empty for any'"
-        placeholder="any control"
+        :placeholder="kind === 'owner' ? 'one or more control IDs' : 'any control'"
         class="mono"
         spellcheck="false"
         @change="setControls(($event.target as HTMLInputElement).value)"

@@ -12,7 +12,7 @@ use covalence_core::compose::{Link, MAX_ITEMS};
 use covalence_core::dataflow::Dataflow;
 use covalence_core::engine::{ActionOutcome, ActionRequest, Actions, CoreError};
 use covalence_core::expr::QuickJs;
-use covalence_core::flow::runtime::{FireOutcome, Placement, RunInfo, item_id};
+use covalence_core::flow::runtime::{FireOutcome, Owner, Placement, RunInfo, item_id};
 use covalence_core::flow::{Flow, Runtime};
 use covalence_core::gate::Verdict;
 use covalence_core::journal::{ActionRequestedRecord, Journal, NewEntry, Origin, Record};
@@ -347,4 +347,135 @@ async fn a_list_past_the_limit_reports_too_many() {
     })
     .await;
     assert!(w.value(&["flow", "cams", "tooMany"]).is_none());
+}
+
+/// A press of `control` while layer `layer` controls it.
+fn press(layer: &str, control: &str) -> covalence_core::journal::EventRecord {
+    covalence_core::journal::EventRecord {
+        surface: Some("deck".into()),
+        layer: Some(layer.into()),
+        control: Some(control.into()),
+        ..covalence_core::journal::EventRecord::at(
+            StatePath::new(
+                "surface",
+                vec![
+                    PathSegment::Key("deck".into()),
+                    PathSegment::Key("controls".into()),
+                    PathSegment::Key(control.into()),
+                ],
+            ),
+            "press",
+            None,
+        )
+    }
+}
+
+fn owned_flow() -> Flow {
+    parse(json!({
+        "id": "take", "name": "Take", "slug": "take", "enabled": true,
+        "owner": "L",
+        "triggers": [{ "kind": "event", "from": { "controls": "k1" }, "event": "press" }],
+        "concurrency": "ignore",
+        "body": [
+            { "id": "note", "kind": "set", "path": "vars.seen", "value": "trigger.layer + '/' + trigger.control" },
+            { "id": "hold", "kind": "waitUntil", "until": "vars.go", "timeout": "5s" },
+        ],
+    }))
+}
+
+fn owner(slug: &str) -> Owner {
+    Owner {
+        layer: "L".into(),
+        home: StatePath::new("layer", vec![PathSegment::Key(slug.into())]),
+    }
+}
+
+/// An owned flow (composition spec §2) handles its layer's controls with
+/// the layer implied, and keeps its status under the layer's home.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_owned_flow_runs_on_its_layers_controls() {
+    let w = World::new();
+    let flow = owned_flow();
+    w.runtime.place(
+        Placement::of(&flow, None)
+            .expect("it runs")
+            .owned_by(owner("deck")),
+    );
+    let home = ["layer", "deck", "flows", "take", "running"];
+    w.eventually("its status under the layer", || w.value(&home))
+        .await;
+    assert_eq!(w.value(&["flow", "take", "running"]), None);
+
+    // Another layer's k1 isn't its owner's.
+    w.shared
+        .journal
+        .append(NewEntry::new(
+            Origin::system(),
+            Record::Event(press("M", "k1")),
+        ))
+        .unwrap();
+    w.shared
+        .journal
+        .append(NewEntry::new(
+            Origin::system(),
+            Record::Event(press("L", "k1")),
+        ))
+        .unwrap();
+    w.eventually("the run", || {
+        (w.value(&home) == Some(Value::from(1u64))).then_some(())
+    })
+    .await;
+    assert_eq!(w.runtime.runs(Some("take")).len(), 1);
+    assert_eq!(w.value(&["vars", "seen"]), Some(Value::from("L/k1")));
+
+    // Its events are at its home.
+    w.set_var("go", json!(true));
+    let run = w.runtime.runs(Some("take"))[0].run.clone();
+    w.finished(&run).await;
+    let finished: Vec<_> = w
+        .kinds("event")
+        .into_iter()
+        .filter_map(|e| match &e.record {
+            Record::Event(ev) if ev.event == "finished" => Some(ev.path.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        finished,
+        vec![StatePath::new(
+            "layer",
+            ["deck", "flows", "take"]
+                .iter()
+                .map(|s| PathSegment::Key((*s).into()))
+                .collect()
+        )]
+    );
+
+    // A renamed layer moves it.
+    w.runtime.place(
+        Placement::of(&flow, None)
+            .expect("it runs")
+            .owned_by(owner("main")),
+    );
+    w.eventually("its new home", || {
+        w.value(&["layer", "main", "flows", "take", "running"])
+    })
+    .await;
+    assert_eq!(w.value(&home), None);
+}
+
+/// Placed without its owner, a `{controls}` source matches nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_owned_flow_without_its_layer_takes_no_input() {
+    let w = World::new();
+    w.runtime.set_flow(owned_flow());
+    w.shared
+        .journal
+        .append(NewEntry::new(
+            Origin::system(),
+            Record::Event(press("L", "k1")),
+        ))
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(w.runtime.runs(Some("take")).is_empty());
 }

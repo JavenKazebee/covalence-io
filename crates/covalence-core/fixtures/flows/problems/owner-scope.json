@@ -1,0 +1,30 @@
+{
+  "flow": {
+    "name": "Owner scope",
+    "slug": "ownerScope",
+    "enabled": true,
+    "owner": "01JBZ7P0D3F5G7H9J1K3L5M7PA",
+    "triggers": [
+      {
+        "kind": "event",
+        "from": { "controls": ["k0", "k99"] },
+        "event": "press"
+      }
+    ],
+    "concurrency": "ignore",
+    "body": [
+      {
+        "id": "route1",
+        "kind": "action",
+        "target": { "conn": "01JBZ7P0D3F5G7H9J1K3L5M7N9" },
+        "action": "route",
+        "params": { "output": 1, "input": { "ref": { "scope": "params", "path": ["input"] } } }
+      }
+    ]
+  },
+  "errors": [
+    { "path": ["triggers", 0, "from", "controls", 1], "code": "unknownControl" },
+    { "path": ["body", 0, "params", "input", "ref"], "code": "notInScope" }
+  ],
+  "warnings": []
+}

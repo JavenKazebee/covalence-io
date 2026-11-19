@@ -1179,3 +1179,128 @@ async fn surface_scoped_helpers_live_on_the_surfaces_that_showed_their_layer() {
     assert_eq!(server.value(&latched("desk")).await, None);
     server.stop().await;
 }
+
+/// A flow a layer owns (composition spec §2) handles the layer's keys with
+/// the layer implied, keeps its status under the layer, follows the
+/// layer's slug, and is deleted with it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_layer_owns_its_flows() {
+    let server = Server::start();
+    let addr = server.listen().await;
+    let cams = create(&server, "/layers", "layer", deck_layer("Cameras")).await;
+    let deck = create(
+        &server,
+        "/surfaces",
+        "surface",
+        json!({ "name": "FOH deck", "model": "virtual.deck15", "startLayer": id(&cams) }),
+    )
+    .await;
+    let mut ws = connect(&addr, id(&deck)).await;
+    send(&mut ws, attach("fohDeck")).await;
+    server
+        .eventually(WAIT, "the deck to attach", || async {
+            (server.value("surface.fohDeck.current.main").await == Some(json!("cameras")))
+                .then_some(())
+        })
+        .await;
+
+    // `{controls}` without an owner names nothing.
+    let note = json!({
+        "name": "Note press", "enabled": true, "concurrency": "parallel",
+        "triggers": [{ "kind": "event", "from": { "controls": "k3" }, "event": "press" }],
+        "body": [{ "id": "note", "kind": "set", "path": "vars.pressed", "value": "trigger.control" }],
+    });
+    let (status, body) = server.post("/flows", note.clone()).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(codes(&body)[0].1, "notInScope");
+
+    let mut owned = note;
+    owned["owner"] = json!(id(&cams));
+    let flow = create(&server, "/flows", "flow", owned).await;
+    server
+        .eventually(WAIT, "its status under the layer", || async {
+            server.value("layer.cameras.flows.notePress.running").await
+        })
+        .await;
+    assert_eq!(server.value("flow.notePress.running").await, None);
+
+    let press = create(
+        &server,
+        "/flows",
+        "flow",
+        json!({
+            "name": "Press k3", "enabled": true, "concurrency": "ignore",
+            "triggers": [{ "kind": "api" }],
+            "body": [
+                {
+                    "id": "down", "kind": "action", "target": { "conn": "core" },
+                    "action": "inject", "params": { "surface": id(&deck), "control": "k3", "input": "down" },
+                },
+                {
+                    "id": "up", "kind": "action", "target": { "conn": "core" },
+                    "action": "inject", "params": { "surface": id(&deck), "control": "k3", "input": "up" },
+                },
+            ],
+        }),
+    )
+    .await;
+    run_flow(&server, &press).await;
+    server
+        .eventually(WAIT, "the press to run the owned flow", || async {
+            (server.value("vars.pressed").await == Some(json!("k3"))).then_some(())
+        })
+        .await;
+
+    // Renaming the layer moves the flow's home.
+    let mut renamed = cams.clone();
+    renamed["slug"] = json!("cams");
+    let (status, body) = server.put(&format!("/layers/{}", id(&cams)), renamed).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    server
+        .eventually(WAIT, "its new home", || async {
+            server.value("layer.cams.flows.notePress.running").await
+        })
+        .await;
+    assert_eq!(
+        server.value("layer.cameras.flows.notePress.running").await,
+        None
+    );
+
+    // Deleting the layer deletes the flow.
+    assert_eq!(
+        server.delete(&format!("/layers/{}", id(&cams))).await,
+        StatusCode::NO_CONTENT
+    );
+    let (status, _) = server
+        .call(Method::GET, &format!("/flows/{}", id(&flow)), None)
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        server.value("layer.cams.flows.notePress.running").await,
+        None
+    );
+
+    // A layer and its flow can be made together, the flow first.
+    let layer_id = "01JC0000000000000000000ABC";
+    let (status, body) = server
+        .post(
+            "/batch",
+            json!({ "ops": [
+                { "op": "create", "type": "flow", "body": {
+                    "name": "Owned", "enabled": true, "concurrency": "ignore", "owner": layer_id,
+                    "triggers": [{ "kind": "event", "from": { "controls": "k0" }, "event": "press" }],
+                    "body": [],
+                } },
+                { "op": "create", "type": "layer", "body": {
+                    "id": layer_id, "name": "Audio", "controls": keys(15),
+                } },
+            ] }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    server
+        .eventually(WAIT, "the batch's flow under its layer", || async {
+            server.value("layer.audio.flows.owned.running").await
+        })
+        .await;
+}
