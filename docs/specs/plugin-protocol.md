@@ -152,8 +152,8 @@ interface Manifest {
   actions: ActionDef[];
   events: EventDef[];
   state: StateSchema;            // see the state spec §1.2–1.4
-  presets?: PresetDef[];         // suggested button and layer templates; (M9) replaced by `components`
-  components?: ComponentDef[];   // (M9) reusable controls: look, helpers, flows, params, parts (composition §8)
+  presets?: PresetDef[];         // suggested button and page templates; (M9) replaced by `components`
+  components?: ComponentDef[];   // (M9) reusable keys, strips and pages: look, helpers, flows, params, children (composition §7)
   transforms?: string[];         // (M9) transform definition modules, run in the core's sandbox (dataflow §4.4)
   surfaces?: SurfaceProviderDef; // if the plugin provides surfaces (for example a web panel)
   simulator?: { stateLevel: boolean; protocolLevel: boolean };
@@ -180,7 +180,7 @@ interface EventDef {
 }
 ```
 
-- **(M9) `components`** are content with no code ([§13.6](#136-device-drivers-are-plugins-the-core-performs-hardware-io)): the `Component` shape of [composition §8](composition.md), with IDs namespaced by the plugin. They replace `presets`.
+- **(M9) `components`** are content with no code ([§13.6](#136-device-drivers-are-plugins-the-core-performs-hardware-io)): the `Component` shape of [composition §7](composition.md#7-components), with its owned flows inline and IDs namespaced by the plugin. They replace `presets`.
 - **(M9) `transforms`** are paths to modules in the package, each a `defineTransform` ([dataflow §4.4](dataflow.md)). The core loads them into its own sandbox, never into the plugin host, and names them `<plugin id>/<id>`. A module that fails to load or to pass its declared types is skipped with an error on the plugin; the rest of the plugin is unaffected.
 
 ### 4.1 Instance schema updates (host → core, ntf `schema.update`)
@@ -492,7 +492,7 @@ Why the protocol and the plugin host are the way they are, and what was rejected
 - **Rejected:** enforcing from the start (guards a threat that doesn't exist yet, on an unstable API); dropping permissions from the manifest (adding them later breaks the protocol).
 
 ### 13.6 Device drivers are plugins; the core performs hardware I/O
-- **Decided:** everything that knows a device's protocol (HID report layouts, key image formats, MIDI mappings, serial framing) is in a plugin. The core has no built-in drivers. It keeps input state, gesture timing, events, rendering, layers and helpers (surfaces spec): a surface plugin translates, it doesn't interpret. The core owns enumeration, hotplug and the byte-level `hid`, `serial` and `midi` transports (`usb` later), holds each device for one connection, reconnects across unplug and replug, and keeps hardware open across a plugin host restart (§7.1). An Orbital performs hardware I/O the same way, so a plugin doesn't know where its device is.
+- **Decided:** everything that knows a device's protocol (HID report layouts, key image formats, MIDI mappings, serial framing) is in a plugin. The core has no built-in drivers. It keeps input state, gesture timing, events, rendering, showing components and helpers (surfaces spec): a surface plugin translates, it doesn't interpret. The core owns enumeration, hotplug and the byte-level `hid`, `serial` and `midi` transports (`usb` later), holds each device for one connection, reconnects across unplug and replug, and keeps hardware open across a plugin host restart (§7.1). An Orbital performs hardware I/O the same way, so a plugin doesn't know where its device is.
 - **Why:** with drivers in the core, every new surface model or USB gadget would need a core release. Core I/O gives what a plugin can't: no native add-ons (Deno's least-tested path), one owner per device, hotplug matching in one place, devices that survive a host restart, and Orbitals opening devices on their own machine. The cost: surface input and key images cross the plugin host (device → core → host → core), an IPC round trip inside the 5 ms key-down budget, and the core needs a device layer on every OS with clear errors for macOS exclusive access, WinUSB and udev rules.
 - **Devices that need native code** (DeckLink, AJA, NDI) would use a native add-on in an isolated connection, or a helper process that speaks the protocol. Not designed yet.
 - **Rejected:** drivers in the core; plugins opening hardware with native add-ons (every plugin scans USB, and a host restart closes every device); a WASM host for drivers (deferred, not rejected).
@@ -503,12 +503,12 @@ Why the protocol and the plugin host are the way they are, and what was rejected
 - **Rejected:** requiring host transports for all network I/O.
 
 ### 13.8 What plugins can define
-- **Now:** connections (actions, state, events), surfaces, and content with no code (presets, layer templates).
+- **Now:** connections (actions, state, events), surfaces, and content with no code (presets; **(M9)** components).
 - **Later:** time sources, flow templates, and pure functions such as transforms, key widgets and expression libraries. Pure functions run in the core's QuickJS sandbox, not the plugin host, so they fit the render budget (dataflow §4.4).
-- **Never:** flow step kinds, scheduling, gesture rules, helpers or layer resolution. Cancellation, `why`, replay and timing depend on these being the core's.
+- **Never:** flow step kinds, scheduling, gesture rules, helpers or deciding which component controls a control. Cancellation, `why`, replay and timing depend on these being the core's.
 
 ### 13.9 Dynamic targets (proposed)
-A show often needs one layer that controls *any* camera, with a row of keys to choose which. In Companion each action is fixed to one connection, so users copy the page per camera.
+A show often needs one page that controls *any* camera, with a row of keys to choose which. In Companion each action is fixed to one connection, so users copy the page per camera.
 
 - **A target is a connection,** `{conn}`. A step's target is fixed or a source (dataflow §1) with a **constraint**: a plugin ID (`{plugin: "io.covalence.videohub"}`), or **(M9)** a composite template (composition §6.5). The editor uses it to type-check parameters, and the runtime checks it ([flows §2.1](flows.md#21-leaf-steps)). A target that resolves to nothing or fails the constraint fails the step with `no_target`, and nothing is dispatched. The journal records the resolved connection.
 - **(M9) A target in state and in expressions.** A target can be stored in state (`kind: "target"`, with an optional constraint), in ID form, so renaming an alias never breaks it. In expressions `target(t)` is a read-only view of the connection's state, with `.alias`, `.name`, `.plugin`, `.connected` and `.supports(action)`. Until then a variable holds a connection ID as a plain value.
@@ -516,7 +516,7 @@ A show often needs one layer that controls *any* camera, with a row of keys to c
 - **Devices from different plugins meet in a composite template** (composition §6.5). The template is the project's own contract ("Camera": tally, `recallPreset`, `speed`), each instance binds real devices, and where the plugins differ the template bridges them in its state expressions and owned flows, for example by branching on `target(params.ptz).plugin`.
 - **Mismatches between a control and a device are the user's to bridge, in the open:** an encoder driving a camera that only takes positions goes through a `position` reducer on the binding, where `why` can follow it.
 - **Rejected:**
-  - *Fixed targets:* force copying the layer per camera.
+  - *Fixed targets:* force copying the page per camera.
   - *Duck typing on action names:* names and parameters don't line up across plugins, and nothing checks they mean the same.
   - *An aggregator plugin per show:* hand-written each time, and hides the real target from the journal. (Composites do this in the open: composition §6.)
   - *Items within a connection as targets* (`{conn, key}`, with manifest `collections` naming the state each key is found under, and constraints `{plugin, collection}`): a key on every target, a collection on every constraint, `key` on `action.invoke`, the journal and the SDK, and a choice to make between collections whose keys overlap (a router's inputs and outputs), all for what a parameter already does. Most devices are a connection each, and where one connection drives many (a router's outputs, a camera controller), the action's parameter picks which. The core had two collections (`surfaces`, `flows`), which became parameters too. Revisit if a composite with `forEach` (composition §6.4) needs its items to be targets and they can't simply be connections.

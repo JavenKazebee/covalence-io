@@ -72,11 +72,9 @@ These are the user-facing terms. Product and component names use the chemistry t
 | **Input state** | What a control reports, kept as state: `pressed`, `detents`, `value`, `touched`. Volatile: reset on attach and detach. |
 | **Input event** | An occurrence derived from input state: press, release, double, long, hold, turn, change, touch. |
 | **Helper** | A reducer on a control's binding, whose input defaults to that control: a toggle, a position, a velocity, a selection, a script. |
-| **Layer** | A set of control bindings on the controls it covers. Which layer controls each control is computed from state: navigation, conditions and rank. Pages, shift layers, popovers, folders and sections are all layers. |
-| **Control group** | Spreads a live list (the selected camera's ISO values) over a set of controls in a layer, with `item` in bindings and triggers. |
+| **Component** | Whatever is on a set of controls, at any size: one key, a strip, a whole page. It holds bindings for its controls and contains other components as **children**, which can repeat over a live list (a key per camera). Parameters make it reusable. A component **shown** on surfaces is a page, a shift layer, a popover or a section: which one controls each control is computed from state (navigation, conditions and rank), never from nesting ([composition §11.8](composition.md#118-one-component-for-keys-strips-and-pages)). |
 | **Binding** | Dataflow: a source per property of a control's look (label, colour, image) ([spec](bindings.md)). A binding also holds the control's **helpers**, the input direction. |
-| **Template / instance** | The one way to reuse: a layer, composite, component or flow that declares parameters, and entities that use it with their own values. Templates can contain instances of others, and `forEach` makes one instance per item of a live list. Instances never override what's inside ([composition §11.2](composition.md#112-one-template-primitive-for-four-kinds)). |
-| **Component** | A template for a reusable control: look, helpers, flows, parameters and other components as parts. Its instances are **placements** on a layer's controls. |
+| **Template / instance** | The one way to reuse: a composite, component or flow that declares parameters, and entities that use it with their own values. Templates can contain instances of others, and `forEach` makes one instance per item of a live list. Instances never override what's inside ([composition §11.2](composition.md#112-one-template-primitive-for-three-kinds)). |
 | **Flow** | The single unit of automation: trigger(s) + optional conditions + a tree of steps. Control flow only. Button action lists, rules and node graphs are all flows ([spec](flows.md)). |
 | **Run** | One execution of a flow, with a handle, a status and a cancellation token. |
 | **Expression** | A JS expression, used in bindings, conditions and parameters. |
@@ -90,9 +88,10 @@ Covalence aims to be flexible without becoming hard to read. A few rules keep it
 - **Small primitives that combine.** Sources, selectors, transforms, cells and sinks are each defined once ([dataflow spec](dataflow.md)) and used everywhere. A new selector form or transform works in every place at once.
 - **Flows do things in order; dataflow keeps things in step.** Anything with steps, waits or conditions is a flow. Anything that follows state continuously is a source, a cell or a sink.
 - **Everything the system can do is an action on a target,** including the core's own (navigate, inject input). Everything that happens is an event at a path.
+- **One thing at every size.** A key, a strip and a page are all components, and bigger ones contain smaller ones. Containment recurses; when something is shown doesn't: that's decided once, by the shown component, from state ([composition §11.8](composition.md#118-one-component-for-keys-strips-and-pages)).
 - **Reuse is by parameters, never by copying or overriding** ([composition spec](composition.md)). One primitive does it for every kind: a template declares `params`, an instance binds them. Templates nest by containing instances, never by deriving from each other.
 - **Scope is explicit.** A container sees its own `params`. To pass a value in, bind a parameter where it's placed, one level at a time.
-- **Extensions run where the guarantees are.** Plugins add devices (in the plugin host), and components and transforms (in the core's sandbox). They never add step kinds, scheduling or layer resolution.
+- **Extensions run where the guarantees are.** Plugins add devices (in the plugin host), and components and transforms (in the core's sandbox). They never add step kinds, scheduling or the rule for which component controls a control.
 
 ## Three ways to edit one model
 

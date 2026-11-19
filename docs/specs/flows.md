@@ -31,7 +31,7 @@ interface Flow {
   params?: { [name: string]: ParamDef };          // (M9) a template (composition §9); or, with `template`, an instance's bindings
   template?: string;                              // (M9) an instance of a flow template; it then has no triggers or body of its own
   forEach?: ForEach;                              // (M9) one instance per item (composition §4)
-  owner?: string;                                 // (M9) a layer or composite that owns it (composition §2)
+  owner?: string;                                 // (M9) a component or composite that owns it (composition §2)
 
   body: Step[];                       // a sequence
   editor?: EditorMeta;                // view-only metadata (§6); ignored by the runtime
@@ -51,7 +51,7 @@ type Expr = string;                   // JS expression source (§11.2)
 
 | Kind | Fields | `trigger` payload in expressions |
 |---|---|---|
-| `event` | `from: EventSource`, `event: string \| string[]`, `filter?: Expr`, `echo?` ([dataflow §3.1](dataflow.md)) | `{path, event, payload, captures?, source?, surface?, layer?, control?, item?, index?}`, with `payload` typed by the event's definition |
+| `event` | `from: EventSource`, `event: string \| string[]`, `filter?: Expr`, `echo?` ([dataflow §3.1](dataflow.md)) | `{path, event, payload, captures?, source?, surface?, component?, control?, item?, index?, instance?}`, with `payload` typed by the event's definition |
 | `state` | `when: Expr \| Source<boolean>`, `edge: rising \| falling \| change` | `{value, previous}` |
 | `state` with `match` | `match: PathPattern`, `when?: Expr`, `edge` | `{path, captures, value, previous, ts}` |
 | `schedule` | per [state spec §7.7](state-and-event-log.md#77-time-sources-and-scheduling-proposed) | `{scheduled, fired}` |
@@ -59,12 +59,12 @@ type Expr = string;                   // JS expression source (§11.2)
 | `api` / `osc` | `address?` for OSC | `{args}` |
 | `action` **(M9)** | none: set by a composite whose action names this flow ([composition §6.2](composition.md)) | `{conn, call}`; the action's params are `input`, and `params` are the composite instance's |
 
-- **(M6) One trigger kind for every event** ([dataflow §10.2](dataflow.md#102-events-are-addressed-by-state-path)). Events happen at a node in the state tree and have a name (`pp:timerEnded`, `surface.deck.controls.k3:press`, `flow.preService:finished`, `sys:startup`). `from` picks the nodes with a path selector, a target selector, a layer or surface with a control selector, a group, or a component slot. The M5 `control` and the planned `startup` kinds are event triggers now: `{from: {layer, controls}, event: "press"}` and `{from: {path: "sys"}, event: "startup"}`.
+- **(M6) One trigger kind for every event** ([dataflow §10.2](dataflow.md#102-events-are-addressed-by-state-path)). Events happen at a node in the state tree and have a name (`pp:timerEnded`, `surface.deck.controls.k3:press`, `flow.preService:finished`, `sys:startup`). `from` picks the nodes with a path selector, a target selector, a component or surface with a control selector. The M5 `control` and the planned `startup` kinds are event triggers now: `{from: {component, controls}, event: "press"}` (M8: `layer`) and `{from: {path: "sys"}, event: "startup"}`.
 - An `event` trigger can listen to many targets instead of one connection. `from: {target: {template: <Camera's ID>}}` fires for every instance of a composite template, and `{target: {plugin: …}}` for every connection of a plugin; `trigger.source` says which ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-proposed)).
 - `state` triggers are edge-triggered. Their dependencies are tracked at run time, like bindings. **(M6)** `when` can be a structured source (`{use: "compare", …}`), as well as an expression string.
-- **A control's input is state, and its events are derived from that state** ([surfaces §11.2](surfaces.md#112-surfaces-are-two-way-devices-and-control-input-is-state), [surfaces spec §4](surfaces.md)). An event trigger is the quick way in for them: a press, a double, a turn. A layer source matches per surface, on whichever surfaces that layer controls the control.
+- **A control's input is state, and its events are derived from that state** ([surfaces §11.2](surfaces.md#112-surfaces-are-two-way-devices-and-control-input-is-state), [surfaces spec §4](surfaces.md)). An event trigger is the quick way in for them: a press, a double, a turn. A component source matches per surface, on whichever surfaces that component has the control.
 - **(M6) Flows emit events** at `flow.<slug>`: `started`, `finished` and `failed`, with `{run, status, error?}`. "When that flow finishes" is an event trigger.
-- **(M9) `params`** is the flow's own instance's parameters, or for an owned flow its owner instance's ([composition §2](composition.md)). A free-standing flow triggered by a control event doesn't get the layer's: it gets `trigger.layer` and `trigger.instance`, and a flow that should handle every instance of a layer template is owned by it ([composition §11.2](composition.md#112-one-template-primitive-for-four-kinds)).
+- **(M9) `params`** is the flow's own instance's parameters, or for an owned flow its owner instance's ([composition §2](composition.md)). A free-standing flow triggered by a control event doesn't get the component's: it gets `trigger.component` and `trigger.instance`, and a flow that should handle every instance of a component is owned by it ([composition §11.2](composition.md#112-one-template-primitive-for-three-kinds)).
 - **`state` triggers cover conditions and combinations** over input state: a press that only counts while armed, a shift key, a helper's position crossing a threshold.
 - **A `state` trigger with `match`** fires for each path matching the pattern, with `*` matching one segment: `surface.*.controls.*.pressed`. `trigger.path` is the path that changed, and `trigger.captures` the segments `*` matched. `when` is optional, and sees `trigger.value`. It works on any state, so a GPIO contact from a plugin and a key on a surface can drive the same flow.
 
@@ -153,9 +153,9 @@ Steps read data through expressions. These names are in scope:
 | `steps.<id>` | `{status, result?, error?, startedAt, durationMs}` for steps that have run | no |
 | `<as>`, `index` | The current loop item and index, inside `forEach` | no |
 | `error` | The error, inside a `catch` | no |
-| state roots | `<alias>`, `vars`, `sys`, `surface`, `layer` (M5: `page`), `flow` ([state spec §1.1](state-and-event-log.md)) | `vars` via `set` and scripts |
+| state roots | `<alias>`, `vars`, `sys`, `surface`, `component` (M5: `page`, M8: `layer`), `flow` ([state spec §1.1](state-and-event-log.md)) | `vars` via `set` and scripts |
 | `target(t)` | A target's state ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-proposed)) | no |
-| `params` **(M9)** | The flow instance's parameters, or its owner instance's for an owned flow: a layer's, a composite's or a placement's ([composition §2](composition.md)) | no |
+| `params` **(M9)** | The flow instance's parameters, or its owner instance's for an owned flow: a component's or a composite's ([composition §2](composition.md)) | no |
 
 - **Steps in a branch that didn't run are absent** from `steps`. Reading them gives `undefined`, like any missing value ([§11.2](#112-expressions-and-scripts-one-language-sandboxed-by-where-code-runs)).
 - **Inside a `parallel` block,** a branch can only see its own steps and those that finished before the block started. Other branches' steps become visible after the join.
@@ -214,7 +214,7 @@ The three views are three ways of showing the same tree.
 | **Rule** | One trigger, and a body that is either the Button shape or a single `branch` whose arms have that shape | Conditions show as the "if" card |
 | **Flow** | Any flow | Blocks are nested regions. Edges show order only |
 
-- **A key's flows.** A control's binding holds its look and its helpers; what happens when it's used lives in flows ([surfaces §11.2](surfaces.md#112-surfaces-are-two-way-devices-and-control-input-is-state)). **(Later)** Selecting a key in the surface editor lists every flow that references it (by layer, control group or region), with each flow's other triggers, and opens them in the Button view.
+- **A key's flows.** A control's binding holds its look and its helpers; what happens when it's used lives in flows ([surfaces §11.2](surfaces.md#112-surfaces-are-two-way-devices-and-control-input-is-state)). **(Later)** Selecting a key in the surface editor lists every flow that references it (by component, a containing component or region), with each flow's other triggers, and opens them in the Button view.
 - "Open as flow" is always possible. Going back down is offered when the tree matches the simpler shape.
 - `editor` holds view-only data: node positions, collapsed blocks, colours and comments. It's exported, so a layout survives a round trip, but it never affects a run and its changes are left out of the diff summary.
 - Without saved positions, the Flow view lays the tree out automatically from top to bottom.
@@ -232,7 +232,7 @@ slug: recallShot
 enabled: true
 triggers:
   - kind: event
-    from: { layer: 01JBZ9CAMCONTROL0LAYER00000, controls: k8 }   # camControl
+    from: { component: 01JBZ9CAMCONTROL0CMPNT00000, controls: k8 }   # camControl
     event: press
 concurrency: restart
 failover: abort
@@ -293,7 +293,7 @@ This section is what the core accepts today.
 | Kind | Fields | `trigger` in expressions | Notes |
 |---|---|---|---|
 | `api` | none | `{args: {}}` | Fired by `POST /flows/{id}/run` (§9). A flow without one can't be run from the API or the UI's Run button |
-| `event` | `source: {conn}`, `event`, **(M4)** `filter?: Expr` | `{source, event, payload}` | `event` must be in the plugin manifest's `events`. No `{plugin}` or `{interface}` sources. **(M6)** `from: EventSource` replaces `source` (`{conn}` becomes `{target: conn}`), with path, target, layer and surface sources, `event` as a name or a list, and the payload of dataflow §3.1 |
+| `event` | `source: {conn}`, `event`, **(M4)** `filter?: Expr` | `{source, event, payload}` | `event` must be in the plugin manifest's `events`. No `{plugin}` or `{interface}` sources. **(M6)** `from: EventSource` replaces `source` (`{conn}` becomes `{target: conn}`), with path, target, layer (**(M9)** component) and surface sources, `event` as a name or a list, and the payload of dataflow §3.1 |
 | `state` **(M4)** | `when: Expr`, `edge: rising \| falling \| change` | `{value, previous}` | See below |
 | `gesture` **(M5)** | `control: {page, control}`, `gesture: press \| release \| double \| long \| hold` | `{surface, page, control, gesture, delta?}`, with IDs | Matches on any surface showing the page. `turn` isn't supported yet. Gestures and their timing are in the [surfaces spec §4.2](surfaces.md). `trigger.matched` has `cause` → the `input.gesture` entry |
 | `control` **(Now)** | `control: {layer, control}`, `event: press \| release \| double \| long \| hold \| turn \| change \| touch \| untouch` | `{surface, layer, control, event, delta?, value?}`, with IDs | Replaces `gesture`. Matches the control on any surface where the layer controlled it. `trigger.matched` has `cause` → the `input.event` entry ([surfaces spec §7](surfaces.md)). **(M6)** Replaced by `event` with `from: {layer, controls}`; stored flows are migrated |
@@ -374,7 +374,7 @@ Errors block the save; warnings don't.
   - a bad literal duration
   - **(M4)** an expression that doesn't compile, a malformed `set` path, a `branch` with no arms
   - a `call` step on a flow that doesn't exist (`unknownFlow`) or has no `call` trigger (`notCallable`), an input the callee doesn't declare (`unknownInput`), or a required input with no default left out (`missingInput`); an `event` or `state` trigger on a flow with such an input (`missingInput`); a `stop` output the flow doesn't declare (`unknownOutput`); an input or output name that isn't an identifier (`badId`); a literal input, default or output that fails its schema (`badValue`)
-  - **(M5)** a `gesture` trigger on a page that doesn't exist (`unknownPage`), or a control outside its layout (`unknownControl`). **(Now)** The same for a `control` trigger, with `unknownLayer`, `unknownControl` for a control the layer doesn't list, and `unsupported` for an event its control's inputs can't give
+  - **(M5)** a `gesture` trigger on a page that doesn't exist (`unknownPage`), or a control outside its layout (`unknownControl`). **(Now)** The same for a `control` trigger, with `unknownLayer` (**(M9)** `unknownComponent`), `unknownControl` for a control the layer doesn't list, and `unsupported` for an event its control's inputs can't give
 - **Warnings:**
   - no triggers
   - an `event` trigger on a connection the flow also acts on (see §8.6)

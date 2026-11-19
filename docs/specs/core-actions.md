@@ -12,7 +12,7 @@ Everything Covalence itself can do (navigate a surface, inject input, cancel a f
 ## 1. The connection (M6)
 
 - **ID and alias `core`.** Both are reserved: no connection can take them, and `core` is reserved as a state root, so an alias can't shadow it.
-- **It has no state subtree of its own.** Its state is the core's roots: `sys`, `surface`, `layer`, `flow` and `vars`.
+- **It has no state subtree of its own.** Its state is the core's roots: `sys`, `surface`, `component`, `flow` and `vars`.
 - **It always exists and is always connected.** It can't be created, edited, disabled or deleted, and it's listed with the connections in the API, marked `builtIn: true`.
 - **Its manifest is served like a plugin's,** so the editor validates `core` actions, parameters and results the same way. It's listed in `GET /plugins` with the ID `core`.
 - **Actions run in-process.** They never cross the plugin host, and they answer in the same scheduler turn unless they wait for a surface to be drawn.
@@ -27,7 +27,7 @@ A target is a connection and nothing within it ([plugin protocol §13.9](plugin-
 | `flow` | `{type: "string", format: "flow"}` | `cancelRuns`, `setEnabled` |
 
 - **It's an ID, not a slug,** so renaming a deck or a flow never breaks a step. The editor shows names and stores IDs; a literal that names nothing is `unknownTarget` on save, and at run time the action fails with `unknownSurface` or `unknownFlow`.
-- **It can follow state like any parameter** (dataflow §1). "Navigate the selected deck" is `navigate {surface: {ref: vars.deck}, layer}`, with `vars.deck` holding a surface ID.
+- **It can follow state like any parameter** (dataflow §1). "Navigate the selected deck" is `navigate {surface: {ref: vars.deck}, component}`, with `vars.deck` holding a surface ID.
 - **The `format` is what marks it,** in the manifest the core serves, so the editor offers a surface or flow picker and validation knows what to check. The actions are defined in `covalence-core`, beside the core connection.
 - Surfaces from plugins (M7) are surfaces like any other: `navigate` names them by surface ID, not through their provider connection.
 
@@ -37,8 +37,8 @@ A target is a connection and nothing within it ([plugin protocol §13.9](plugin-
 
 | Action | Params | Result | Effect | Notes |
 |---|---|---|---|---|
-| `navigate` | `{surface: string, group?: string = "main", layer: LayerId \| null, item?: PathSegment}` | `{layer, item?}` | internal | **(M6)** As `POST /surfaces/{id}/current` (surfaces §9): answers once the surface has been sent its outputs. Errors `unknownSurface`, `unknownLayer`, `doesNotFit`, and **(M8)** `invalid` for a group that isn't a name. Idempotent. **(M9)** `item` picks one instance of a layer with `forEach` ([composition §4](composition.md)); `unknownItem` if it has none by that key |
-| `back` | `{surface: string, group?: string = "main"}` | `{layer}` | internal | **(Later)** Pops the group's history |
+| `navigate` | `{surface: string, group?: string = "main", component: ComponentId \| null, item?: PathSegment}` | `{component, item?}` | internal | **(M6)** As `POST /surfaces/{id}/current` (surfaces §9): answers once the surface has been sent its outputs. **(M9)** `component` was `layer`, and must be a shown component. Errors `unknownSurface`, `unknownComponent`, `doesNotFit`, and **(M8)** `invalid` for a group that isn't a name. Idempotent. **(M9)** `item` picks one instance of a shown component with `forEach` ([composition §4](composition.md)); `unknownItem` if it has none by that key |
+| `back` | `{surface: string, group?: string = "main"}` | `{component}` | internal | **(Later)** Pops the group's history |
 | `inject` | `{surface: string, control: string, input: "down" \| "up" \| "turn" \| "value" \| "touch", value?: Value}` | none | internal | **(M6)** Applied as if the device had sent it (surfaces §4.5), with the run as origin. Errors `unknownSurface`, `notAttached`, `unknownControl`, `unsupported` |
 | `setBrightness` | `{surface: string, level: number}` (0 to 1) | none | device | **(Later)** Needs surface-wide outputs |
 
@@ -60,7 +60,7 @@ Running another flow is the `call` step, not an action: it can wait for the call
 
 ## 5. Open questions
 
-1. Should `navigate` accept a selector of surfaces (every deck showing the layer), or is a `forEach` loop over surface IDs enough?
+1. Should `navigate` accept a selector of surfaces (every deck showing the page), or is a `forEach` loop over surface IDs enough?
 2. Should project edits (`setEnabled`) be possible from flows at all while a show lock is on?
 
 ---
@@ -69,7 +69,7 @@ Running another flow is the `call` step, not an action: it can wait for the call
 
 ### 6.1 The core is a connection
 - **Decided:** a built-in connection, ID and alias `core`, always present and connected, owns everything Covalence itself can do. Its actions name a surface or a flow by parameter (§2), its state is the core's roots (with `core` reserved as a root), and `ActionDef.effect` (`internal` or `device`) lets simulate mode suppress only device effects, so a rehearsal still navigates decks. No new step kinds: `call`, `set`, `wait` and the blocks stay steps because they're about the run itself.
-- **Why:** actions already have typed parameters and results, journaling, the output gate, simulate mode and idempotency. So flows navigate, inject and cancel with the step they already have, "navigate the selected deck" is a parameter that follows state, and sinks and composites can drive core actions (an encoder `select` reducer paging through layers).
+- **Why:** actions already have typed parameters and results, journaling, the output gate, simulate mode and idempotency. So flows navigate, inject and cancel with the step they already have, "navigate the selected deck" is a parameter that follows state, and sinks and composites can drive core actions (an encoder `select` reducer paging through pages).
 - **Rejected:**
   - *New step kinds* (`navigate`, `inject`): each a one-off with its own editor, typing and gate rules.
   - *A `core` target that isn't a connection:* a special case everywhere connections are listed, manifests checked or targets resolved.

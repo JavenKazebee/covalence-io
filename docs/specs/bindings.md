@@ -5,11 +5,11 @@
 
 Bindings are where Covalence's **dataflow** ([dataflow spec](dataflow.md)) meets a control. Flows do things in order; bindings keep something continuously in step with state. Every binding is a `Source` and evaluates as a JS expression ([flows §11.2](flows.md#112-expressions-and-scripts-one-language-sandboxed-by-where-code-runs)), but users only write code when they choose to.
 
-A `control_binding` covers both directions of one control, since a surface is a two-way device ([surfaces §11.2](surfaces.md#112-surfaces-are-two-way-devices-and-control-input-is-state)):
+A control binding covers both directions of one control, since a surface is a two-way device ([surfaces §11.2](surfaces.md#112-surfaces-are-two-way-devices-and-control-input-is-state)):
 - **Display bindings** (§1–§4): sources → the control's outputs (image, LED, level, text). Each property is a sink (dataflow §7).
 - **Helpers** (§5): reducers over the control's input → cells with derived state and events. A derived value can be shown, sent to a variable or drive an action parameter. Derived events trigger flows through event triggers.
 
-A control's input is already state and events without any binding (surfaces §4). Flows react to it; bindings don't run steps. Surfaces, controls, input state, events, layers and control groups are in the [surfaces spec](surfaces.md).
+A control's input is already state and events without any binding (surfaces §4). Flows react to it; bindings don't run steps. Surfaces, controls, input state, events and showing components are in the [surfaces spec](surfaces.md); components, which hold bindings, in the [composition spec](composition.md).
 
 Shapes use TypeScript notation for readability. The real source of truth will be the schema in `protocol/`.
 
@@ -18,14 +18,13 @@ Shapes use TypeScript notation for readability. The real source of truth will be
 ## 1. Display bindings
 
 ```ts
-interface ControlBinding {        // project entity `control_binding`
-  id: string;
-  layer: string;                  // (Now) the layer it's on (M5: `page`)
-  control: string;                // one of the layer's LayerControl IDs
+interface ControlBinding {        // (M9) in a component's `bindings` (composition §7.1); M5–M8: project entity `control_binding`
+  id: string;                     // unique in its component; a helper's cell keeps it (dataflow §5.4)
+  control: string;                // one of the component's controls (M8: `layer` and its LayerControl ID)
   props: { [prop in ControlProp]?: Source<Value> };   // (M6) was `Binding`, §2
   helpers?: Helper[];             // (M8) §5
   gestures?: GestureTiming;       // (M8) surfaces §4.2: doubleWindow, longAfter, holdEvery, as Sources
-  input?: "claim" | "pass" | "block";   // (M8) surfaces §5.2.1; default "claim" on a replace layer, "pass" on a through layer
+  input?: "claim" | "pass" | "block";   // (M8) surfaces §5.2.1; default "claim" in a replace component, "pass" in a through one
 }
 
 type ControlProp =
@@ -37,7 +36,7 @@ type ControlProp =
 
 Each property has an expected type: `label` and `text` are strings, colours are `color` values, `icon` and `image` are asset IDs or URLs, and `value` is a number from 0 to 1. The editor checks the binding's result against it (§4). **(M8)** A `value` outside 0 to 1 is held to it, and an `undefined` one sends nothing. Each level sent is written to `requested.level` (surfaces §4.4).
 
-Each property drives one output capability (surfaces §2), and **(Now)** a property can only be bound on a control whose layer declares that output (`noOutput`). Whichever layer controls a control sets its whole look; nothing falls through from layers underneath (surfaces §5.2). **(M8)** A layer with `cascade: "through"` sets only the properties it binds, and the rest come from the layers below (surfaces §5.2.1).
+Each property drives one output capability (surfaces §2), and **(Now)** a property can only be bound on a control whose component declares that output (`noOutput`). Whichever shown component controls a control sets its whole look; nothing falls through from components underneath (surfaces §5.2). **(M8)** One with `cascade: "through"` sets only the properties it binds, and the rest come from the components below (surfaces §5.2.1).
 
 | Properties | Output |
 |---|---|
@@ -78,7 +77,7 @@ type Binding =
 type Ref =
   | { conn: string; path: Path }                     // fixed connection, ID form (state spec §1.1)
   | { target: Ref; path: Path }                      // through a target held in state (plugin protocol spec §13.9)
-  | { root: "vars" | "sys" | "surface" | "layer" | "flow"; path: Path };   // (Now) `layer` replaces `page`
+  | { root: "vars" | "sys" | "surface" | "component" | "flow"; path: Path };   // (M9) `component` replaces `layer`, which replaced `page`
 
 type Condition = { path: Ref; op: "==" | "!=" | ">" | ">=" | "<" | "<=" | "truthy" | "falsy"; value?: Value };
 type Format = "auto" | "mmss" | "hhmmss" | "percent" | "fixed1" | "fixed2" | "upper";
@@ -119,8 +118,8 @@ The shapes above, with these rules, which the native evaluator and the compiled 
 
 - `value` is what the property shows: its result, or its fallback. `error` is why the result wasn't used. `expr` is the compiled expression (§2), with connections by alias. `reads` are text paths.
 - The image is byte for byte what a surface showing the binding would be sent, so the editor shows the real key rather than an imitation.
-- A binding that doesn't parse is `422 {errors}`, as on save. Validation (unknown layers, duplicate controls) is left to saving.
-- **Validation** (errors block saving): the layer and control exist (`unknownLayer`; M5: `unknownPage`, and `unknownControl`), no other binding has the control (`duplicateControl`), connections exist (`unknownConnection`), `expr` compiles (`exprSyntax`), and every literal fits its property (`badValue`): `rules` values and `else`, `map` lists, fallbacks, a `template` only on a label, a `map` range only on a label, and two different `from` numbers. **(Now)** The control must be one of the layer's controls, and each bound property's output must be declared for it (`noOutput`, §1). **(Later)** A control owned by a control group can't also have a binding (`duplicateControl`, surfaces §6).
+- A binding that doesn't parse is `422 {errors}`, as on save. Validation (unknown controls, duplicate controls) is left to saving.
+- **Validation** (errors block saving): the control is one of its component's (`unknownControl`), no other binding has the control (`duplicateControl`), connections exist (`unknownConnection`), `expr` compiles (`exprSyntax`), and every literal fits its property (`badValue`): `rules` values and `else`, `map` lists, fallbacks, a `template` only on a label, a `map` range only on a label, and two different `from` numbers. **(Now)** Each bound property's output must be declared for the control (`noOutput`, §1). **(M9)** A control covered by a child can't also have a binding (`duplicateControl`, composition §7.1).
 - `showStale: false` isn't supported yet.
 
 - **Converting to `expr` is one-way.** The editor shows the compiled expression as the starting point. Going back is only offered if the expression hasn't been edited.
@@ -133,7 +132,7 @@ The shapes above, with these rules, which the native evaluator and the compiled 
 - **Bindings are evaluated in the core.** `expr` bindings use QuickJS, the same engine as flows, on a thread of their own. `value`, `template`, `rules` and `map` are evaluated natively, with the same results as their compiled expressions ([§9.2](#92-the-structured-kinds-are-evaluated-natively)). `expr` bindings have a 10 ms time limit.
 - **Dependencies are tracked at run time** ([flows §11.2](flows.md#112-expressions-and-scripts-one-language-sandboxed-by-where-code-runs)). Each evaluation records the paths it reads, and the binding re-evaluates when any of them change. A binding that reads `vars.selectedCam` moves to the new camera's paths as soon as the variable changes.
 - **Once per scheduler turn,** after patches are coalesced, so a binding never shows a half-applied turn.
-- **Only bindings on visible layers are evaluated:** a layer that controls at least one control on an attached surface. **(Later)** Armed layers, whose `when` reads input state, are evaluated too, so they can be drawn the moment they take over (surfaces §5.2). A layer that comes into view is evaluated in full before it's drawn.
+- **Only bindings in visible components are evaluated:** a shown component that controls at least one control on an attached surface, and its children. **(M8)** Armed components, whose `when` reads input state, are evaluated too, so they can be drawn the moment they take over (surfaces §5.2). One that comes into view is evaluated in full before it's drawn.
 - **Missing values read as `undefined`** ([flows §11.2](flows.md#112-expressions-and-scripts-one-language-sandboxed-by-where-code-runs)). If the result is `undefined` or the evaluation throws, the property uses `fallback`, then the control's default. Errors are reported in the editor and the log, rate-limited, and never stop other bindings.
 - **Stale values are shown as stale.** If any value a binding read has `quality: stale` ([state spec §1.3](state-and-event-log.md)), the control is dimmed and marked automatically. A binding can opt out with `showStale: false`.
 - **Budget:** a state change to a re-rendered key image in under 16 ms ([overview](overview.md#performance-budgets-targets-to-test-against)).
@@ -153,12 +152,12 @@ The shapes above, with these rules, which the native evaluator and the compiled 
 
 ## 5. Helpers (M8)
 
-A helper turns a control's input into derived state, events, or both (surfaces §4.3). **A helper is a reducer** (dataflow §4.2) whose `on` and `input` default to its control, and whose value is a cell under the layer or the surface ([dataflow §10.3](dataflow.md#103-sources-transforms-and-sinks-helpers-are-transforms)). Helpers replace value mappings ([surfaces §11.2](surfaces.md#112-surfaces-are-two-way-devices-and-control-input-is-state)). A fader or encoder driving a mixer volume or a camera's zoom speed is a helper with a `to` sink.
+A helper turns a control's input into derived state, events, or both (surfaces §4.3). **A helper is a reducer** (dataflow §4.2) whose `on` and `input` default to its control, and whose value is a cell under its component or the surface ([dataflow §10.3](dataflow.md#103-sources-transforms-and-sinks-helpers-are-transforms)). Helpers replace value mappings ([surfaces §11.2](surfaces.md#112-surfaces-are-two-way-devices-and-control-input-is-state)). A fader or encoder driving a mixer volume or a camera's zoom speed is a helper with a `to` sink.
 
 ```ts
 type Helper = ReducerSource & {                 // {use: "toggle" | "position" | …, …options}, dataflow §4.2
   as?: string;                                  // the cell's name; default the `use`
-  scope?: "layer" | "surface";                  // where the cell lives; default "layer"
+  scope?: "component" | "surface";              // where the cell lives; default "component" (M8: "layer")
   to?: Sink[];                                  // dataflow §7
   journal?: "full" | { sampled: Duration };
 };
@@ -183,33 +182,33 @@ type Helper = ReducerSource & {                 // {use: "toggle" | "position" |
 
 - **No helper is needed for input state and edge events.** They exist for every control (surfaces §4.1, §4.2).
 - **Validation:** a helper must read an input the control has (`noInput`), `as` names are unique on the control, a `set` sink must be a writable variable (`readOnly`), a `script` must compile (`exprSyntax`), and an action sink's action and parameters are checked as an `action` step's are (flows §4).
-- **A value is state first.** It's written under `as` (surfaces §3) whether or not it has a sink, so bindings and `state` triggers can use it. `scope: "surface"` gives each surface the layer is on its own value.
+- **A value is state first.** It's written under `as` (surfaces §3) whether or not it has a sink, so bindings and `state` triggers can use it. `scope: "surface"` gives each surface the component is on its own value.
 - **`follow`** replaces value mappings' `feedback`; the output side is a display binding on `value`.
 - **`script`** gets `{input, event?, previous}` and returns `{values?, events?}`, under the bindings' 10 ms limit. A failure keeps the previous values and is reported like a binding error.
 - **Actions from a sink** go through the output gate and the journal like any other action, with `cause` → the cell's patch, rate-limited with the latest value winning (dataflow §7). High-rate cells are journaled sampled (dataflow §5.1).
 
 ---
 
-## 6. Layer parameters and templates (M9)
+## 6. Parameters and templates (M9)
 
-- **A layer can declare parameters:** `params: { camera: { kind: "target", constraint: { template: "<Camera's ID>" } } }`. Their values live at `layer.<slug>.params.<name>`, and the layer's own bindings, helpers and owned flows read them as `params.<name>` (dataflow §8). Nothing reads them implicitly from another layer or from a free-standing flow ([composition §11.1](composition.md#111-reuse-is-by-parameters-never-by-copying-or-overriding), [composition §11.2](composition.md#112-one-template-primitive-for-four-kinds)).
-- **One layer, a selector row.** The layer's `camera` parameter defaults to `{ref: vars.selectedCam}`, and buttons at the top set that variable. Every binding and action on the layer that uses `params.camera` follows the selection. This is the main "control any camera" layout. Cameras from one plugin can be constrained by plugin instead; cameras from several meet in a composite template ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-proposed)).
-- **Or instances.** "Create from template" makes an **instance** ([composition §7](composition.md)), and one instance with `forEach: {targets: {template: "<Camera's ID>"}}` makes a layer per camera, including cameras added during the show ([composition §4](composition.md)). Instances follow their template: there are no copies to drift. To spread a list over the controls of one layer, a control group (surfaces §6) does it instead.
+- **A component can declare parameters:** `params: { camera: { kind: "target", constraint: { template: "<Camera's ID>" } } }`. Their values live at `<home>.params.<name>`, and the component's own bindings, helpers, children's params and owned flows read them as `params.<name>` (dataflow §8). Nothing reads them implicitly from a container or from a free-standing flow ([composition §11.1](composition.md#111-reuse-is-by-parameters-never-by-copying-or-overriding), [composition §11.2](composition.md#112-one-template-primitive-for-three-kinds)).
+- **One page, a selector row.** A page's `camera` parameter defaults to `{ref: vars.selectedCam}`, and buttons at the top set that variable. Every binding, child and action on the page that uses `params.camera` follows the selection. This is the main "control any camera" layout. Cameras from one plugin can be constrained by plugin instead; cameras from several meet in a composite template ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-proposed)).
+- **Or instances.** "Create from template" makes an **instance** ([composition §1](composition.md)), and one shown instance with `forEach: {targets: {template: "<Camera's ID>"}}` makes a page per camera, including cameras added during the show ([composition §4](composition.md)). Instances follow their template: there are no copies to drift. To spread a list over the controls of one page, a child with `forEach` does it instead ([composition §8.2](composition.md#82-one-child-per-item)).
 
 ---
 
 ## 7. Plugin presets become components (M9)
 
-Manifest `presets` ([plugin protocol §4](plugin-protocol.md#4-manifest)) become **components** ([composition §8](composition.md)): a reusable control with its look, helpers, flows and parameters, such as "tally key" or "record toggle". A component whose `camera` param is constrained to a composite template works for every camera of that template, so placing "tally of the selected camera" needs no typing.
+Manifest `presets` ([plugin protocol §4](plugin-protocol.md#4-manifest)) become **components** ([composition §7](composition.md#7-components)): a reusable key or strip with its look, helpers, flows and parameters, such as "tally key" or "record toggle". A component whose `camera` param is constrained to a composite template works for every camera of that template, so placing "tally of the selected camera" needs no typing.
 
 ---
 
 ## 8. Open questions
 
-1. ~~Should bindings on hidden pages keep evaluating when the page is shown on another surface or a web panel?~~ Decided for M5: "visible" means shown on any attached surface, and a layer's bindings are evaluated once for all of them.
+1. ~~Should bindings on hidden pages keep evaluating when the page is shown on another surface or a web panel?~~ Decided for M5: "visible" means shown on any attached surface, and a component's bindings are evaluated once for all of them.
 2. ~~Should the `rules` kind allow combining conditions with AND/OR, or should more complex logic go to `expr`?~~ Decided by [dataflow §10.1](dataflow.md#101-one-way-to-give-a-value-one-way-to-pick-things): a rule's `when` is a `Source<boolean>`, so `all`, `any` and `not` combine conditions.
 3. Is a visual editor for helpers (curves, ranges, acceleration) needed for v1, or are the form fields enough?
-4. ~~Should value mappings support two-way, such as an encoder that changes a value and also shows it, as one entity?~~ Decided by [surfaces §11.2](surfaces.md#112-surfaces-are-two-way-devices-and-control-input-is-state): one `control_binding` holds the control's helpers and its display bindings, and `follow` keeps the input side in step with state.
+4. ~~Should value mappings support two-way, such as an encoder that changes a value and also shows it, as one entity?~~ Decided by [surfaces §11.2](surfaces.md#112-surfaces-are-two-way-devices-and-control-input-is-state): one control binding holds the control's helpers and its display bindings, and `follow` keeps the input side in step with state.
 
 ---
 
@@ -224,7 +223,7 @@ Why bindings are evaluated and drawn this way, and what was rejected. Keep these
 
 ### 9.2 The structured kinds are evaluated natively
 - **Decided:** `value`, `template`, `rules` and `map` (stateless transforms since M6, dataflow §4.1) are evaluated in Rust, reading the state tree directly, with read sets known when they're saved. `expr` bindings use QuickJS on the turn thread with a 10 ms limit; over it, the binding keeps its fallback and reports `exprTimeout`. Tests evaluate every binding fixture both ways and require the same result, `format`s included, so a new `format` or condition `op` must land in both evaluators.
-- **Why:** the budget from a state change to a redrawn key is 16 ms. M4 measured an expression at ~265 µs in a fresh context, ~190 µs of it parsing the prelude, so a 32-key layer whose bindings all changed would spend ~8.5 ms before drawing anything. Native kinds cost microseconds, leaving the budget for `expr` bindings and drawing.
+- **Why:** the budget from a state change to a redrawn key is 16 ms. M4 measured an expression at ~265 µs in a fresh context, ~190 µs of it parsing the prelude, so a 32-key page whose bindings all changed would spend ~8.5 ms before drawing anything. Native kinds cost microseconds, leaving the budget for `expr` bindings and drawing.
 - **Rejected:**
   - *Every kind through QuickJS:* simpler, but spends the budget on the bindings that need it least.
   - *A bytecode prelude:* halves every evaluation, but needs an `unsafe` exception in the core. Still an option for `expr` if it misses the budget.

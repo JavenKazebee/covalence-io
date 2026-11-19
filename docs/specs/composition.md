@@ -1,20 +1,21 @@
 # Spec: Composition
 
-- **Status:** Draft v0.2
+- **Status:** Draft v0.3
 - **Related:** [dataflow](dataflow.md), [surfaces](surfaces.md), [bindings](bindings.md), [flows](flows.md)
 
-Users build bigger things out of smaller ones, and reuse them by giving them parameters, never by copying and editing. There is **one way to do that**: a **template** declares `params`, and an **instance** binds them (§1). It works the same for four kinds of entity:
+Users build bigger things out of smaller ones, and reuse them by giving them parameters, never by copying and editing. There is **one way to do that**: a **template** declares `params`, and an **instance** binds them (§1). It works the same for three kinds of entity:
 
 | Kind | A template is | An instance is | Its body (§2) | Section |
 |---|---|---|---|---|
 | **Composite connection** | a connection built from others: "Camera" | a connection: "Camera A" | state, actions, events, owned flows | §6 |
-| **Layer** | a layer with `params`: "Camera control" | a layer | control bindings, groups, placements, owned flows | §7 |
-| **Component** | a reusable control: "Tally key" | a **placement** on a layer's controls | slots, bindings, helpers, parts, owned flows | §8 |
+| **Component** | anything on controls, with `params`: a "Tally key", a "Camera strip", a "Camera page" | a component shown on surfaces, or a **child** inside another component | controls, bindings, children, owned flows | §7, §8 |
 | **Flow** | a flow with `params`: "Recorder watchdog" | a flow | steps | §9 |
+
+**A component is whatever is on a set of controls,** at any size: one key, a strip of three, a whole page. It contains other components as children, so a page is made of strips and a strip of keys, and every level works the same way. Pages, shift layers and popovers are components **shown** on surfaces, with a rule for when (§7.3). Where a component sits in the nesting never decides when it's shown ([§11.8](#118-one-component-for-keys-strips-and-pages)).
 
 **Instances take parameters, not overrides.** An instance can't change, add to or remove anything inside its template. Where copies may differ, the template says so with a param, which can hold a whole component or flow (§1.2). If one copy has to differ anywhere else, "Detach" turns it into a plain entity with no link back. That keeps "what does this do?" answerable from one place.
 
-**Markers.** Everything here is **(M9)** ([M9](../milestones/m9-composition.md)) unless marked **(Later)**. Built so far, for flows (§9): params as cells and in scope (§1), flow params (§1.2), `forEach` (§4), the instance chain, its filters, validation and Detach (§5), and batches. Layers, composites and components as templates, owned flows (§2), nesting (§3) and component params aren't yet.
+**Markers.** Everything here is **(M9)** ([M9](../milestones/m9-composition.md)) unless marked **(Later)**. Built so far, for flows (§9): params as cells and in scope (§1), flow params (§1.2), `forEach` (§4), the instance chain, its filters, validation and Detach (§5), and batches. Composites and components as templates, owned flows (§2), nesting (§3) and component params aren't yet. Components replace the `layer` and `control_binding` entities that M5 and M8 built (§7.4); until that lands, the code has layers.
 
 ---
 
@@ -26,27 +27,27 @@ interface ParamDef extends StateSchemaNode {   // type, kind (a target with a co
   required?: boolean;                 // no default and required: the template is abstract
 }
 
-interface TemplateFields {            // on a layer, a composite's CompositeDef, a component, a flow
+interface TemplateFields {            // on a composite's CompositeDef, a component, a flow
   params?: { [name: string]: ParamDef };
 }
 
-interface InstanceFields {            // on a layer, a connection, a placement, a flow
+interface InstanceFields {            // on a connection, a component, a child (§8), a flow
   template: string;                   // the template's ID
   params?: { [name: string]: Source<Value> };  // bound in the placer's scope (dataflow §8)
-  forEach?: ForEach;                  // §4; not on placements, where a control group does it
+  forEach?: ForEach;                  // §4
 }
 ```
 
-- **A template is any entity of the four kinds that declares `params`.** An instance is an entity of the same kind with `template`, plus its own identity (`id`, `name`, `slug` or `alias`) and the fields that say where it appears:
-  - a layer instance: `on`, `when`, `level`, `rank` (surfaces §5)
-  - a placement: `layer` and `controls` (§8)
+- **A template is any entity of the three kinds that declares `params`.** An instance is an entity of the same kind with `template`, plus its own identity (`id`, `name`, `slug` or `alias`) and the fields that say where it appears:
+  - a component instance: `show` (§7.3)
+  - a child: the controls it takes in its container (§8)
   - a flow instance: `enabled`, `owner` (§2)
   - a composite instance: `enabled`
 - **An entity is a template or an instance, never both.** A template can't derive from another template (`templateIsInstance`). It can contain instances (§3).
-- **A template is usable itself where its kind can be** (a layer is shown, a composite connects, a flow runs), with its params' defaults. One with a `required` param and no default is **abstract**: it can only be used through instances, and using it directly is `unboundParam`. A component is always abstract, since it needs controls.
+- **A template is usable itself where its kind can be** (a component with `show` is shown, a composite connects, a flow runs), with its params' defaults. One with a `required` param and no default is **abstract**: it can only be used through instances, and using it directly is `unboundParam`.
 - **Params are sources** ([dataflow §1](dataflow.md)), evaluated reactively in the placer's scope, so an instance can follow state: `camera: {ref: {root: "vars", path: ["selectedCam"]}}`. A param's value is state at `<home>.params.<name>`, where `<home>` is the instance's home (§1.1).
 - **Edits that span a template and its instances are saved together** as one batch, and cells keep their values through an edit when they still fit ([state spec §7.6](state-and-event-log.md#76-editing-a-running-show)).
-- **Editing a template changes every instance at once.** A change an instance can no longer satisfy (a new required param, a type an existing binding doesn't match, a slot that no longer fits) is refused with `badInstance`, listing the instances.
+- **Editing a template changes every instance at once.** A change an instance can no longer satisfy (a new required param, a type an existing binding doesn't match, a control that no longer fits) is refused with `badInstance`, listing the instances.
 - **One module, `covalence_core::compose`,** binds, validates and evaluates instances of every kind. The UI shows one "instance of X, with these params" panel for all of them.
 
 ### 1.1 Homes
@@ -56,10 +57,11 @@ Each instance has a home in the state tree. Its params, cells and owned flows' s
 | Kind | Home | Per item (§4) |
 |---|---|---|
 | Composite | `<alias>` | `<alias>.items[<key>]` |
-| Layer | `layer.<slug>` | `layer.<slug>.items[<key>]` |
-| Placement | `layer.<layer slug>.parts.<slug>` | in a control group: `layer.<layer slug>.groups.<group>.items[<key>]` |
+| Component | `component.<slug>` | `component.<slug>.items[<key>]` |
 | Flow | `flow.<slug>` | `flow.<slug>.items[<key>]` |
-| A nested instance (§3) | `<container's home>.parts.<slug>` | `<container's home>.parts.<slug>.items[<key>]` |
+| A child (§8) | `<container's home>.parts.<slug>` | `<container's home>.parts.<slug>.items[<key>]` |
+
+`component` replaces the `layer` root that M5 and M8 built (§7.4).
 
 ### 1.2 Params that hold a component or a flow
 A template can declare where its instances may differ by more than a value: a param of `kind: "component"` or `kind: "flow"` holds a template, and the body uses it wherever it would name one.
@@ -69,19 +71,19 @@ name: Camera strip
 params:
   camera:    { kind: target, constraint: { template: <Camera's ID> }, required: true }
   recordKey: { kind: component, default: <Record key's ID> }
-parts:
+children:
   rec:
     template: { param: recordKey }
     params: { camera: { ref: { scope: params, path: [camera] } } }
-    slots: { key: rec }
+    controls: { key: rec }
 ```
 
 Cam C's strip binds `recordKey` to another component. It keeps every later fix to "Camera strip", and only its record key differs.
 
-- **Where a body names a component or a flow, it can name a param instead:** `{param: <name>}` as a part's or a placement's `template`, a control group's `use.template`, or a `call` step's `flow`.
+- **Where a body names a component or a flow, it can name a param instead:** `{param: <name>}` as a child's `template`, or a `call` step's `flow`.
 - **The binding is an ID, given as a literal.** It doesn't follow state: `{expr: …}` or `{ref: …}` is `templateNotLiteral`. Changing which component a key is made of rebuilds its cells and flows, so it's an edit, not a value that moves during the show.
 - **What's chosen must fit where it's used,** checked on save for every instance at every depth (`badInstance`):
-  - a component: it has the slots the part or placement maps, with the capabilities they need (`doesNotFit`); every param the use binds is one it declares, of a matching type (`unknownParam`, `badParam`); and its required params are all bound (`unboundParam`)
+  - a component: it has the controls the child maps, with the capabilities they need (`doesNotFit`); every param the use binds is one it declares, of a matching type (`unknownParam`, `badParam`); and its required params are all bound (`unboundParam`)
   - a flow: it has a `call` trigger, and the `call` step's inputs fit its `inputs`, as for any call (flows §8.3)
 - **The instance chain names the template that was chosen** (§5), so `why` shows "Special record key, in Camera strip, camera = Cam C".
 - **`recursiveTemplate` and `tooDeep` follow the bindings,** so a component can't reach itself through a param either.
@@ -90,21 +92,22 @@ Cam C's strip binds `recordKey` to another component. It keeps every later fix t
 
 ## 2. Bodies and owned flows
 
-- **A template's body** is the entity plus everything that belongs to it. Layers own their control bindings, control groups and placements (by their `layer` field) and their owned flows (by `owner`). Composites and components embed theirs, so a plugin can ship a component whole.
-- **The body is evaluated once per instance,** with that instance's `params`. A layer template's bindings and helpers have their cells under each instance: `layer.<instance slug>.controls.<id>.<name>`.
-- **Owned flows** are flows that belong to a layer, a composite or a component:
+- **A template's body** is the entity plus everything that belongs to it. A component embeds its bindings and children (§7, §8), and a composite its state, actions and events. Both own flows (by `owner`).
+- **The body is evaluated once per instance,** with that instance's `params`. A component template's bindings and helpers have their cells under each instance: `<instance's home>.controls.<id>.<name>`.
+- **Owned flows** are flows that belong to a component or a composite:
 
   ```ts
   interface Flow {                    // flows §1, with:
-    owner?: string;                   // a layer or composite ID; components embed theirs as `flows`
+    owner?: string;                   // a component or composite ID
   }
   ```
 
-  - They run **per instance** of their owner. Their status is at `<owner's home>.flows.<slug>`, and their events at `<owner's home>.flows.<slug>:finished`.
+  - In a project, they're `flow` entities with `owner`. A plugin's manifest component carries its flows inline, so a plugin can ship a component whole, and the core loads them as flows it owns.
+  - They run **per instance** of their owner, children included. Their status is at `<owner's home>.flows.<slug>`, and their events at `<owner's home>.flows.<slug>:finished`.
   - Inside them, `params` is the owner instance's (dataflow §8).
-  - Their event triggers can name the owner's parts: `from: {slot: "key"}` in a component, `from: {controls: "k0"}` (the owning layer implied) in a layer.
+  - Their event triggers name the owner's controls: `from: {controls: "key"}`, the owning component implied.
   - An event trigger on the owner matches events from every instance, and each run belongs to the instance the event came from.
-- **Free-standing flows see only their own `params`.** A free-standing flow triggered by a control event gets `trigger.layer` and `trigger.instance` (§5), not the layer's params. A flow that should handle every instance of a layer template is owned by it.
+- **Free-standing flows see only their own `params`.** A free-standing flow triggered by a control event gets `trigger.component` and `trigger.instance` (§5), not the component's params. A flow that should handle every instance of a component is owned by it.
 
 ### 2.1 Params and inputs
 Flows have both, with the same `ParamDef` shape, binding shape and editor:
@@ -124,12 +127,11 @@ Flows have both, with the same `ParamDef` shape, binding shape and editor:
 
   | Container | Can contain |
   |---|---|
-  | Layer | placements (§8), control groups placing a component per item, flow instances it owns |
-  | Component | component instances (`parts`, §8.1), flow instances it owns |
+  | Component | children: component instances on its controls, one or one per item (§8); flow instances it owns |
   | Composite | flow instances it owns. **(Later)** composite instances |
   | Flow | nothing; a flow uses others with `call` |
 
-- **A nested instance binds its params in its container's scope.** `params` is always the innermost instance's own, so a value passes down one visible binding at a time: a "Camera strip" component's tally part gets `camera: {ref: {scope: "params", path: ["camera"]}}`, the strip's own camera.
+- **A nested instance binds its params in its container's scope.** `params` is always the innermost instance's own, so a value passes down one visible binding at a time: a "Camera strip" component's tally child gets `camera: {ref: {scope: "params", path: ["camera"]}}`, the strip's own camera.
 - **No recursion.** A template that contains itself, directly or through others, can't be saved (`recursiveTemplate`). Instances nest at most 16 deep (`tooDeep`).
 - **Editing a nested template** changes it everywhere it's used, at any depth, and the `badInstance` check covers every level.
 
@@ -159,9 +161,9 @@ type ForEach = (
 - **At most 256 items.** Extra items aren't instanced, and the instance reports `tooMany`: how many there are is state at `<home>.tooMany`, gone again once the list fits. The cap guards the turn budget (dataflow §5) against a list bound to the wrong thing, such as a media server's 10,000 clips; no real rig is near it.
 - **Per kind:**
   - **A composite with `forEach`** makes each item a target (§6.4).
-  - **A layer with `forEach`** is one layer per item, each navigated by `{layer, item: key}` ([core actions §3.1](core-actions.md)).
+  - **A shown component with `forEach`** is one shown component per item, each navigated by `{component, item: key}` ([core actions §3.1](core-actions.md)): a page per camera.
+  - **A child with `forEach`** is one child per item, each on the next control of its `over` selector: a key per camera, a grid of ISO values (§8.2).
   - **A flow with `forEach`** is one flow per item, each with its own runs and concurrency: a watchdog per recorder.
-  - **Placements per item** are what a control group does (surfaces §6), since it also decides which control each item takes, and scrolls. Its `use` is an instance without `forEach`.
 - **`forEach` instances nest.** Inside a per-item instance, a nested `forEach` sees its own `item`, not the outer one's. The outer item reaches it through a param.
 
 ---
@@ -174,24 +176,25 @@ type ForEach = (
   type InstanceChain = { template: string; instance: string; key?: PathSegment }[];   // outermost first
   ```
 
-  Runs, steps, actions, cells' patches and events made inside an instance all carry it, and an event's `trigger.instance` is it. It replaces the separate `placement` field, the `<component>/<flow>` run identity and the layer-as-instance of [§11.1](#111-reuse-is-by-parameters-never-by-copying-or-overriding).
+  Runs, steps, actions, cells' patches and events made inside an instance all carry it, and an event's `trigger.instance` is it. It replaces the separate `placement` field and the `<component>/<flow>` run identity planned before it.
 - **The chain holds IDs, never names or values,** so a rename doesn't rewrite history and every entry stays small. The server resolves names when it answers: each link of an entry from `GET /journal` and `why` has `name` and `templateName` from the entities as they are now. **(M9)** One since deleted is named from the op log.
 - **A run records the params it started with:** `run.started` has `params`, the owner instance's bound values at that moment (state spec §2.2). Everything a run does points back to its start, so `why` on an action shows "Tally key, camera = Cam B, in Cameras[camB]", even after the param has moved on and past the memory window. An entry outside a run (a cell's patch, a control event) shows its instances, and their param values only while the patches that set them are still in memory.
 - **Filtering:** `GET /journal` and `GET /runs` take `instance=<id>`, which matches an entry with that instance anywhere in its chain, so "Cameras" gives every camera and "Cam B" gives everything inside it; `key=<key>` narrows to one item of a `forEach` instance; and `template=<id>` matches any instance of that template, at any depth. The timeline and the runs list offer both.
 - **A composite's history is the journal filtered by its instance.** It has no run history or traffic view of its own; its actions' runs and the real devices' traffic are already there.
 - **Validation** (errors block saving):
-  - `badInstance`: a required param unbound, a binding whose type doesn't match the `ParamDef`, a placement whose controls don't fit its slots. When a template is saved, every instance of it at every depth is checked, and the error lists the ones that fail.
+  - `badInstance`: a required param unbound, a binding whose type doesn't match the `ParamDef`, a child whose controls don't fit its template's. When a template is saved, every instance of it at every depth is checked, and the error lists the ones that fail.
   - `unknownTemplate`, `templateIsInstance`, `recursiveTemplate`, `tooDeep`.
   - `unboundParam`: an abstract template used directly.
   - `tooMany` is reported at run time, not at save.
 - **Detach** works the same for every kind. It turns an instance into a plain entity with its template's body copied in and its params left as they were bound, as sources: the template's params become the entity's own, each defaulting to the instance's binding, so the body reads `params` as before. A `forEach` instance detaches to one plain entity per current item, with each item's value written in as a literal (an expression that reads `item` is wrapped in a function that's given it). The editor warns that they won't follow the list anymore. Detach is one-way: for a flow, `POST /flows/{id}/detach` answers `{flows}`.
+- **Detaching a child** copies its template into a new plain component, with no link back, and points the child at the copy, which nothing else uses. The child keeps its params and its controls.
 - **A template with instances can't be deleted** (`409`, naming them). Detach or delete them first.
 
 ---
 
 ## 6. Composite connections
 
-A **composite** is a connection whose definition is a project entity, not a plugin. It has an alias, state, actions and events like any other connection, so nothing downstream knows it's composite. A **composite template** is also the project's own contract for a kind of thing: a layer, binding or flow constrained to it works with every instance, whatever devices each one binds (§6.5).
+A **composite** is a connection whose definition is a project entity, not a plugin. It has an alias, state, actions and events like any other connection, so nothing downstream knows it's composite. A **composite template** is also the project's own contract for a kind of thing: a component, binding or flow constrained to it works with every instance, whatever devices each one binds (§6.5).
 
 ```ts
 interface Connection {
@@ -306,75 +309,106 @@ params:
 
 ---
 
-## 7. Layer templates
+## 7. Components
 
-```ts
-interface Layer {                     // surfaces §1, with:
-  params?: { [name: string]: ParamDef };       // a template (§1)
-  template?: string;                           // or an instance; `params` are then Sources
-  forEach?: ForEach;                           // §4: one layer per item
-}
-```
-
-- **Layer instances keep their own placement fields:** `on`, `when`, `level` and `rank` (surfaces §5) say where an instance appears, not what it is. In a `forEach` instance they're evaluated per item, with `item` in scope.
-- **Bindings, helpers, groups and placements on a template layer** are evaluated once per instance, each with its own `params`.
-- **Events from an instance** carry the instance in `trigger.instance`, and its layer as `trigger.layer`. A flow the template owns (§2) handles them with that instance's `params`: one flow for every camera layer.
-- **An instance can't add bindings** to controls its template leaves unbound. A layer stacked over it does that (surfaces §5).
-- **"Create from template"** makes an instance. **"Detach"** turns one into a plain layer with copies of the template's bindings, groups, placements and owned flows.
-
----
-
-## 8. Components
-
-A **component** is a reusable control: what it looks like, how its input is shaped, and what it does, for one control or a few, with parameters. It's always a template, and its instances are **placements**. Plugins ship them as content with no code ([plugin protocol §13.6](plugin-protocol.md#136-device-drivers-are-plugins-the-core-performs-hardware-io)), replacing manifest `presets`.
+A **component** is whatever is on a set of controls: what they look like, how their input is shaped, and what they do, with parameters. One key, a strip of three keys and a whole page are all components, and bigger ones are made of smaller ones (§8). A component **shown** on surfaces is a page, a shift layer or a popover, by its `show` (§7.3). Plugins ship components as content with no code ([plugin protocol §13.6](plugin-protocol.md#136-device-drivers-are-plugins-the-core-performs-hardware-io)), replacing manifest `presets`.
 
 ```ts
 interface Component extends TemplateFields {   // project entity `component`, or manifest `components`
   id: string;
   name: string;
-  slug: string;
-  slots: LayerControl[];              // the controls it needs, by slot ID: usually one, "key"
-  bindings?: { [slot: string]: {
-    props: { [prop in ControlProp]?: Source<Value> };   // bindings §1
-    helpers?: Helper[];               // bindings §5
-    gestures?: GestureTiming;         // surfaces §4.2
-  } };
-  parts?: { [slug: string]: Part };   // §8.1: components inside this one
-  flows?: OwnedFlow[];                // flows owned by each placement (§2)
+  slug: string;                       // home: component.<slug> (§1.1)
+  controls: ControlSpec[];            // the controls it covers: a page's keys, or a key's one control
+  bindings?: ControlBinding[];        // bindings §1: a control's look, helpers, gestures and input
+  children?: { [slug: string]: Child };   // §8: components on some of its controls
+  show?: Show;                        // §7.3: shown on surfaces; absent, it's only used inside others
+  // as an instance (§1): template, params, and with `show`, forEach
 }
 
-type OwnedFlow = Omit<Flow, "id" | "owner"> & { id: string };   // ID unique within the component
-
-interface Placement extends InstanceFields {   // project entity `placement`; `template` is a component ID
-  id: string;
-  slug: string;                       // home: layer.<layer slug>.parts.<slug>
-  layer: string;
-  controls: { [slot: string]: string };   // slot → the layer's control ID
+interface ControlSpec {               // was a layer's LayerControl and a component's slot
+  id: string;                         // shown: matches a ControlDef.id on the surfaces it fits; used: a name, "key"
+  at?: Placement;                     // where the editor draws it
+  inputs?: InputKind[];               // capabilities it needs the control to have
+  outputs?: OutputKind[];
 }
 ```
 
-- **A placement owns its controls.** A control binding, a group or another placement on one of them is `duplicateControl`. Each slot's control must have the capabilities the slot declares (`badInstance`, with `doesNotFit`).
-- **Params are bound in the layer's scope** (dataflow §8), so a placement on a camera layer passes the layer's camera on: `camera: {ref: {scope: "params", path: ["camera"]}}`.
-- **Owned flows run per placement.** Their event triggers name controls by slot: `from: {slot: "key"}`. Inside them `params` is the placement's. Their status is at `<placement's home>.flows.<flow slug>`.
-- **Helpers in a component** are cells at the placed control: `layer.<layer>.controls.<control>.<name>`, as for a plain binding.
-- **The key editor shows the component and its params** for a placed control, with the chain of containers for a nested one. That answers "what does this key do?" from one place.
-- **A control group places a component per item** (surfaces §6): `use: {template, params}`, with `item`, `index` and `key` in scope for the params.
+### 7.1 Controls and bindings
+- **A component lists the controls it covers,** at most 256, with unique IDs (`duplicateControl`). A shown component's control IDs are the surface's, and it fits a surface that has them all with the capabilities listed (surfaces §5.4). A component used as a child names its own ("key", "tally"), and its container maps them onto its controls (§8).
+- **Each control is covered once:** by one binding, or by one child (`duplicateControl`). A control with neither is blank and ignores input.
+- **Bindings are embedded** in their component, each with its own `id` and `control` (bindings §1), so a helper's cell keeps its identity when the binding moves to another control (dataflow §5.4). A binding's properties must be outputs its control declares (`noOutput`).
+- **Helpers are cells under the component's home:** `<home>.controls.<control>.<name>`, so each instance has its own. With `scope: "surface"` they're at the surface instead (surfaces §4.3).
+- **The key editor shows the chain** for a key inside a child: "Tally key, camera = Cam B, in Camera strip, in Cameras". That answers "what does this key do?" from one place. "Save as component" turns a key's binding into a new one-control component and puts a child in its place.
 
-### 8.1 Parts
+### 7.2 Owned flows and events
+- **Owned flows run per instance,** children included (§2). Their event triggers name the component's own controls: `from: {controls: "key"}`.
+- **An event on a control carries `component`,** the shown component that controlled it when the input arrived (surfaces §5.2), and `instance`, the chain down to the child whose control it is (§5). An event trigger `{component, controls?}` matches input on that component's controls wherever it's shown or used, so one trigger on "Tally key" covers every tally key on every page.
+- **An instance can't add bindings** to controls its template leaves blank. A component shown over it does that (surfaces §5).
+
+### 7.3 Showing a component
 
 ```ts
-interface Part {
-  template: string;                   // a component
-  params?: { [name: string]: Source<Value> };   // bound in this component's scope
-  slots: { [innerSlot: string]: string };       // the part's slot → one of this component's slots
+interface Show {                      // surfaces §5
+  on?: Selector<SurfaceId>;           // surfaces or surface groups it may appear on
+  when?: When;                        // default { nav: "main" }
+  level?: "under" | "normal" | "over";   // default "normal"
+  rank?: Source<number>;              // within the level; default 0
+  cascade?: "replace" | "through";    // default "replace"
 }
 ```
 
-- **A part is a component instance inside another component.** Its slots map onto the outer component's slots, so placing the outer component places every part.
-- **Each slot is covered once:** by a binding of the outer component, or by one part (`duplicateControl`).
-- A part's home is `<placement's home>.parts.<part slug>`, and its helpers' cells are at the placed control, as for any component.
+- **Only components with `show` are candidates** in resolution (surfaces §5.2): for each surface and control, the shown component that wins controls it, sets its look and gets its input. That's the rule M8 built for layers, unchanged.
+- **A child is on wherever its container is.** Children have no `show`. Whether a key is visible is decided once, by the shown component it's in, never by where it sits in the nesting ([§11.8](#118-one-component-for-keys-strips-and-pages)).
+- **`show` belongs to the entity, never to its template.** A template with `show` is shown itself, with its params' defaults, and each instance with `show` is shown as it says. A component used as a child is used, whatever `show` it has itself.
+- **A component instance entity is shown.** Children are written inside their container (§8), so a component with `template` and no `show` would appear nowhere, and is `invalid`.
+- **With `forEach`,** a shown instance is one shown component per item, its `show` evaluated per item with `item` in scope, and navigated by `{component, item: key}` (§4).
+- **The editor names shown components by their preset** (surfaces §5.3): a page, a shift layer, a popover, an overlay, a section. "Layer" survives only in those names.
 
-### 8.2 Example
+### 7.4 What components replace
+
+Components replace the `layer` and `control_binding` entities that M5 and M8 built, and the `placement`, part, `control_group` and layer template that M9 planned. M9 migrates stored projects when it loads them:
+
+| Was | Now |
+|---|---|
+| A `layer` | A component with `show`: `on`, `when`, `level`, `rank` and `cascade` move into it unchanged, and its `controls` stay its controls |
+| A `control_binding` (`layer`, `control`) | A binding in that component's `bindings`, with its `id` and `control`, so its helpers keep their cells |
+| A layer template and its instances | A component template with `show`, and instances with `show` |
+| A `placement` on a layer's controls, a component's `parts` | A child (§8) |
+| A component's `slots` | Its `controls` |
+| A helper's `scope: "layer"` | `scope: "component"` |
+| A `control_group` | A child with `forEach` and `over` (§8.2) |
+| The `layer` state root, `layer.<slug>…` | `component.<slug>…` |
+| `surface.<slug>.layers`, `.controls.<id>.layer`, `.look` | `surface.<slug>.shown`, `.controls.<id>.component`, `.look` naming components |
+| `startLayer` on a surface | `startComponent` |
+| `{layer, controls}`, `{slot}`, `{group}` event sources; `trigger.layer` | `{component, controls}`; `trigger.component` |
+| `navigate {layer}`, `POST /surfaces/{id}/current {layer}` | `{component}` |
+| `/layers`, `/control-bindings` | `/components` (surfaces §9) |
+
+- **Refs and event sources are rewritten** by shape. Expressions that read the `layer` root or `trigger.layer` are rewritten with the parser the `resolutionCycle` check uses (surfaces §5.2); a name built at run time isn't found, and each expression rewritten is listed as a warning so it can be checked.
+- **The migration is one batch** (state spec §7.6), so a project loads as a whole or not at all.
+
+---
+
+## 8. Children
+
+A **child** is a component instance inside another component, on some of its controls. A key on a page, a strip on a page and a key in a strip are all children.
+
+```ts
+type Child = InstanceFields & { slug: string } & (    // template: a component's ID, or {param} (§1.2)
+  | { controls: { [its: string]: string } }          // its controls → this component's controls
+  | { forEach: ForEach;                              // §8.2: one child per item
+      over: Selector<ControlId>;                     // this component's controls, one per item in selector order
+      overflow?: "clip" | "scroll" }
+);
+```
+
+- **A child takes the controls it's given.** Each of its template's controls maps to one of the container's, with at least the capabilities the template lists (`badInstance`, with `doesNotFit`); every one is mapped (`unmappedControl`). Placing a strip places everything inside it.
+- **Params are bound in the container's scope** (dataflow §8), so a child on a camera page passes the page's camera on: `camera: {ref: {scope: "params", path: ["camera"]}}`.
+- **A child's home** is `<container's home>.parts.<slug>`: its params, its helpers' cells under `controls`, its children, and its owned flows' status.
+- **Children nest** at most 16 deep (§3), and a component can't contain itself (`recursiveTemplate`).
+- **A child has no `show`** (§7.3), and no `when` of its own. **(Later)** If real decks need part of a page to change without a separate shown component, a child `when` would be the place, as an open question (§10, question 8).
+
+### 8.1 Example
 
 ```yaml
 name: Tally key
@@ -382,10 +416,11 @@ slug: tallyKey
 params:
   camera: { kind: target, constraint: { template: <Camera's ID> }, required: true }
   label:  { type: string }
-slots:
+controls:
   - { id: key, inputs: [momentary], outputs: [image] }
 bindings:
-  key:
+  - id: look
+    control: key
     props:
       label: { ref: { scope: params, path: [label] } }
       background:
@@ -394,35 +429,61 @@ bindings:
           - { when: { expr: "target(params.camera).tally.program" }, value: "#d00" }
           - { when: { expr: "target(params.camera).tally.preview" }, value: "#0a0" }
         else: "#222"
-flows:
-  - id: select
-    name: Select camera
-    enabled: true
-    triggers: [{ kind: event, from: { slot: key }, event: press }]
-    concurrency: restart
-    body:
-      - { id: pick, kind: set, path: vars.selectedCam, value: params.camera }
+# owned flow, a flow entity with owner: Tally key
+#   triggers: [{ kind: event, from: { controls: key }, event: press }]
+#   body: [{ id: pick, kind: set, path: vars.selectedCam, value: params.camera }]
 ---
 name: Camera strip
 slug: cameraStrip
 params:
   camera: { kind: target, constraint: { template: <Camera's ID> }, required: true }
-slots:
+controls:
   - { id: tally, inputs: [momentary], outputs: [image] }
   - { id: rec,   inputs: [momentary], outputs: [image] }
-parts:
+children:
   tally:
     template: <Tally key's ID>
     params:
       camera: { ref: { scope: params, path: [camera] } }
       label:  { expr: "target(params.camera).name" }
-    slots: { key: tally }
+    controls: { key: tally }
 bindings:
-  rec:
+  - id: rec
+    control: rec
     props:
       label: REC
       background: { use: rules, rules: [{ when: { expr: "target(params.camera).recording" }, value: "#d00" }], else: "#222" }
+---
+name: Cameras
+slug: cameras
+controls: [ k0, k1, … k14 ]                # the deck's keys, as ControlSpecs
+show: { when: { nav: main } }              # a page
+children:
+  camA: { template: <Camera strip's ID>, params: { camera: <Cam A> }, controls: { tally: k0, rec: k5 } }
+  camB: { template: <Camera strip's ID>, params: { camera: <Cam B> }, controls: { tally: k1, rec: k6 } }
+bindings:
+  - { id: back, control: k14, props: { label: Back } }
 ```
+
+### 8.2 One child per item
+
+A child with `forEach` spreads a live list over the container's controls: a key per camera, a grid of ISO values for the selected camera, a row of router inputs. It replaces control groups.
+
+```yaml
+children:
+  isos:
+    template: <ISO key's ID>                       # a component with one control
+    forEach: { items: { expr: "target(vars.selectedCam).iso.options" } }
+    over: { region: { x: 0, y: 1, w: 5, h: 2 } }
+    params: { value: { expr: "item" } }
+    overflow: scroll
+```
+
+- **Each item takes the next control of `over`,** in selector order (dataflow §2). The template has exactly one control (`badInstance`); items beyond the controls are clipped, or scrolled with `overflow: "scroll"`. Controls with no item are blank.
+- **The child owns every control of `over`.** A binding or another child on one of them is `duplicateControl`.
+- **Each item is an instance** at `<container's home>.parts.<slug>.items[<key>]`, created and ended with the list (§4). Nothing is saved per item.
+- **Triggers see the item.** An event from one of its controls carries `item`, `index` and `key` in `trigger`, so one flow owned by the template, or one trigger on the container's controls, handles the whole grid.
+- **`overflow: "scroll"`** keeps the offset at `<container's home>.parts.<slug>.offset`. Flows or keys outside the child move it.
 
 ---
 
@@ -439,13 +500,14 @@ bindings:
 
 ## 10. Open questions
 
-1. ~~Should components nest?~~ Decided: yes, as `parts`, with params bound in the outer component's scope.
-2. ~~Should an instance be allowed to add bindings to controls its template leaves unbound?~~ Decided: no. A layer stacked over it does that.
+1. ~~Should components nest?~~ Decided: yes, as children, with params bound in the outer component's scope (§8, §11.8).
+2. ~~Should an instance be allowed to add bindings to controls its template leaves unbound?~~ Decided: no. A component shown over it does that.
 3. ~~Do composites need their own run history and traffic view in the UI, or is the journal, filtered by `instance`, enough?~~ Decided: the journal filtered by `instance` (§5).
-4. Should surfaces, control groups, variables and sources become template kinds? A **source template** (a `Source` with `params`) would let a configured chain, such as "audio taper with a dead zone" or "seconds remaining → `MM:SS`, amber under 60 s", be named and reused without writing a project transform in JS. Or are layers, composites, components and flows enough until real projects ask?
+4. Should surfaces, variables and sources become template kinds? A **source template** (a `Source` with `params`) would let a configured chain, such as "audio taper with a dead zone" or "seconds remaining → `MM:SS`, amber under 60 s", be named and reused without writing a project transform in JS. Or are composites, components and flows enough until real projects ask?
 5. ~~Is 256 the right `forEach` limit, or should it follow the turn budget, as dataflow open question 4 asks for cell depth?~~ Decided: a fixed 256 (§11.3).
 6. ~~**Params that hold a template.** Should a `ParamDef` be able to hold a component, a flow or a source, so a template declares where it can vary?~~ Decided: a component or a flow (§1.2). A source waits on source templates (question 4).
 7. ~~**How a `forEach` composite's items are targets** (§6.4).~~ Decided: each is a connection with an ID derived from the instance and the key, its home as its alias, listed with the connections (§6.4, §11.4).
+8. **Children that come and go.** Part of a page that changes while the rest stays (a folder in one region, Bitfocus Buttons' sections) is a separate shown component today: a section preset (surfaces §5.3). Should a child have a `when` instead? It would make visibility depend on nesting again, which §11.8 rejects, so it waits for a real deck that a shown component handles badly.
 
 ---
 
@@ -463,8 +525,8 @@ Why composition works this way, and what was rejected. Keep these notes when the
   - *Templates derived from templates:* each level becomes a partial override, and the chain comes back.
   - *Components as plain flows and bindings with a naming convention:* nothing ties them together, so neither the editor nor a plugin can treat them as one thing.
 
-### 11.2 One template primitive for four kinds
-- **Decided:** layers, composites, components and flows are all templates the same way, and one module binds, validates and evaluates instances of every kind, with one identity in the journal (`instance` chains), one `badInstance`, one Detach and one UI panel. Owned flows run per instance with its params, and free-standing flows see only their own. Flows keep `inputs` beside `params`: params are bound where an instance is placed and follow state; inputs are bound per invocation, and a run isn't an instance.
+### 11.2 One template primitive for three kinds
+- **Decided:** composites, components and flows are all templates the same way, and one module binds, validates and evaluates instances of every kind, with one identity in the journal (`instance` chains), one `badInstance`, one Detach and one UI panel. Owned flows run per instance with its params, and free-standing flows see only their own. Flows keep `inputs` beside `params`: params are bound where an instance is placed and follow state; inputs are bound per invocation, and a run isn't an instance. There were four kinds until layers became components (§11.8).
 - **Why:** M9 had planned four mechanisms (layer templates, component placements, composite templates, flows with inputs) that would each build their own binding, scope, evaluation, identity, validation and Detach. That's the problem sources and selectors fixed for values (dataflow §10.1): the copies drift, and users learn four editors for one idea. Built once, nesting and per-item instances work for every kind, and a new kind only needs its body defined.
 - **Rejected:**
   - *Four mechanisms:* each simpler alone, every later improvement built four times.
@@ -472,8 +534,8 @@ Why composition works this way, and what was rejected. Keep these notes when the
   - *Merging flow `inputs` into `params`:* every call would create an instance with a state home and a lifetime, for something that already has a run.
 
 ### 11.3 One instance per item of a live list
-- **Decided:** `forEach` makes one instance per item of a list or target selector (§4), keyed so a reorder doesn't reset them, created and removed with the list and journaled with `cause`, at most 256. Each item of a composite with `forEach` is a target. A control group is the `forEach` of placements.
-- **Why:** lists that change while the show runs were handled in one place only (control groups). A composite per camera, a layer per deck or a watchdog flow per recorder would otherwise need a copy per item. Per-item instances are never saved: the entity is the one `forEach` instance and its items come from state, so the core still never edits the project.
+- **Decided:** `forEach` makes one instance per item of a list or target selector (§4), keyed so a reorder doesn't reset them, created and removed with the list and journaled with `cause`, at most 256. Each item of a composite with `forEach` is a target. A child with `forEach` spreads its items over its container's controls (§8.2), which replaces control groups.
+- **Why:** lists that change while the show runs were handled in one place only (control groups). A composite per camera, a page per camera or a watchdog flow per recorder would otherwise need a copy per item. Per-item instances are never saved: the entity is the one `forEach` instance and its items come from state, so the core still never edits the project.
 - **Rejected:** per-item copies made by the editor; copies don't follow the list while the show runs.
 - **The cap is a fixed 256.** It's there so a list bound to the wrong thing (10,000 clips rather than 6 cameras) reports `tooMany` and the show keeps running, rather than every turn stalling while thousands of instances are built.
   - *A cap set per instance:* a setting nobody needs until a real rig is over 256, and it can be added then.
@@ -481,13 +543,13 @@ Why composition works this way, and what was rejected. Keep these notes when the
 
 ### 11.4 Composite connections
 - **Decided:** a composite is a connection (plugin `core.composite`) defined in the project, with params, state as cells, actions that run a flow or forward to another target, and re-emitted events (§6). A composite template is the contract that a constraint names (§6.5). Nothing downstream knows it's composite. Causation runs through it, so `why` reaches the real device, and its actions are `internal` while the actions they cause are gated themselves.
-- **Why:** a "camera" on a show is several devices: PTZ from one connection, tally from the switcher, record state from a recorder, an iris from a CCU. A composite makes "Camera A" one target. Its template gives every camera the same shape, so one layer or flow works with all of them, and devices from different plugins are bridged in the template, where users can see and change it, without writing a plugin. A composite's state is only as fresh as what it reads.
+- **Why:** a "camera" on a show is several devices: PTZ from one connection, tally from the switcher, record state from a recorder, an iris from a CCU. A composite makes "Camera A" one target. Its template gives every camera the same shape, so one component or flow works with all of them, and devices from different plugins are bridged in the template, where users can see and change it, without writing a plugin. A composite's state is only as fresh as what it reads.
 - **Rejected:**
   - *Aggregator plugins:* hand-written per combination, and the journal sees only the aggregator.
   - *Device interfaces that composites implement, with `delegate` to pass a whole interface through:* dropped with device interfaces themselves ([plugin protocol §13.9](plugin-protocol.md#139-dynamic-targets-proposed)). Without them, a template declares each action it offers, which is more typing for a composite that only passes a PTZ through, and keeps its shape the same whatever an instance binds.
   - *Standalone interface implementations* (an entity mapping a connection onto an interface): moot without device interfaces; a composite does the mapping.
   - *Targets spanning several connections* (`{conn: [a, b]}`): every place that resolves a target would merge state and route actions.
-  - *Layer parameters only:* every layer, binding and flow repeats the wiring, and nothing can select "a camera" as one thing.
+  - *Component parameters only:* every component, binding and flow repeats the wiring, and nothing can select "a camera" as one thing.
 - **Each item of a `forEach` composite is a connection** (§6.4), with an ID derived from the instance and the key, its home as its alias, and a read-only entry in the connections list. Targets stay `{conn}` everywhere, so the gate, the journal, constraints and the editor don't learn a second kind.
   - *Items as `{conn, key}` targets:* the shape plugin protocol §13.9 rejected for plugins, for the same reasons.
   - *A random ID per item:* it would change on every restart, since items are never saved (§4), so a stored target would stop pointing at its camera.
@@ -515,3 +577,14 @@ Why composition works this way, and what was rejected. Keep these notes when the
   - *IDs only, with params read back from state history:* params are cells, kept only in memory (state spec §2.4), so on a Pi the answer would be gone within the hour.
   - *Params on every entry made inside an instance:* every cell patch and event made heavier, for entries whose question is rarely "with which params?".
   - *Names in the chain:* a rename would leave history naming something that no longer exists, and every entry grows.
+
+### 11.8 One component for keys, strips and pages
+- **Decided:** a component is whatever is on a set of controls, at any size, and contains other components as children (§7, §8). It replaces layers, control bindings as entities, placements, parts, control groups and layer templates (§7.4). **Containment recurses; activation doesn't.** Only components with `show` take part in resolution, by the flat rule of surfaces §5.2 (`when`, level, rank, recency); a child is on wherever its container is, and has no `when`. Bindings are embedded in their component, each keeping an `id`. A child with `forEach` spreads a list over its container's controls. Composites stay their own kind. The `layer` state root becomes `component`.
+- **Why:** putting something on keys took seven nouns, each with its own fields, rules and editor: a binding for one key, a component for a reusable key, a placement to put it on a layer, a part to put it in another component, a layer for a page, a layer template to reuse a page, and a control group to fill keys from a list. They're one idea at different sizes. With one, users learn "a component covers controls, can contain components, takes params, and can repeat", and pages, shift layers and popovers are presets of when it's shown. Only layers and control bindings were built, so the change costs one migration.
+- **Rejected:**
+  - *Keeping the seven:* every improvement (a new capability check, a scroll mode, `why` through nesting) built for each, and a key editor that changes shape with what the key happens to be.
+  - *Activation by position in the tree* (a child `when`, or switch nodes as in SKAARHOJ Reactor): surfaces §11.3 rejected it, and the reasons hold. Moving a branch in the editor would change the show, and "the last mode turned on wins" or a strip under every page don't fit a tree. The tree preset (surfaces §5.3) stays a way to write `when`, not a structure resolution walks.
+  - *Inline component bodies in children:* a second way to write a key beside a binding. A repeated child names a component; the editor makes one from a key in one step.
+  - *Bindings and children as their own entities pointing at their container,* as `control_binding` and `placement` were: two shapes for the same thing, a plugin's component and a project's page stored differently, and one key's meaning spread across rows.
+  - *Composites as components with no controls:* a composite is a device you build, targeted by actions and constraints; a component is what's on keys. Merging them would make every component a possible target.
+  - *Keeping the `layer` root and naming:* two names for one thing in every expression, path and API, for the sake of a migration that's needed anyway.

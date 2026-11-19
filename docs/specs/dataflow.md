@@ -3,7 +3,7 @@
 - **Status:** Draft v0.1
 - **Related:** [bindings](bindings.md), [surfaces](surfaces.md), [flows](flows.md), [state and event log](state-and-event-log.md), [composition](composition.md)
 
-This spec defines the small set of primitives that everything reactive in Covalence is built from. Bindings, helpers, layer fields, state triggers, variables and composite connections are all combinations of them.
+This spec defines the small set of primitives that everything reactive in Covalence is built from. Bindings, helpers, `show` fields, state triggers, variables and composite connections are all combinations of them.
 
 | Primitive | Is | Section |
 |---|---|---|
@@ -38,7 +38,7 @@ type Source<T> =
 type Ref =
   | { conn: string; path: Path }              // a connection's state, ID form (state spec §1.1)
   | { target: Source<Target>; path: Path }    // through a target (plugin protocol spec §13.9)
-  | { root: "vars" | "sys" | "surface" | "layer" | "flow"; path: Path }
+  | { root: "vars" | "sys" | "surface" | "component" | "flow"; path: Path }   // (M9) `component` was `layer`
   | { scope: string; path: Path };            // (M9) a scope name (§8): params, item, self
 
 type Expr = string;
@@ -54,7 +54,7 @@ type Path = PathSegment[];                    // plugin protocol spec §13.3
 - **In Rust,** `Source<T>` is an enum of `Literal(T)`, `Ref`, `Expr` and `Use(Transform)`, each source form carrying `fallback: Option<T>`. `{value}` folds into `Literal` and is added back on serialisation when the literal would read as a source, so stored JSON round-trips. `Deserialize` is written by hand: it buffers the value, dispatches on the reserved key, and deserializes `T` only for literals. `Transform` is a `#[serde(tag = "use", deny_unknown_fields)]` enum, given the object without `fallback`. Not `#[serde(untagged)]`: it tries each variant in turn, reports only "did not match any variant", and accepts a misspelled source as a literal whenever `T` is an object or any value.
 
 ### 1.2 Evaluation
-- **One evaluator for every source.** Reactive positions (display bindings, layer fields, state triggers, cells) re-evaluate when their reads change (§5.3). One-shot positions (an action step's parameters, `wait.for`) evaluate once, when the step starts. The result is the same either way.
+- **One evaluator for every source.** Reactive positions (display bindings, `show` fields, state triggers, cells) re-evaluate when their reads change (§5.3). One-shot positions (an action step's parameters, `wait.for`) evaluate once, when the step starts. The result is the same either way.
 - **Reads are tracked at run time** ([flows §11.2](flows.md#112-expressions-and-scripts-one-language-sandboxed-by-where-code-runs)), through `ref`, `expr`, `target()` and every transform's own sources.
 - **`undefined` or a failure gives `fallback`,** then the position's default. Failures are reported with the position's path (`["props", "label"]`) and rate-limited, as for bindings now.
 - **Literals cost nothing:** a literal is never evaluated, read-tracked or journaled.
@@ -70,7 +70,7 @@ type Path = PathSegment[];                    // plugin protocol spec §13.3
 | `{expr}` action parameters | `Source<T>` per parameter |
 | `wait.for: Duration \| {expr}` | `Source<Duration>` |
 | `TargetSpec` `{conn} \| {expr, constraint}` | `target: Source<Target>`, and `constraint` beside it when the target isn't a literal |
-| A layer's `rank: number \| {expr}`, `when: {while} \| {expr}` | `Source<number>`, `Source<boolean>` (surfaces §5) |
+| A layer's (now a shown component's) `rank: number \| {expr}`, `when: {while} \| {expr}` | `Source<number>`, `Source<boolean>` (surfaces §5) |
 
 ---
 
@@ -91,17 +91,17 @@ type Selector<Id> =
 
 | Domain | `Id` | Extra forms | Universe for `not` |
 |---|---|---|---|
-| **Controls** | a control ID | `{region: Rect}`, `{near: "left" \| "right" \| "above" \| "below", of: string}`, `{has: {inputs?, outputs?}}` | the controls of the layer, surface or group it's on |
+| **Controls** | a control ID | `{region: Rect}`, `{near: "left" \| "right" \| "above" \| "below", of: string}`, `{has: {inputs?, outputs?}}` | the controls of the component or surface it's on |
 | **Targets** | `Target` (`{conn}`; a string is a connection ID) | `{plugin: string}`, `{template: string}` (M9) | every connection |
 | **Paths** | `Ref` | `{match: PathPattern}` | none: `not` only inside `all` |
 | **Entities** | an entity ID | `{tag: string}` (Later) | every entity of the type |
 
-- **Controls are resolved per surface.** A layer's `controls: {region}` covers whatever controls lie in the rectangle on each surface (surfaces §2). `has` filters by capability: `{has: {inputs: ["relative"]}}` is every encoder.
+- **Controls are resolved per surface.** A shown component's `controls: {region}` covers whatever controls lie in the rectangle on each surface (surfaces §2). `has` filters by capability: `{has: {inputs: ["relative"]}}` is every encoder.
 - **`{template}` resolves to every instance of a composite template,** or each item of a `forEach` instance (composition §6.5).
 - **`PathPattern`** is a text path where `*` matches one segment: `surface.*.controls.*.pressed`. The segments it matched are its **captures**, in order.
 - **Reactive selectors re-resolve** when their reads change, or when the domain changes: a control attaches, a connection is created, a composite instance gains an item.
-- **Order is stable:** a selector's result is in the domain's order (controls by `at`, row-major; targets and entities by ID), so a control group's items line up the same way every time.
-- **Validation:** an ID that doesn't exist is an error (`unknownControl`, `unknownConnection`, `unknownLayer` …), except inside `expr`, where it resolves to nothing at run time.
+- **Order is stable:** a selector's result is in the domain's order (controls by `at`, row-major; targets and entities by ID), so a repeated child's items line up the same way every time.
+- **Validation:** an ID that doesn't exist is an error (`unknownControl`, `unknownConnection`, `unknownComponent` …), except inside `expr`, where it resolves to nothing at run time.
 
 ---
 
@@ -113,12 +113,12 @@ Every event happens **at a node in the state tree** and has a **name**. The text
 |---|---|---|
 | A connection's | its root, or a node under it (`at`, plugin protocol §6) | `pp:timerEnded`, `vh.outputs["SDI 4"]:routeChanged` |
 | A control's input | the control | `surface.deck.controls.k3:press`, `surface.mixer.controls.dial1:turn` |
-| A transform's (M8) | its cell (§5) | `vars.armed:on`, `layer.cams.controls.dial1.camera:select` |
+| A transform's (M8) | its cell (§5) | `vars.armed:on`, `component.cams.controls.dial1.camera:select` |
 | A flow's | the flow | `flow.preService:started`, `flow.preService:finished`, `flow.preService:failed` |
 | A composite's (M9) | the composite's root | `camA:tallyChanged` |
 | The core's | `sys` | `sys:startup` with `{reason: boot \| failover}` |
 
-- **Events are journaled as one kind,** `event` ([state spec §2.2](state-and-event-log.md)), with the node's path in ID form, the name, the payload and its context: `surface`, `layer`, `control` and `item` for control input; `conn` for a target's. `input.event` is folded into it.
+- **Events are journaled as one kind,** `event` ([state spec §2.2](state-and-event-log.md)), with the node's path in ID form, the name, the payload and its context: `surface`, `component`, `control` and `item` for control input; `conn` for a target's. `input.event` is folded into it.
 - **The payload is the event's own data:** `{delta}` for `turn` and `hold`, `{value}` for `change`, the `EventDef` payload for a plugin's.
 
 ### 3.1 Event sources
@@ -135,16 +135,14 @@ interface EventSpec {
 type EventSource =
   | { path: Selector<Ref> }                                   // any node(s); {match} for patterns
   | { target: Selector<Target> }                              // connections, items, plugins, composite templates
-  | { layer: string; controls?: Selector<ControlId> }         // the controls a layer controls, per surface
-  | { surface: string; controls?: Selector<ControlId> }       // whatever layer controls them
-  | { group: string }                                         // (Later) any control in a control group
-  | { slot: string }                                          // (M9) inside a component: one of its slots
-  | { controls: Selector<ControlId> };                        // (M9) in a flow a layer owns: that layer's controls
+  | { component: string; controls?: Selector<ControlId> }     // a component's controls, wherever it's shown or used, per surface (M8: `layer`)
+  | { surface: string; controls?: Selector<ControlId> }       // whatever component controls them
+  | { controls: Selector<ControlId> };                        // (M9) in a flow a component owns: its controls
 ```
 
-- **Every form reduces to a path pattern and a context filter.** `{layer: L, controls: [k0]}` is `{path: {match: "surface.*.controls.k0"}}` where the event's `layer` is `L`. `{target: {template: T}}` is the roots of every instance of `T` and their items. The matcher indexes them, so a trigger costs nothing until its events happen.
-- **The `trigger` payload is the same for every event:** `{path, event, payload, captures?, source?, surface?, layer?, control?, item?, index?, instance?}`. `source` is the target, for target events. `captures` are the pattern's matches. **(M9)** `instance` is the chain of instances the event came from ([composition §5](composition.md)).
-- **A `layer` source matches per surface,** on whichever surfaces that layer controlled the control when the input arrived, as `control` triggers did (surfaces §7).
+- **Every form reduces to a path pattern and a context filter.** `{component: C, controls: [k0]}` is `{path: {match: "surface.*.controls.*"}}` where `C` is the event's `component` or in its `instance` chain, on C's control `k0`. `{target: {template: T}}` is the roots of every instance of `T` and their items. The matcher indexes them, so a trigger costs nothing until its events happen.
+- **The `trigger` payload is the same for every event:** `{path, event, payload, captures?, source?, surface?, component?, control?, item?, index?, instance?}`. `source` is the target, for target events. `captures` are the pattern's matches. **(M9)** `instance` is the chain of instances the event came from ([composition §5](composition.md)).
+- **A `component` source matches per surface,** on whichever surfaces that component had the control when the input arrived, as `control` triggers did (surfaces §7).
 
 ---
 
@@ -247,7 +245,7 @@ A **cell** is a source with a home in the state tree. It's how a computed or acc
 | Cell | Home | Defined by |
 |---|---|---|
 | A variable (§6) | `vars.<slug>` | the `variable` entity's `value` |
-| A control's helper | `layer.<slug>.controls.<id>.<name>`, or with `scope: "surface"`, `surface.<slug>.controls.<id>.helpers.<name>` | a control binding's `helpers` (bindings §5) |
+| A control's helper | `<component's home>.controls.<id>.<name>`, or with `scope: "surface"`, `surface.<slug>.controls.<id>.helpers.<name>` | a control binding's `helpers` (bindings §5) |
 | A composite's state (M9) | `<alias>.<path>`, or per item `<alias>.items[<key>].<path>` | the composite's `state` (composition §6) |
 
 ### 5.1 Writing
@@ -270,11 +268,11 @@ A **cell** is a source with a home in the state tree. It's how a computed or acc
 - **A standby that falls further behind than the in-memory window** (state spec §2.4) can't catch up from disk, which has no derived entries. It takes a fresh state snapshot from the leader, cells and `reducer` metadata included, and then follows the live stream.
 
 ### 5.3 The graph and the scheduler turn
-- **Every reactive source is a node** in one graph: cells, display bindings, layer fields, state triggers, `waitUntil` steps and sinks. Edges are read sets, replaced after each evaluation.
+- **Every reactive source is a node** in one graph: cells, display bindings, `show` fields, state triggers, `waitUntil` steps and sinks. Edges are read sets, replaced after each evaluation.
 - **One turn:**
   1. Apply the turn's patches and events (state spec §1.5).
   2. Evaluate dirty cells in dependency order; a cell's new value dirties its readers in the same turn.
-  3. Then, against the settled state: layer resolution (surfaces §5.2), display bindings, state triggers and `waitUntil`, and sinks (§7).
+  3. Then, against the settled state: resolution of shown components (surfaces §5.2), display bindings, state triggers and `waitUntil`, and sinks (§7).
 - **Cycles.** A cell that would be evaluated a second time in one turn is on a cycle. Every cell on it keeps its previous value and reports `cycle`, until a later turn breaks the cycle. Saving a definition whose static reads already form a cycle is an error (`cycle`).
 - **The budgets stand:** a state change to a redrawn key in under 16 ms, including any cells in between.
 - **Where it runs (M8 Phase 2).** The graph settles inside the state tree's turn: a writer's patch and the cells it moves are published as one dirty set, so bindings, triggers and `waitUntil` never see a cell lag its input. Events, wakes and edits start turns of their own.
@@ -282,7 +280,7 @@ A **cell** is a source with a home in the state tree. It's how a computed or acc
 ### 5.4 Kept state through edits
 How [state spec §7.6](state-and-event-log.md#76-editing-a-running-show)'s rule applies to cells. It's the same rule when a persisted variable is restored after a restart.
 
-- **A cell is identified by its entity, never by its path:** a variable by its ID, and a helper by its control binding's ID and its key in `helpers`. Renaming a variable's slug, or moving a binding to another control or layer, keeps the cell. Renaming a helper's key, or deleting and recreating its binding, makes a new one.
+- **A cell is identified by its entity, never by its path:** a variable by its ID, and a helper by its component's ID, its binding's ID and its key in `helpers`. Renaming a variable's slug, or moving a binding to another control of its component, keeps the cell. Renaming a helper's key, or deleting and recreating its binding, makes a new one.
 - **The cell keeps its value and state** when both of these hold after the edit:
   - it has the same transform: the same `use` at the same `version` (`toggle@1` is still `toggle@1`)
   - its value still validates against the transform's `result` and, for a variable, its `schema`
@@ -344,31 +342,30 @@ type Sink =
 
 ---
 
-## 8. Scope (M9 for `params`, `self` beyond layers, and `forEach`)
+## 8. Scope (M9 for `params`, `self` beyond `show` fields, and `forEach`)
 
 What an expression or `{scope}` ref can name depends on where it's evaluated. **Nothing is inherited implicitly:** a container that needs a value from around it declares a parameter, and whoever places it binds that parameter, the way a function takes arguments.
 
 | Name | In | Is |
 |---|---|---|
-| state roots | everywhere | `<alias>`, `vars`, `sys`, `surface`, `layer`, `flow` |
+| state roots | everywhere | `<alias>`, `vars`, `sys`, `surface`, `component`, `flow` |
 | `trigger`, `input`, `local`, `steps`, `error`, loop `<as>` and `index` | flows | flows §3 |
-| `params` | the body of a template: a layer, a composite, a component, a flow, and the flows they own | the **own** instance's parameters ([composition §1](composition.md)). In a nested instance, the innermost one's. A free-standing flow sees only its own |
-| `self` | a layer's fields | the surface being resolved (surfaces §5.2) |
-| `self` | a control binding, a helper, a placement | `{surface, layer, control}`: where it's being evaluated |
-| `item`, `index`, `count`, `key` | a control group | the item the control shows (surfaces §6) |
-| `item`, `index`, `key` | an instance's `params` and placement fields, when it has `forEach` | the item this instance is for ([composition §4](composition.md)). Not inside the body |
+| `params` | the body of a template: a composite, a component, a flow, and the flows they own | the **own** instance's parameters ([composition §1](composition.md)). In a nested instance, the innermost one's. A free-standing flow sees only its own |
+| `self` | a shown component's `controls` and `show` fields | the surface being resolved (surfaces §5.2) |
+| `self` | a control binding, a helper, a child's params | `{surface, component, control}`: where it's being evaluated |
+| `item`, `index`, `key` | an instance's `params` and `show`, when it has `forEach` | the item this instance is for ([composition §4](composition.md)). Not inside the body |
 
-- **`self` in a layer's fields** is a name in expressions for `surface.<slug>` of the surface being resolved, and reads through it are tracked at their real paths. A connection alias can't be `self`.
+- **`self` in `show` fields** is a name in expressions for `surface.<slug>` of the surface being resolved, and reads through it are tracked at their real paths. A connection alias can't be `self`.
 - **`{ref: {scope, path}}`** names one of these where it's in scope: `params`, `self` or `item`. `params` and `self` are state, read and tracked at their real paths (`params` at the instance's home, composition §1.1); `item`, `index` and `key` are values, not state, so an expression reading them re-evaluates when the list does. A scope ref where its name isn't in scope is `notInScope` on save, and naming a param that isn't declared is `unknownParam`.
-- **`params` replaces the `layer.params.<name>` shorthand** of [bindings §6](bindings.md), which collided with a layer whose slug is `params`. The absolute path is `layer.<slug>.params.<name>`.
-- **Placing binds parameters in the placer's scope.** A component placed on a layer gets `params: {camera: {ref: {scope: "params", path: ["camera"]}}}`, which reads the layer's `camera`; inside the component, `params.camera` is its own. The same holds at every level of nesting, and for every template kind ([composition §11.2](composition.md#112-one-template-primitive-for-four-kinds)).
+- **`params` replaces the `layer.params.<name>` shorthand** once planned in [bindings §6](bindings.md), which collided with a layer whose slug is `params`. The absolute path is `<home>.params.<name>`.
+- **Placing binds parameters in the placer's scope.** A child on a page gets `params: {camera: {ref: {scope: "params", path: ["camera"]}}}`, which reads the page's `camera`; inside the component, `params.camera` is its own. The same holds at every level of nesting, and for every template kind ([composition §11.2](composition.md#112-one-template-primitive-for-three-kinds)).
 
 ---
 
 ## 9. Open questions
 
 1. Should a transform be able to read the previous value of any source (`previous(x)`), or is that always a reducer?
-2. Should `Selector<Entities>` get tags (`{tag: "foh"}`) for surfaces and layers, and are tags their own entity?
+2. Should `Selector<Entities>` get tags (`{tag: "foh"}`) for surfaces and components, and are tags their own entity?
 3. Should sinks support `when` (only send while armed), or is a `rules` source that gives `undefined` (which sends nothing) enough?
 4. Is 16 levels of cell depth a sensible limit, or should depth only be bounded by the turn budget?
 
@@ -380,7 +377,7 @@ Why dataflow has these primitives, and what was rejected. Keep these notes when 
 
 ### 10.1 One way to give a value, one way to pick things
 - **Decided:** `Source<T>` (§1) is the one shape for a value that may follow state, with one serde type, one evaluator with run-time read tracking, one typing rule and one editor widget. Sources are recognised by shape, only where the schema says so, and a reserved key commits an object to being one (§1.1). `Selector<Id>` (§2) is the one shape for picking things, resolved by one module. A dynamic target is `target: Source<Target>` plus a constraint. The old binding kinds became stateless transforms, so conditions combine with `all`, `any` and `not`.
-- **Why:** "a literal, a state path or an expression" had been defined six times (binding kinds, helper options, `{expr}` parameters, `wait.for`, layer fields, targets) and "which things" four times, each a little differently. Every new form would have had to be added to each copy, and users met a different widget for the same idea in each place. Now a new selector form or transform is available everywhere at once.
+- **Why:** "a literal, a state path or an expression" had been defined six times (binding kinds, helper options, `{expr}` parameters, `wait.for`, layer fields (now `show`), targets) and "which things" four times, each a little differently. Every new form would have had to be added to each copy, and users met a different widget for the same idea in each place. Now a new selector form or transform is available everywhere at once.
 - **Rejected:**
   - *Keeping each shape local:* every form built and documented several times, and the copies drift.
   - *Expressions only:* code for everything, no forms or literal type checks in the editor, and no native fast path.
@@ -395,7 +392,7 @@ Why dataflow has these primitives, and what was rejected. Keep these notes when 
   - *Addressing by entity ID:* IDs don't nest, so patterns over collections (`vh.outputs.*`) are impossible. The journal stores paths in ID form anyway.
 
 ### 10.3 Sources, transforms and sinks; helpers are transforms
-- **Decided:** three primitives: sources, transforms (stateless, and reducers that keep a value and step on events or input changes) and sinks (a control output, a writable variable, or one action parameter, rate-limited with the latest value winning). A **cell** is a source with a home in the state tree; a reducer can only be a cell's source. Cells are evaluated in dependency order within one turn, before layer resolution, bindings, triggers and sinks see settled state; a cell evaluated twice in a turn is on a cycle and keeps its previous value with `cycle`. Variables are declared entities that can be computed. **A helper is a reducer on a control's binding**, and its `to` is any cell's sinks.
+- **Decided:** three primitives: sources, transforms (stateless, and reducers that keep a value and step on events or input changes) and sinks (a control output, a writable variable, or one action parameter, rate-limited with the latest value winning). A **cell** is a source with a home in the state tree; a reducer can only be a cell's source. Cells are evaluated in dependency order within one turn, before resolution of shown components, bindings, triggers and sinks see settled state; a cell evaluated twice in a turn is on a cycle and keeps its previous value with `cycle`. Variables are declared entities that can be computed. **A helper is a reducer on a control's binding**, and its `to` is any cell's sinks.
 - **Sinks keep things in step; flows do things in order.** A sink never runs steps. "When X, do A then B" stays a flow.
 - **Why:** bindings, helpers, layer `when` and `rank`, `state` triggers and `follow` were each planned with their own evaluator, options and validation, and they're the same idea: a value computed from state, sometimes with memory, sent somewhere. Helpers existed only on controls, so a GPIO contact, an OSC fader or a MIDI note couldn't use a `toggle` or a `position`, and variables could only be written by flows. Now any state can latch or drive a speed, computed variables replace "copy this into a variable" flows and show `why`, and one evaluator, graph and cycle rule replace four. The costs: the 16 ms budget covers cells between a change and a key, and every cell change is a journal patch (sampling bounds the high-rate ones).
 - **Rejected:**
