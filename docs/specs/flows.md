@@ -175,7 +175,7 @@ Types are checked **when editing**. Values stay dynamic at runtime.
   - the state schema and plugin manifests, as in [§11.2](#112-expressions-and-scripts-one-language-sandboxed-by-where-code-runs)
   - for a dynamic target, the constraint's actions: the plugin's manifest or the composite template's actions
 - Action `params` are checked against the action's schema, taken from the target's constraint when the target is dynamic.
-- **Errors block publishing. Warnings don't.** Drafts can be saved with errors ([state spec §7.5](state-and-event-log.md#75-multi-user-editing-designed-not-built)).
+- **Errors block saving. Warnings don't.**
   - Errors: unknown action, missing required parameter, type mismatch, a `break` outside a loop, a reference to a step ID that doesn't exist.
   - Warnings: a state path that isn't in the schema yet (it may appear after a connection connects), and possibly-`undefined` reads.
 
@@ -362,7 +362,7 @@ Common fields: `id`, `kind`, `name?`, `enabled?`, `timeout?`, `onError?`. `retry
 
 ### 8.4 Validation
 
-Errors block the save; warnings don't. There are no drafts yet.
+Errors block the save; warnings don't.
 
 - **Errors:**
   - anything outside §8.1–8.3
@@ -390,7 +390,7 @@ Errors block the save; warnings don't. There are no drafts yet.
 
 ### 8.5 Runs
 
-- **A run** has a ULID, a status (`queued`, `running`, `ok`, `failed`, `cancelled`), and a copy of the flow taken when it started. Editing or disabling a flow doesn't touch runs already active. Deleting it cancels them. **(M9, proposed)** `run.started` records the flow's revision, and a published changeset never changes a run already active ([state spec §7.6](state-and-event-log.md#76-editing-a-running-show-proposed-kept-state-settled-in-m8)).
+- **A run** has a ULID, a status (`queued`, `running`, `ok`, `failed`, `cancelled`), and a copy of the flow taken when it started. Editing or disabling a flow doesn't touch runs already active. Deleting it cancels them. **(M9, proposed)** `run.started` records the flow's revision, and an edit never changes a run already active ([state spec §7.6](state-and-event-log.md#76-editing-a-running-show-proposed-kept-state-settled-in-m8)).
 - **Concurrency.**
   - `queue`: a queued trigger gets its run ID straight away but journals nothing more until it starts. The queue holds at most 16 runs. Past that, the trigger is blocked with reason `queueFull` (§10 question 2).
   - `restart`: cancels the active run and starts the new one once the old run has journaled `run.finished`.

@@ -296,7 +296,7 @@ impl Runtime {
     }
 
     /// Journals `sys:startup` (dataflow §3), once the flows are loaded, so
-    /// flows can run at boot: `reason` is `boot`, `failover` or `publish`.
+    /// flows can run at boot: `reason` is `boot` or `failover`.
     pub fn startup(&self, reason: &str) -> Result<Seq, JournalError> {
         let record = EventRecord::at(
             StatePath::root("sys"),

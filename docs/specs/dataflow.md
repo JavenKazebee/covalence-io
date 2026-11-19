@@ -116,7 +116,7 @@ Every event happens **at a node in the state tree** and has a **name**. The text
 | A transform's (M8) | its cell (§5) | `vars.armed:on`, `layer.cams.controls.dial1.camera:select` |
 | A flow's | the flow | `flow.preService:started`, `flow.preService:finished`, `flow.preService:failed` |
 | A composite's (M9) | the composite's root | `camA:tallyChanged` |
-| The core's | `sys` | `sys:startup` with `{reason: boot \| failover \| publish}` |
+| The core's | `sys` | `sys:startup` with `{reason: boot \| failover}` |
 
 - **Events are journaled as one kind,** `event` ([state spec §2.2](state-and-event-log.md)), with the node's path in ID form, the name, the payload and its context: `surface`, `layer`, `control` and `item` for control input; `conn` for a target's. `input.event` is folded into it.
 - **The payload is the event's own data:** `{delta}` for `turn` and `hold`, `{value}` for `change`, the `EventDef` payload for a plugin's.

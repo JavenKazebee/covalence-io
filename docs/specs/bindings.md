@@ -147,7 +147,7 @@ The shapes above, with these rules, which the native evaluator and the compiled 
   - `rules`: each `value` must match the property type, and each `Condition.value` must match the type at `path`.
   - `map`: `path` must be a number.
   - `expr`: checked with the generated TypeScript definitions ([flows spec §11.2](flows.md#112-expressions-and-scripts-one-language-sandboxed-by-where-code-runs)).
-- **Type errors block publishing. Warnings don't**, the same rule as [flows §4](flows.md).
+- **Type errors block saving. Warnings don't**, the same rule as [flows §4](flows.md).
 
 ---
 

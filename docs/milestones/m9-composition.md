@@ -33,7 +33,7 @@ Users build bigger things out of smaller ones, and reuse them by parameters, nev
 - [x] Interfaces dropped for now, the core's included (they only named its collections), and composite templates are how devices from different plugins are controlled as one kind ([plugin protocol §13.9](../specs/plugin-protocol.md#139-dynamic-targets-proposed), [composition §6.5](../specs/composition.md#65-templates-as-contracts)).
 - [x] A target is a connection and nothing within it: `core`'s surfaces and flows became `surface` and `flow` parameters ([core actions §2](../specs/core-actions.md#2-surfaces-and-flows-are-parameters)), and plugins don't declare collections ([plugin protocol §13.9](../specs/plugin-protocol.md#139-dynamic-targets-proposed)).
 - [x] Dynamic targets for plugins ([plugin protocol §13.9](../specs/plugin-protocol.md#139-dynamic-targets-proposed)): a step's target can follow state with a `{plugin}` constraint, checked against the plugin's manifest on save and against the connection's plugin when the step runs. The step editor offers "the <plugin> in a variable".
-- [ ] **Changesets** ([state spec §7.6](../specs/state-and-event-log.md#76-editing-a-running-show-proposed-kept-state-settled-in-m8)): drafts across entities, published as one operation and validated as a whole; runs record the revision they started on.
+- [x] **Edits across entities** ([state spec §7.6](../specs/state-and-event-log.md#76-editing-a-running-show-proposed-kept-state-settled-in-m8)): edits stay live, and one that spans entities is saved as a batch, validated as a whole and applied all or nothing; runs record the revision they started on.
 - [ ] The `instance` chain's API shape: how the timeline, `why` and the runs list show and filter it.
 - [ ] Accept the composition design ([composition §11](../specs/composition.md#11-decisions)) and live edits ([state spec §7.6](../specs/state-and-event-log.md#76-editing-a-running-show-proposed-kept-state-settled-in-m8)): drop "proposed" from their headings.
 
@@ -45,6 +45,7 @@ Users build bigger things out of smaller ones, and reuse them by parameters, nev
 - [ ] `params` in scope (dataflow §8) and `{scope}` refs. The `layer.params` shorthand is rejected.
 - [ ] Owned flows: `owner`, per-instance runs, `params` from the owner instance, and the owner's controls or slots in triggers.
 - [ ] Nesting: instances inside a template's body, `recursiveTemplate`, `tooDeep`.
+- [ ] Batches: `POST /batch`, the `batch` op, validation of the result as a whole, one timeline entry and one undo.
 - [ ] `forEach`: per-item instances at `<home>.items[<key>]`, created and ended with the list, `instance.added` and `instance.removed`, cancellation with `removed`, `tooMany`.
 - [ ] The `instance` chain on journal entries and `trigger.instance`.
 - [ ] "Detach", for every kind.

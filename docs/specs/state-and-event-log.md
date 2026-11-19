@@ -182,7 +182,7 @@ Ordering is defined **only** by `seq` within a log. `ts` is for display.
 | `action.result` | `{call, ok, result?, error?, durationMs}` | |
 | `nondet` | `{run, kind: now\|random, value}` | Recorded so replay is exact |
 | `instance.added`, `instance.removed` | `{instance: InstanceChain}` | **(M9)** A per-item instance created or ended with its list ([composition §4](composition.md)). `cause` → the patch or domain change that changed the list |
-| `project.applied` | `{op, entity: {type, id}, rev}` | **(M8)** A project op (§2.3) took effect in the running core, in this turn. `op` is its `seq` in the project op log, which a journal `cause` can't name directly. A publish or undo that touches several entities is one entry, with `op` the `publish` op. What the edit changed in state (a cell reset, a stateless cell's new value, a layer re-resolved) has `cause` → this entry ([dataflow §5.4](dataflow.md)) |
+| `project.applied` | `{op, entity: {type, id}, rev}` | **(M8)** A project op (§2.3) took effect in the running core, in this turn. `op` is its `seq` in the project op log, which a journal `cause` can't name directly. A batch, or an undo of one, that touches several entities is one entry, with `op` the `batch` op (§7.6). What the edit changed in state (a cell reset, a stateless cell's new value, a layer re-resolved) has `cause` → this entry ([dataflow §5.4](dataflow.md)) |
 | `conn.status` | `{conn, status, message?}` | |
 | `node.role` | `{node, role: active\|standby, term}` | |
 | `log` | `{level, message, fields}` | Plugin and script logs |
@@ -200,7 +200,7 @@ Entities: `connection` (**(M9)** including composites, plugin `core.composite`),
 ```ts
 interface ProjectOp extends Entry {
   kind: "entity.create" | "entity.update" | "entity.delete" | "entity.move"
-      | "publish" | "restore" | "migrate";
+      | "batch" | "restore" | "migrate";
   data: {
     entity: { type: EntityType; id: string };   // ULID
     baseRev?: number;                            // entity revision the client saw
@@ -208,7 +208,7 @@ interface ProjectOp extends Entry {
     set?: { [fieldPath: string]: unknown };      // field-level sets (update/create)
     unset?: string[];
     inverse: { set?: {...}; unset?: string[] };  // for undo
-    draft?: string;                              // draft ID, when not yet published
+    batch?: number;                              // the `batch` op's seq, when part of one (§7.6)
   };
 }
 ```
@@ -286,7 +286,7 @@ Secrets aren't stored here (§7.2).
 2. ~~Journal retention defaults on a Raspberry Pi with an SD card. How much should we write, and how do we limit wear?~~ Decided in §2.4: only inputs reach the disk, batched, with high-rate values sampled; derived entries stay in memory.
 3. Should `run.checkpoint` be automatic at every step, or opt-in per flow? Automatic is simpler; opt-in costs less.
 4. Should state patches from a connection be journaled in full, or sampled for very high-rate values (meters, timecode)? Proposal: the schema flag `journal: sampled(100ms)`. **(M8)** Decided for cells and helpers: `journal: {sampled: "100ms"}` applies every value to state, journals the latest per interval, and a final entry when it settles ([dataflow §5.1](dataflow.md)). Connections' schemas get the same flag when a plugin needs it.
-5. How should drafts interact with multi-user editing? Is one draft shared per layer, or does each user have their own?
+5. ~~How should drafts interact with multi-user editing? Is one draft shared per layer, or does each user have their own?~~ Decided in §7.6: there are no drafts. Edits apply as they're saved, and an edit that spans entities is one batch.
 
 ---
 
@@ -304,7 +304,7 @@ Why the core keeps state and history this way, and what was rejected. Keep these
   - **Bundle:** a `.covalence` zip of the export, assets and, optionally, the pinned plugin packages, for sharing.
   - **Secrets** live apart: the OS keychain where there is one, otherwise an encrypted file. Exports and bundles only reference them.
   - **Versioning:** the project records `schemaVersion` and the app applies ordered migrations. A project from a newer version opens read-only, with a warning. Each plugin versions its own config schema and ships upgrade functions.
-  - **History:** the op log (attribution and time travel, compacted over time), named restore points (by hand, and automatically before publishing, before plugin upgrades and on a schedule), and optional built-in git that commits the export on publish.
+  - **History:** the op log (attribution and time travel, compacted over time), named restore points (by hand, and automatically before plugin upgrades and on a schedule), and optional built-in git that commits the export on a schedule or by hand.
 - **Why:** project data must survive a power cut mid-save, support multi-user editing, undo and replication from one mechanism, diff in git, travel as one file, and keep secrets out of shared copies.
 - **Rejected:** a single JSON or YAML file (noisy diffs, no atomic partial writes); a folder of files as the source of truth (no atomic multi-file writes, poor for multi-user editing); TOML (awkward for deep nesting).
 
@@ -360,12 +360,15 @@ Why the core keeps state and history this way, and what was rejected. Keep these
 - **Why:** a producer, a technical director and a programmer may edit or run the same system at once, during a show.
 
 ### 7.6 Editing a running show (proposed; kept state settled in M8)
-People edit during services: a key relabelled, a flow fixed, a camera added between songs. One rule per question, rather than one per kind of entity:
-- **A draft is a changeset:** operations on any number of entities by one user, on base revisions. **Publishing applies it as one op, in one turn, or none of it.** Validation runs on the result, so fixing a template and its instances together passes where either alone would fail. A changeset whose entities changed underneath is rebased field by field, and an overlapping field asks the user. Edits outside a changeset apply at once; the show lock forces changesets below admin. The timeline shows a publish as one entry ("Ana published 'Camera B fixes' (4 changes)"), and undo reverses it as one.
-- **A run finishes on the version it started with.** It pins its flow's revision, recorded in `run.started`, and edits apply from the next run (flows §8.5). Old revisions are kept while a run uses them. Publishing a change to a flow with active runs offers `cancelRuns`.
+People edit during services: a key relabelled, a flow fixed, a camera added between songs. Edits apply live, as they're saved, with one rule per question rather than one per kind of entity:
+- **An edit that spans entities is saved as one batch.** `POST /batch` takes a list of create, update and delete operations on any entities, each on its base revision. The core validates the project as it would be after all of them, then applies them as one `batch` op in one turn, or refuses the lot and applies none. So a change that's only valid together, such as a new required param on a template and its value on every instance, passes where either alone would be `badInstance`. The editor builds the batch: adding a required param asks for its value on each instance and saves the template and its instances together. The timeline shows a batch as one entry ("Ana changed 'Camera' and 3 instances"), and undo reverses it as one.
+- **A run finishes on the version it started with.** It pins its flow's revision, recorded in `run.started`, and edits apply from the next run (flows §8.5). Old revisions are kept while a run uses them. Saving a change to a flow with active runs offers `cancelRuns`.
 - **State is kept when it still fits**, by entity identity, and **an edit never sends an action**: dataflow §5.4. A reset can leave a device out of step with its cell until the next change; that's the price of edits never acting on the show by themselves. `forEach` instances are matched by key when the `key` expression changes.
 - **Rejected:**
-  - *Per-entity drafts:* multi-entity changes pass through states that were never meant to exist, such as an instance whose params don't match its template.
+  - *Drafts published as changesets:* edits staged in a draft, rebased onto changes made meanwhile and published together. A batch gives the same all-or-nothing validation without a second copy of the project to keep, merge and explain. Edits that apply as they're saved are what people expect from show-control software.
+  - *One entity per save:* multi-entity changes would pass through states that were never meant to exist, such as an instance whose params don't match its template, and `badInstance` would leave no order of saves that gets there.
+  - *Accept broken instances and flag them:* a template edit mid-service could silently stop every camera using it.
+  - *Require a default on every new param:* the default is a guess about each instance, applied without asking.
   - *Runs switching to the new version at the next step:* a run would mix two versions, and vanished step IDs would need case-by-case handling.
   - *Reset all state on every edit:* a relabel would unlatch a key mid-show.
   - *Keep state whenever the name matches:* a `toggle` replaced by a `counter` would start from `true`.
