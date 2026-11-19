@@ -17,7 +17,7 @@ use crate::param::ParamDef;
 use crate::select::{Controls, Paths, Selector, Targets};
 use crate::source::Source;
 use crate::state::ConnId;
-use crate::surface::LayerId;
+use crate::surface::ComponentId;
 
 pub mod runtime;
 mod validate;
@@ -334,7 +334,7 @@ pub enum EventSource {
     /// The controls a component has, on whichever surface. Absent
     /// `controls` is every control of the component.
     Component {
-        component: LayerId,
+        component: ComponentId,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         controls: Option<Selector<Controls>>,
     },

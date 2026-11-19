@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use covalence_core::Shared;
+use covalence_core::component::Component;
 use covalence_core::engine::{ActionOutcome, ActionRequest, Actions, CoreError};
 use covalence_core::expr::QuickJs;
 use covalence_core::flow::{Flow, Runtime};
@@ -20,8 +21,7 @@ use covalence_core::state::StatePath;
 use covalence_core::surface::gesture::Timing;
 use covalence_core::surface::{
     Attach, AttachError, ControlDef, ControlSpec, Draw, ImageDef, Input, InputCap, InputCapKind,
-    InputValue, Layer, Link, Output, OutputCap, OutputCapKind, Placement, ShowError, Surface,
-    Surfaces,
+    InputValue, Link, Output, OutputCap, OutputCapKind, Placement, ShowError, Surface, Surfaces,
 };
 use covalence_protocol::Value;
 use covalence_protocol::state::PathSegment;
@@ -73,7 +73,7 @@ fn world() -> World {
         (WIDE, "wide", 8, 4),
     ] {
         surfaces
-            .set_layer(common::deck_layer(id, slug, cols, rows))
+            .set_component(common::deck_page(id, slug, cols, rows))
             .unwrap();
     }
     World { shared, surfaces }
@@ -131,7 +131,7 @@ fn mixer() -> Attach {
     }
 }
 
-/// `surface.fohDeck.current.main`: the layer shown.
+/// `surface.fohDeck.current.main`: the component shown.
 fn current(shared: &Shared) -> Option<Value> {
     let path = StatePath::new(
         "surface",
@@ -173,7 +173,7 @@ fn entries(shared: &Shared) -> Vec<Arc<Entry>> {
     shared.journal.range(1, 10_000).unwrap()
 }
 
-/// The last entry, which is layer resolution's patch (surfaces spec §5.2),
+/// The last entry, which is component resolution's patch (surfaces spec §5.2),
 /// and the entry it names as its cause.
 fn resolved_after(shared: &Shared) -> Arc<Entry> {
     let all = entries(shared);
@@ -194,7 +194,7 @@ fn resolved_after(shared: &Shared) -> Arc<Entry> {
 #[derive(Clone, Debug)]
 struct Ev {
     surface: String,
-    layer: Option<String>,
+    component: Option<String>,
     control: String,
     event: ControlEvent,
     delta: Option<i64>,
@@ -218,7 +218,7 @@ fn events(shared: &Shared) -> Vec<(Seq, Ev, Option<Seq>)> {
                 assert_eq!(ev.path.path.len(), 3, "{:?}", ev.path);
                 let g = Ev {
                     surface: ev.surface.clone().unwrap(),
-                    layer: ev.component.clone(),
+                    component: ev.component.clone(),
                     control: ev.control.clone().unwrap(),
                     event: serde_json::from_value(serde_json::json!(ev.event)).unwrap(),
                     delta: field("delta").and_then(|d| d.as_i64()),
@@ -445,7 +445,7 @@ async fn a_press_patches_input_state_then_journals_events() {
 
     let found = events(&w.shared);
     assert_eq!(names(&w.shared), ["k3:press", "k3:release"]);
-    assert_eq!(found[0].1.layer.as_deref(), Some(CAMS));
+    assert_eq!(found[0].1.component.as_deref(), Some(CAMS));
     assert_eq!(found[0].1.surface, DECK);
     assert_eq!(
         found[0].2,
@@ -488,8 +488,11 @@ async fn a_release_carries_the_layer_of_its_press() {
         .unwrap();
     send(&link, "k0", InputKind::Up, 50.0).await;
     settle(&w.surfaces).await;
-    let layers: Vec<Option<String>> = events(&w.shared).into_iter().map(|e| e.1.layer).collect();
-    assert_eq!(layers, [Some(CAMS.into()), Some(CAMS.into())]);
+    let components: Vec<Option<String>> = events(&w.shared)
+        .into_iter()
+        .map(|e| e.1.component)
+        .collect();
+    assert_eq!(components, [Some(CAMS.into()), Some(CAMS.into())]);
 }
 
 #[tokio::test(start_paused = true)]
@@ -520,7 +523,7 @@ async fn input_a_control_cant_give_is_dropped() {
 async fn dials_faders_and_touch_have_state_and_events() {
     let w = world();
     let link = w.surfaces.attach(DECK, mixer()).unwrap();
-    // No layer fits a mixer.
+    // No component fits a mixer.
     assert_eq!(current(&w.shared), Some(Value::Nil));
     assert_eq!(control_state(&w.shared, "dial", "detents"), Some(0.into()));
     assert_eq!(
@@ -601,7 +604,7 @@ async fn detaching_disconnects_and_releases_held_keys() {
     let found = events(&w.shared);
     let (_, release, cause) = found.last().unwrap();
     assert_eq!(release.event, ControlEvent::Release);
-    assert_eq!(release.layer.as_deref(), Some(CAMS));
+    assert_eq!(release.component.as_deref(), Some(CAMS));
     // release → the patch that released k2 → the patch that disconnected.
     let released = w.shared.journal.get(cause.unwrap()).unwrap().unwrap();
     let Record::StatePatch(patch) = &released.record else {
@@ -680,12 +683,12 @@ async fn showing_a_layer_checks_it_fits() {
     assert_eq!(current(&w.shared), Some("audio".into()));
     assert_eq!(resolved_after(&w.shared).origin, user);
     w.surfaces.flush().await;
-    // The audio layer has no bindings either, so nothing looks different.
+    // The audio component has no bindings either, so nothing looks different.
     assert_eq!(take_draws(&mut link).len(), 0);
 
     match w.surfaces.show(DECK, Some(WIDE), user.clone()) {
-        Err(ShowError::DoesNotFit { layer, missing }) => {
-            assert_eq!(layer, WIDE);
+        Err(ShowError::DoesNotFit { component, missing }) => {
+            assert_eq!(component, WIDE);
             assert_eq!(missing.len(), 32 - 15);
             assert_eq!(missing[0], "k15");
         }
@@ -700,10 +703,10 @@ async fn showing_a_layer_checks_it_fits() {
     w.surfaces.show(DECK, None, user).unwrap();
     assert_eq!(current(&w.shared), Some(Value::Nil));
 
-    // Input with no layer shown is journaled, but can't match a trigger.
+    // Input with no component shown is journaled, but can't match a trigger.
     send(&link, "k0", InputKind::Down, 0.0).await;
     settle(&w.surfaces).await;
-    assert_eq!(events(&w.shared)[0].1.layer, None);
+    assert_eq!(events(&w.shared)[0].1.component, None);
 }
 
 #[tokio::test(start_paused = true)]
@@ -723,7 +726,7 @@ async fn reattaching_shows_the_layer_it_showed_last() {
 async fn removing_a_layer_or_renaming_a_surface_updates_state() {
     let w = world();
     let _link = w.surfaces.attach(DECK, deck()).unwrap();
-    w.surfaces.remove_layer(CAMS).unwrap();
+    w.surfaces.remove_component(CAMS).unwrap();
     assert_eq!(current(&w.shared), Some(Value::Nil));
 
     w.surfaces
@@ -848,17 +851,17 @@ async fn a_control_trigger_only_matches_its_layer() {
     let link = w.surfaces.attach(DECK, deck()).unwrap();
     let doubled = StatePath::new("vars", vec![PathSegment::Key("doubled".into())]);
 
-    for (ts, layer) in [(0.0, CAMS), (5000.0, AUDIO)] {
+    for (ts, component) in [(0.0, CAMS), (5000.0, AUDIO)] {
         w.surfaces
-            .show(DECK, Some(layer), Origin::system())
+            .show(DECK, Some(component), Origin::system())
             .unwrap();
         send(&link, "k0", InputKind::Down, ts).await;
         send(&link, "k0", InputKind::Up, ts + 50.0).await;
         send(&link, "k0", InputKind::Down, ts + 150.0).await;
         send(&link, "k0", InputKind::Up, ts + 200.0).await;
         settle(&w.surfaces).await;
-        let expected = (layer == AUDIO).then(|| Value::from(true));
-        assert_eq!(w.shared.state.value(&doubled), expected, "on {layer}");
+        let expected = (component == AUDIO).then(|| Value::from(true));
+        assert_eq!(w.shared.state.value(&doubled), expected, "on {component}");
     }
     runtime.shutdown().await;
 }
@@ -928,12 +931,13 @@ async fn a_state_trigger_on_two_keys_is_a_chord() {
 async fn a_layer_fits_by_capability_not_by_size() {
     let w = world();
     let _link = w.surfaces.attach(DECK, mixer()).unwrap();
-    let layer = |id: &str, slug: &str, controls: Vec<ControlSpec>| Layer {
+    let component = |id: &str, slug: &str, controls: Vec<ControlSpec>| Component {
         id: id.into(),
         name: slug.into(),
         slug: slug.into(),
         controls,
-        ..Layer::default()
+        show: Some(covalence_core::component::Show::default()),
+        ..Component::default()
     };
     let control = |id: &str, inputs: Vec<InputCapKind>, outputs: Vec<OutputCapKind>| ControlSpec {
         id: id.into(),
@@ -944,7 +948,7 @@ async fn a_layer_fits_by_capability_not_by_size() {
     // A dial and a key: fewer controls than the mixer has is fine.
     const DIALS: &str = "01JC5PAGE00000000000000004";
     w.surfaces
-        .set_layer(layer(
+        .set_component(component(
             DIALS,
             "dials",
             vec![
@@ -961,7 +965,7 @@ async fn a_layer_fits_by_capability_not_by_size() {
     // A dial that turns, but the mixer's `k0` has no image.
     const IMAGES: &str = "01JC5PAGE00000000000000005";
     w.surfaces
-        .set_layer(layer(
+        .set_component(component(
             IMAGES,
             "images",
             vec![
@@ -977,7 +981,7 @@ async fn a_layer_fits_by_capability_not_by_size() {
     }
     assert_eq!(current(&w.shared), Some("dials".into()));
 
-    // The surface's controls, as it attached, for "New layer".
+    // The surface's controls, as it attached, for "New component".
     let controls = w.surfaces.controls(DECK).unwrap();
     assert_eq!(controls.len(), 3);
     assert_eq!(
@@ -998,7 +1002,7 @@ async fn a_control_trigger_on_a_dial_gets_the_turn() {
     let runtime = runtime(&w.shared);
     const DIALS: &str = "01JC5PAGE00000000000000004";
     w.surfaces
-        .set_layer(Layer {
+        .set_component(Component {
             id: DIALS.into(),
             name: "Dials".into(),
             slug: "dials".into(),
@@ -1008,7 +1012,8 @@ async fn a_control_trigger_on_a_dial_gets_the_turn() {
                 inputs: vec![InputCapKind::Relative],
                 outputs: vec![],
             }],
-            ..Layer::default()
+            show: Some(covalence_core::component::Show::default()),
+            ..Component::default()
         })
         .unwrap();
     let flow: Flow = serde_json::from_value(json!({
@@ -1089,8 +1094,8 @@ async fn a_binding_sets_its_controls_gesture_timing_at_each_press() {
     let w = world();
     set_var(&w.shared, "every", 200.into());
     w.surfaces.set_binding(
-        covalence_core::binding::ControlBinding::parse(&json!({
-            "id": "b0", "layer": CAMS, "control": "k0",
+        common::placed(&json!({
+            "id": "b0", "component": CAMS, "control": "k0",
             "gestures": {
                 "longAfter": "1s",
                 "holdEvery": { "ref": { "root": "vars", "path": ["every"] } },

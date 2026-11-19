@@ -10,7 +10,7 @@ import VirtualDeck from "./VirtualDeck.vue";
 
 /**
  * One surface: its virtual deck, attached while this is open, or the
- * connection that provides it; the layer it shows, and its settings.
+ * connection that provides it; the page it shows, and its settings.
  */
 const props = defineProps<{ id: string }>();
 
@@ -21,10 +21,10 @@ const slug = computed(() => stored.value?.slug ?? "");
 const live = useLiveState(() => (slug.value === "" ? "" : `surface.${slug.value}`));
 
 const value = (field: string) => live.leaves.value.find((l) => l.path === `surface.${slug.value}.${field}`)?.value;
-/** The layer shown now, from `surface.<slug>.current.main`, which holds its slug. */
+/** The page shown now, from `surface.<slug>.current.main`, which holds its slug. */
 const shown = computed(() => {
-  const layer = value("current.main");
-  return typeof layer === "string" ? surfaces.layerBySlug(layer) : undefined;
+  const current = value("current.main");
+  return typeof current === "string" ? surfaces.componentBySlug(current) : undefined;
 });
 /** Whether a plugin's device is attached as this surface, from `surface.<slug>.connected`. */
 const attached = computed(() => value("connected") === true);
@@ -51,19 +51,19 @@ const controls = computed(() => {
   if (stored.value?.provider !== undefined) return attachedControls.value;
   return stored.value === undefined ? undefined : surfaceControls(stored.value);
 });
-/** Layers this surface can show: it has each of their controls (surfaces spec §5.4). */
+/** Pages this surface can show: it has each of their controls (surfaces spec §5.4). */
 const fitting = computed(() =>
-  surfaces.layers.filter((l) => controls.value !== undefined && missingControls(l, controls.value).length === 0),
+  surfaces.shown.filter((l) => controls.value !== undefined && missingControls(l, controls.value).length === 0),
 );
 
 const showError = ref<string | null>(null);
 const switching = ref(false);
 
-async function show(layer: string) {
+async function show(component: string) {
   showError.value = null;
   switching.value = true;
   try {
-    await api.navigate(props.id, layer === "" ? null : layer);
+    await api.navigate(props.id, component === "" ? null : component);
   } catch (e) {
     showError.value = e instanceof Error ? e.message : String(e);
   } finally {
@@ -170,9 +170,9 @@ async function remove() {
         />
         <div class="side">
           <div class="field">
-            <label for="surface-layer">Showing</label>
+            <label for="surface-page">Showing</label>
             <select
-              id="surface-layer"
+              id="surface-page"
               :value="shown?.id ?? ''"
               :disabled="switching"
               @change="show(($event.target as HTMLSelectElement).value)"
@@ -195,7 +195,7 @@ async function remove() {
             <small
               v-else-if="fitting.length === 0"
               class="hint"
-            >No layers fit it yet.
+            >No pages fit it yet.
               <a :href="hrefOf({ tab: 'surfaces' })">Make one</a> from it.</small>
             <small
               v-if="showError"
@@ -206,7 +206,7 @@ async function remove() {
           <p v-if="shown">
             <a
               class="button"
-              :href="hrefOf({ tab: 'surfaces', layer: shown.id })"
+              :href="hrefOf({ tab: 'surfaces', component: shown.id })"
             >Edit {{ shown.name }}</a>
           </p>
           <p
@@ -214,7 +214,7 @@ async function remove() {
             class="hint"
           >
             Press keys with the mouse, or focus one and hold Space. Each press is a
-            <code>control</code> event a flow can trigger on; the keys show what their layer binds.
+            <code>control</code> event a flow can trigger on; the keys show what their page binds.
           </p>
         </div>
       </div>
@@ -237,7 +237,7 @@ async function remove() {
           <small class="hint">Its state is at <code>surface.{{ stored.slug }}</code>.</small>
         </div>
         <div class="field">
-          <label for="surface-start">Start layer</label>
+          <label for="surface-start">Start page</label>
           <select
             id="surface-start"
             v-model="draft.startComponent"
@@ -253,7 +253,7 @@ async function remove() {
               {{ p.name }}
             </option>
           </select>
-          <small class="hint">Shown the first time it attaches. After that it shows the layer it last showed.</small>
+          <small class="hint">Shown the first time it attaches. After that it shows the page it last showed.</small>
         </div>
       </div>
       <div

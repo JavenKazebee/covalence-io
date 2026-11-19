@@ -340,7 +340,7 @@ impl StateTree {
 /// Settles a turn (dataflow §5.3): run by [`LiveState`] after every
 /// mutation, before its dirty set is published, so that whoever consumes
 /// the feed sees settled state. The dataflow graph is the settler, and
-/// layer resolution runs after it ([`LiveState::set_resolver`]).
+/// component resolution runs after it ([`LiveState::set_resolver`]).
 pub trait Settler: Send + Sync {
     /// Evaluates whatever `dirty` (the turn's changes so far) makes due,
     /// writing through [`LiveState::write_in_turn`] and adding what it
@@ -355,7 +355,7 @@ pub struct LiveState {
     /// Held for a whole turn: a writer's mutation, then settling.
     turn: Mutex<()>,
     settler: RwLock<Option<Arc<dyn Settler>>>,
-    /// Runs after the settler, on settled state: layer resolution
+    /// Runs after the settler, on settled state: component resolution
     /// (dataflow §5.3).
     resolver: RwLock<Option<Arc<dyn Settler>>>,
     dirty: broadcast::Sender<Arc<Dirty>>,
@@ -442,7 +442,7 @@ impl LiveState {
         *self.settler.write().unwrap_or_else(|e| e.into_inner()) = settler;
     }
 
-    /// Installs what runs after the settler, on settled state: layer
+    /// Installs what runs after the settler, on settled state: component
     /// resolution (dataflow §5.3). `None` removes it.
     pub fn set_resolver(&self, resolver: Option<Arc<dyn Settler>>) {
         *self.resolver.write().unwrap_or_else(|e| e.into_inner()) = resolver;

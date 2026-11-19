@@ -112,9 +112,9 @@ fn check(json: &Value) -> (Value, Value) {
     ]
     .into();
     let taken: BTreeSet<String> = ["taken".to_owned()].into();
-    let layers = [(
+    let components = [(
         DECK_LAYER.to_owned(),
-        common::deck_layer(DECK_LAYER, "deck", 5, 3),
+        common::deck_page(DECK_LAYER, "deck", 5, 3),
     )]
     .into();
     let evaluator = QuickJs::default();
@@ -133,7 +133,7 @@ fn check(json: &Value) -> (Value, Value) {
     let ctx = Context {
         conns: &conns,
         taken_slugs: &taken,
-        layers: &layers,
+        components: &components,
         surfaces: &BTreeSet::new(),
         flows: &flows,
         evaluator: &evaluator,
@@ -216,7 +216,7 @@ fn problems_say_what_is_wrong() {
         &Context {
             conns: &conns,
             taken_slugs: &BTreeSet::new(),
-            layers: &BTreeMap::new(),
+            components: &BTreeMap::new(),
             surfaces: &BTreeSet::new(),
             flows: &BTreeMap::new(),
             evaluator: &QuickJs::default(),

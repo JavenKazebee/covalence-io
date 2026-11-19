@@ -30,8 +30,8 @@ fn start(data: &Path, fake: &Fake) -> Server {
     Server::with_app(app)
 }
 
-/// A layer of the MK.2's 15 image keys, with labels on `k0` and `k7`.
-async fn layer(server: &Server) -> String {
+/// A component of the MK.2's 15 image keys, with labels on `k0` and `k7`.
+async fn component(server: &Server) -> String {
     let controls: Vec<Value> = (0..15)
         .map(|k| {
             json!({
@@ -40,11 +40,11 @@ async fn layer(server: &Server) -> String {
             })
         })
         .collect();
-    let (status, layer) = server
+    let (status, component) = server
         .post("/components", Server::page("Main", json!(controls)))
         .await;
-    assert_eq!(status.as_u16(), 201, "{layer}");
-    let id = layer["component"]["id"].as_str().unwrap().to_owned();
+    assert_eq!(status.as_u16(), 201, "{component}");
+    let id = component["component"]["id"].as_str().unwrap().to_owned();
     for (control, label) in [("k0", "'Cam 1'"), ("k7", "'Cam 2'")] {
         let (status, binding) = server
             .try_bind(
@@ -124,8 +124,8 @@ async fn a_stream_deck_mk2_becomes_a_surface_by_itself() {
         })
     );
 
-    // A shown layer is drawn on the deck as JPEG, each key complete.
-    let main = layer(&server).await;
+    // A shown component is drawn on the deck as JPEG, each key complete.
+    let main = component(&server).await;
     let (status, body) = server
         .post(
             &format!("/surfaces/{id}/current"),
@@ -287,9 +287,9 @@ async fn brightness_requested(server: &Server) -> Option<Value> {
         .cloned()
 }
 
-/// M7's "done when", against the simulated MK.2: a deck given a start layer
+/// M7's "done when", against the simulated MK.2: a deck given a start component
 /// ahead of time shows it; its keys run flows whose `why` goes back to the
-/// key; unplugging releases held keys and replugging shows the same layer;
+/// key; unplugging releases held keys and replugging shows the same component;
 /// and a plugin host restart doesn't close the deck or blank its keys.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stream_deck_runs_flows_and_rides_out_unplugs_and_host_restarts() {
@@ -297,8 +297,8 @@ async fn a_stream_deck_runs_flows_and_rides_out_unplugs_and_host_restarts() {
     let fake = Fake::new();
     let server = start(data.path(), &fake);
 
-    // A surface for the deck, made before it's plugged in, with a start layer.
-    let main = layer(&server).await;
+    // A surface for the deck, made before it's plugged in, with a start component.
+    let main = component(&server).await;
     let (status, made) = server
         .post(
             "/surfaces",
@@ -311,7 +311,7 @@ async fn a_stream_deck_runs_flows_and_rides_out_unplugs_and_host_restarts() {
     assert_eq!(status.as_u16(), 201, "{made}");
     let id = made["surface"]["id"].as_str().unwrap().to_owned();
 
-    // Plugged in: the same surface attaches, showing its start layer.
+    // Plugged in: the same surface attaches, showing its start component.
     let deck = Mk2::plug(&fake, "/dev/hidraw0", "CL12K1A00042");
     let conn = deck_conn(&server).await;
     let conn_id = conn["id"].as_str().unwrap().to_owned();
@@ -324,7 +324,7 @@ async fn a_stream_deck_runs_flows_and_rides_out_unplugs_and_host_restarts() {
     assert_eq!(server.value(&current).await, Some(json!("main")));
     all_drawn(&deck, 0).await;
 
-    // `k0` on the layer sets the deck's brightness, through a flow.
+    // `k0` on the component sets the deck's brightness, through a flow.
     let (status, flow) = server
         .post(
             "/flows",
@@ -389,7 +389,7 @@ async fn a_stream_deck_runs_flows_and_rides_out_unplugs_and_host_restarts() {
         .await;
     assert_eq!(server.value(&pressed).await, Some(json!(false)), "released");
 
-    // Back in another port: the same surface, the layer it showed, redrawn.
+    // Back in another port: the same surface, the component it showed, redrawn.
     let deck = Mk2::plug(&fake, "/dev/hidraw3", "CL12K1A00042");
     attached(&server, &id).await;
     assert_eq!(server.get("/surfaces").await.as_array().unwrap().len(), 1);
@@ -500,7 +500,7 @@ async fn bench_budgets_with_the_plugin_host_in_the_path() {
     let id = surface["id"].as_str().unwrap().to_owned();
     attached(&server, &id).await;
 
-    // A layer of expr bindings on every key, as M5's bench.
+    // A component of expr bindings on every key, as M5's bench.
     let keys: Vec<Value> = (0..15)
         .map(|k| {
             json!({
@@ -509,13 +509,13 @@ async fn bench_budgets_with_the_plugin_host_in_the_path() {
             })
         })
         .collect();
-    let (_, layer) = server
+    let (_, component) = server
         .post("/components", Server::page("Bench", json!(keys)))
         .await;
-    let layer = layer["component"]["id"].as_str().unwrap().to_owned();
+    let component = component["component"]["id"].as_str().unwrap().to_owned();
     for i in 0..15 {
         let (status, body) = server
-            .try_bind(&layer, json!({ "control": format!("k{i}"),
+            .try_bind(&component, json!({ "control": format!("k{i}"),
                     "props": {
                         "label": { "expr": format!("`Cam {i}: ${{mmss((vars.n ?? 0) + {i})}}`") },
                         "background": { "expr": format!("(vars.n ?? 0) % 2 ? hsl({i} * 20, 70, 40) : \"#202020\"") },
@@ -530,7 +530,7 @@ async fn bench_budgets_with_the_plugin_host_in_the_path() {
             "/flows",
             json!({
                 "name": "Bright on k0", "enabled": true, "concurrency": "parallel",
-                "triggers": [{ "kind": "event", "from": { "component": layer, "controls": "k0" }, "event": "press" }],
+                "triggers": [{ "kind": "event", "from": { "component": component, "controls": "k0" }, "event": "press" }],
                 "body": [{
                     "id": "bright", "kind": "action", "target": { "conn": conn_id },
                     "action": "brightness", "params": { "percent": 60 },
@@ -542,7 +542,7 @@ async fn bench_budgets_with_the_plugin_host_in_the_path() {
     server
         .post(
             &format!("/surfaces/{id}/current"),
-            json!({ "component": layer }),
+            json!({ "component": component }),
         )
         .await;
     all_drawn(&deck, 0).await;

@@ -1,13 +1,13 @@
-//! Surfaces and layers (surfaces spec, surfaces spec §11.1).
+//! Surfaces and components (surfaces spec, surfaces spec §11.1).
 //!
-//! [`Surfaces`] holds the `surface` and `layer` entities and the surfaces
+//! [`Surfaces`] holds the `surface` and `component` entities and the surfaces
 //! attached right now. It doesn't know how a surface is connected: a
 //! transport (the web surface's WebSocket, or the plugin host) attaches one
 //! with its controls, feeds it [`Input`] and sends on the [`Output`]s it gets
 //! back: images and levels.
 //!
 //! What a surface shows is drawn by the binding worker
-//! ([`crate::binding::worker`]), which evaluates the bindings of the layer it
+//! ([`crate::binding::worker`]), which evaluates the bindings of the component it
 //! shows.
 //!
 //! Each attached surface has a task that applies its input to the controls'
@@ -44,8 +44,9 @@ pub mod resolve;
 
 use crate::binding::ControlBinding;
 use crate::binding::worker::{Bindings, Problems};
+use crate::component::Component;
 use crate::flow::{Code, Problem, Report, is_identifier};
-use crate::select::{Entities, Selector};
+use crate::select::Selector;
 use gesture::{Change, Detected, Recogniser, Timing};
 
 /// Entity types in the store.
@@ -68,9 +69,9 @@ const DROP_LOG_EVERY: Duration = Duration::from_secs(1);
 
 pub type SurfaceId = String;
 
-/// What a binding sets, and the `(layer, control)` it's on.
-type BoundAt = ((LayerId, String), resolve::Bound);
-pub type LayerId = String;
+/// What a binding sets, and the `(component, control)` it's on.
+type BoundAt = ((ComponentId, String), resolve::Bound);
+pub type ComponentId = String;
 
 /// A control device (surfaces spec §1).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -88,7 +89,7 @@ pub struct Surface {
     pub serial: Option<String>,
     /// Shown when the surface first attaches.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub start_component: Option<LayerId>,
+    pub start_component: Option<ComponentId>,
     /// The connection whose device this is, for a surface a plugin provides
     /// (plugin protocol §8).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -183,43 +184,14 @@ pub fn virtual_controls(layout: Option<&VirtualLayout>) -> Vec<ControlDef> {
     controls
 }
 
-/// A set of control bindings on the controls it covers (surfaces spec §1).
-/// `on`, `when`, `level` and `rank` decide where and when it controls them
-/// (surfaces spec §5.2).
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Layer {
-    #[serde(default)]
-    pub id: LayerId,
-    pub name: String,
-    #[serde(default)]
-    pub slug: String,
-    pub controls: Vec<ControlSpec>,
-    /// The surfaces it may appear on; every surface when absent.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub on: Option<Selector<Entities>>,
-    /// When it's active; `{nav: "main"}` when absent (surfaces spec §5.3).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub when: Option<When>,
-    #[serde(default, skip_serializing_if = "Level::is_normal")]
-    pub level: Level,
-    /// Its order within its level, 0 to 99; 0 when absent.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rank: Option<crate::source::Source<f64>>,
-    /// Whether it sets the whole look of the controls it covers, or only
-    /// what it binds (surfaces spec §5.2.1).
-    #[serde(default, skip_serializing_if = "Cascade::is_replace")]
-    pub cascade: Cascade,
-}
-
-/// How a layer covers what's under it (surfaces spec §5.2.1).
+/// How a component covers what's under it (surfaces spec §5.2.1).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Cascade {
     /// Sets the whole look of its controls and takes their input.
     #[default]
     Replace,
-    /// Sets only what it binds; the rest comes from the layers below.
+    /// Sets only what it binds; the rest comes from the components below.
     Through,
 }
 
@@ -229,11 +201,11 @@ impl Cascade {
     }
 }
 
-/// When a layer is active (surfaces spec §5.3).
+/// When a component is active (surfaces spec §5.3).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub enum When {
-    /// While it's the current layer of a navigation group.
+    /// While it's the current component of a navigation group.
     Nav(String),
     Always(True),
     /// While the source is truthy.
@@ -246,10 +218,10 @@ impl Default for When {
     }
 }
 
-/// The navigation group every surface has, and layers are in by default.
+/// The navigation group every surface has, and components are in by default.
 pub const MAIN_GROUP: &str = "main";
 
-/// A layer's band (surfaces spec §5.3): `rank` orders layers within it.
+/// A component's band (surfaces spec §5.3): `rank` orders components within it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Level {
@@ -274,7 +246,7 @@ impl Level {
     }
 }
 
-/// A control a layer covers, and what it needs that control to do.
+/// A control a component covers, and what it needs that control to do.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ControlSpec {
@@ -289,13 +261,7 @@ pub struct ControlSpec {
     pub outputs: Vec<OutputCapKind>,
 }
 
-impl Layer {
-    pub fn control(&self, id: &str) -> Option<&ControlSpec> {
-        self.controls.iter().find(|c| c.id == id)
-    }
-}
-
-/// An [`InputCap`]'s kind: what a layer can ask a control for.
+/// An [`InputCap`]'s kind: what a component can ask a control for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum InputCapKind {
@@ -500,7 +466,7 @@ impl ControlDef {
         self.inputs.iter().find(|i| i.kind() == kind)
     }
 
-    /// What a layer that lists this control copies from it.
+    /// What a component that lists this control copies from it.
     pub fn to_control_spec(&self) -> ControlSpec {
         ControlSpec {
             id: self.id.clone(),
@@ -601,10 +567,10 @@ pub enum ShowError {
     #[error("no surface {0}")]
     UnknownSurface(SurfaceId),
     #[error("no shown component {0}")]
-    UnknownComponent(LayerId),
-    #[error("component {layer} doesn't fit: the surface lacks {}", missing.join(", "))]
+    UnknownComponent(ComponentId),
+    #[error("component {component} doesn't fit: the surface lacks {}", missing.join(", "))]
     DoesNotFit {
-        layer: LayerId,
+        component: ComponentId,
         missing: Vec<String>,
     },
     #[error("{0:?} isn't a navigation group's name: use letters, digits and _")]
@@ -617,14 +583,14 @@ pub struct Surfaces {
     inner: Arc<Inner>,
 }
 
-/// Told the layer a surface shows whenever that changes, so it can be kept
-/// across restarts: the surface's ID, and its layer's or `None`. That's the
-/// `main` navigation group's current layer.
+/// Told the component a surface shows whenever that changes, so it can be kept
+/// across restarts: the surface's ID, and its component's or `None`. That's the
+/// `main` navigation group's current component.
 pub type OnShown = Arc<dyn Fn(&str, Option<&str>) + Send + Sync>;
 
-/// Told when a layer becomes active on a surface (surfaces spec §5.2), so
+/// Told when a component becomes active on a surface (surfaces spec §5.2), so
 /// its surface-scoped helpers can be added there (surfaces spec §11.4): the
-/// surface's ID and the layer's.
+/// surface's ID and the component's.
 pub type OnActive = Arc<dyn Fn(&str, &str) + Send + Sync>;
 
 struct Inner {
@@ -632,7 +598,7 @@ struct Inner {
     timing: Timing,
     book: Mutex<Book>,
     bindings: Bindings,
-    /// Which layer controls each control (surfaces spec §5.2).
+    /// Which component controls each control (surfaces spec §5.2).
     resolver: Arc<resolve::Resolver>,
     sessions: AtomicU64,
     on_shown: Mutex<Option<OnShown>>,
@@ -640,8 +606,8 @@ struct Inner {
     /// What each binding sets, by binding ID, for resolution (surfaces spec
     /// §5.2.1).
     bound: Mutex<BTreeMap<String, BoundAt>>,
-    /// Each control's `gestures`, by `(layer, control)`, with its binding.
-    gestures: Mutex<BTreeMap<(LayerId, String), (String, crate::binding::Gestures)>>,
+    /// Each control's `gestures`, by `(component, control)`, with its binding.
+    gestures: Mutex<BTreeMap<(ComponentId, String), (String, crate::binding::Gestures)>>,
     /// The connection aliases gesture settings' expressions read.
     aliases: Mutex<Arc<BTreeMap<String, crate::state::ConnId>>>,
     /// Evaluates gesture settings' expressions, with a binding's limit.
@@ -651,13 +617,13 @@ struct Inner {
 #[derive(Default)]
 struct Book {
     surfaces: BTreeMap<SurfaceId, Surface>,
-    layers: BTreeMap<LayerId, Layer>,
+    components: BTreeMap<ComponentId, Component>,
     attached: BTreeMap<SurfaceId, Attached>,
-    /// The current layer of each surface's `main` navigation group, kept
+    /// The current component of each surface's `main` navigation group, kept
     /// while it's detached.
-    shown: BTreeMap<SurfaceId, Option<LayerId>>,
-    /// The current layer of its other navigation groups, by group.
-    groups: BTreeMap<SurfaceId, BTreeMap<String, Option<LayerId>>>,
+    shown: BTreeMap<SurfaceId, Option<ComponentId>>,
+    /// The current component of its other navigation groups, by group.
+    groups: BTreeMap<SurfaceId, BTreeMap<String, Option<ComponentId>>>,
     /// The controls each surface last attached with.
     controls: BTreeMap<SurfaceId, Vec<ControlDef>>,
 }
@@ -695,7 +661,7 @@ pub enum InjectError {
 }
 
 impl Surfaces {
-    /// Surfaces on `shared`'s state, whose layer resolution runs in its
+    /// Surfaces on `shared`'s state, whose component resolution runs in its
     /// turn ([`crate::state::LiveState::set_resolver`]).
     pub fn new(shared: Shared, timing: Timing) -> Self {
         let resolver = Arc::new(resolve::Resolver::new(
@@ -726,7 +692,7 @@ impl Surfaces {
         }
     }
 
-    /// Calls `f` whenever the layer a surface shows changes, including to
+    /// Calls `f` whenever the component a surface shows changes, including to
     /// nothing. It's called with the surfaces locked, so it mustn't call
     /// back into them.
     pub fn on_shown(&self, f: OnShown) {
@@ -737,34 +703,38 @@ impl Surfaces {
             .unwrap_or_else(|e| e.into_inner()) = Some(f);
     }
 
-    /// Calls `f` whenever a layer becomes active on a surface. It's called
+    /// Calls `f` whenever a component becomes active on a surface. It's called
     /// without the surfaces locked, before the surface's next input.
     pub fn on_active(&self, f: OnActive) {
         *lock(&self.inner.on_active) = Some(f);
     }
 
-    /// Which layers are active on an attached surface and which controls
+    /// Which components are active on an attached surface and which controls
     /// each (surfaces spec §5.2), as of the last turn.
     pub fn resolution(&self, surface: &str) -> Option<Arc<resolve::Resolution>> {
         self.inner.resolver.resolution(surface)
     }
 
-    /// Each failing layer field's last error, by layer ID and field
+    /// Each failing component field's last error, by component ID and field
     /// (`on`, `when` or `rank`).
-    pub fn layer_problems(&self) -> BTreeMap<(LayerId, &'static str), String> {
+    pub fn show_problems(&self) -> BTreeMap<(ComponentId, &'static str), String> {
         self.inner.resolver.problems()
     }
 
-    /// Sets the layer a surface last showed, as kept from before a restart,
+    /// Sets the component a surface last showed, as kept from before a restart,
     /// without telling [`Surfaces::on_shown`]. It shows it when it attaches,
-    /// if it still fits, in place of its start layer.
-    pub fn restore_shown(&self, surface: &str, layer: Option<LayerId>) -> Result<(), JournalError> {
+    /// if it still fits, in place of its start component.
+    pub fn restore_shown(
+        &self,
+        surface: &str,
+        component: Option<ComponentId>,
+    ) -> Result<(), JournalError> {
         let inner = &self.inner;
         let mut book = inner.book();
         if !book.surfaces.contains_key(surface) || book.attached.contains_key(surface) {
             return Ok(());
         }
-        book.shown.insert(surface.to_owned(), layer);
+        book.shown.insert(surface.to_owned(), component);
         inner.publish_current(&book, surface, MAIN_GROUP, Origin::system())?;
         Ok(())
     }
@@ -822,19 +792,25 @@ impl Surfaces {
         Ok(())
     }
 
-    /// Adds or replaces a layer. A navigation group whose current layer no
+    /// Adds or replaces a component. A navigation group whose current component no
     /// longer fits its surface is left with none, and every surface's
-    /// layers are resolved again.
-    pub fn set_layer(&self, layer: Layer) -> Result<(), JournalError> {
+    /// components are resolved again.
+    pub fn set_component(&self, component: Component) -> Result<(), JournalError> {
+        if component.show.is_none() {
+            return self.remove_component(&component.id);
+        }
         let inner = &self.inner;
         let mut book = inner.book();
-        book.layers.insert(layer.id.clone(), layer.clone());
-        inner.resolver.set_layers(Arc::new(book.layers.clone()));
-        for (surface, group) in Inner::navigated_to(&book, &layer.id) {
+        book.components
+            .insert(component.id.clone(), component.clone());
+        inner
+            .resolver
+            .set_components(Arc::new(book.components.clone()));
+        for (surface, group) in Inner::navigated_to(&book, &component.id) {
             let fits = book
                 .attached
                 .get(&surface)
-                .is_none_or(|a| missing(&layer, &a.attach.controls).is_empty());
+                .is_none_or(|a| missing(&component, &a.attach.controls).is_empty());
             if !fits {
                 inner.set_current(&mut book, &surface, &group, None);
             }
@@ -847,13 +823,15 @@ impl Surfaces {
         Ok(())
     }
 
-    /// Removes a layer, leaving the navigation groups it was current in
+    /// Removes a component, leaving the navigation groups it was current in
     /// with none.
-    pub fn remove_layer(&self, id: &str) -> Result<(), JournalError> {
+    pub fn remove_component(&self, id: &str) -> Result<(), JournalError> {
         let inner = &self.inner;
         let mut book = inner.book();
-        book.layers.remove(id);
-        inner.resolver.set_layers(Arc::new(book.layers.clone()));
+        book.components.remove(id);
+        inner
+            .resolver
+            .set_components(Arc::new(book.components.clone()));
         for (surface, group) in Inner::navigated_to(&book, id) {
             inner.set_current(&mut book, &surface, &group, None);
             inner.publish_current(&book, &surface, &group, Origin::system())?;
@@ -864,9 +842,9 @@ impl Surfaces {
         Ok(())
     }
 
-    /// Every layer, by ID, for validating triggers and bindings.
-    pub fn layers(&self) -> BTreeMap<LayerId, Layer> {
-        self.inner.book().layers.clone()
+    /// Every component, by ID, for validating triggers and bindings.
+    pub fn components(&self) -> BTreeMap<ComponentId, Component> {
+        self.inner.book().components.clone()
     }
 
     /// The controls a surface declared when it last attached, while this
@@ -875,9 +853,9 @@ impl Surfaces {
         self.inner.book().controls.get(surface).cloned()
     }
 
-    /// The current layer of a surface's `main` navigation group, also while
+    /// The current component of a surface's `main` navigation group, also while
     /// it's detached.
-    pub fn shown(&self, surface: &str) -> Option<LayerId> {
+    pub fn shown(&self, surface: &str) -> Option<ComponentId> {
         self.inner.book().shown.get(surface).cloned().flatten()
     }
 
@@ -886,7 +864,7 @@ impl Surfaces {
         self.inner.set_bound(
             &binding.id,
             Some((
-                (binding.layer.clone(), binding.control.clone()),
+                (binding.component.clone(), binding.control.clone()),
                 resolve::Bound {
                     props: binding.props.keys().copied().collect(),
                     input: binding.input,
@@ -898,7 +876,7 @@ impl Surfaces {
             gestures.retain(|_, (id, _)| *id != binding.id);
             if let Some(g) = &binding.gestures {
                 gestures.insert(
-                    (binding.layer.clone(), binding.control.clone()),
+                    (binding.component.clone(), binding.control.clone()),
                     (binding.id.clone(), g.clone()),
                 );
             }
@@ -927,7 +905,7 @@ impl Surfaces {
     }
 
     /// Returns once bindings have caught up with every change made before:
-    /// layers evaluated and drawn.
+    /// components evaluated and drawn.
     pub async fn flush(&self) {
         self.inner.bindings.flush().await;
     }
@@ -976,24 +954,24 @@ impl Surfaces {
         self.inner.book().attached.contains_key(surface)
     }
 
-    /// Navigates a surface's `main` group to a layer, or to nothing.
+    /// Navigates a surface's `main` group to a component, or to nothing.
     pub fn show(
         &self,
         surface: &str,
-        layer: Option<&str>,
+        component: Option<&str>,
         origin: Origin,
     ) -> Result<(), ShowError> {
-        self.navigate(surface, MAIN_GROUP, layer, origin)
+        self.navigate(surface, MAIN_GROUP, component, origin)
     }
 
-    /// Navigates one of a surface's navigation groups to a layer, or to
+    /// Navigates one of a surface's navigation groups to a component, or to
     /// nothing (surfaces spec §5.3): `surface.<slug>.current.<group>`. The
-    /// layer must fit an attached surface (§5.4).
+    /// component must fit an attached surface (§5.4).
     pub fn navigate(
         &self,
         surface: &str,
         group: &str,
-        layer: Option<&str>,
+        component: Option<&str>,
         origin: Origin,
     ) -> Result<(), ShowError> {
         let inner = &self.inner;
@@ -1004,22 +982,22 @@ impl Surfaces {
         if !book.surfaces.contains_key(surface) {
             return Err(ShowError::UnknownSurface(surface.to_owned()));
         }
-        if let Some(id) = layer {
-            let layer = book
-                .layers
+        if let Some(id) = component {
+            let component = book
+                .components
                 .get(id)
                 .ok_or_else(|| ShowError::UnknownComponent(id.to_owned()))?;
             if let Some(attached) = book.attached.get(surface) {
-                let missing = missing(layer, &attached.attach.controls);
+                let missing = missing(component, &attached.attach.controls);
                 if !missing.is_empty() {
                     return Err(ShowError::DoesNotFit {
-                        layer: id.to_owned(),
+                        component: id.to_owned(),
                         missing,
                     });
                 }
             }
         }
-        inner.set_current(&mut book, surface, group, layer.map(str::to_owned));
+        inner.set_current(&mut book, surface, group, component.map(str::to_owned));
         inner.publish_current(&book, surface, group, origin)?;
         drop(book);
         inner.activated();
@@ -1042,21 +1020,21 @@ impl Surfaces {
             .surfaces
             .get(surface)
             .ok_or_else(|| AttachError::UnknownSurface(surface.to_owned()))?;
-        // The layer it showed last, or its start layer the first time.
-        let layer = match book.shown.get(surface) {
-            Some(layer) => layer.clone(),
+        // The component it showed last, or its start component the first time.
+        let component = match book.shown.get(surface) {
+            Some(component) => component.clone(),
             None => entity.start_component.clone(),
         }
         .filter(|p| {
-            book.layers
+            book.components
                 .get(p)
                 .is_some_and(|p| missing(p, &attach.controls).is_empty())
         });
-        inner.set_shown(&mut book, surface, layer);
-        // Other groups keep their layer if it still fits.
-        let fits = |l: &Option<LayerId>| {
+        inner.set_shown(&mut book, surface, component);
+        // Other groups keep their component if it still fits.
+        let fits = |l: &Option<ComponentId>| {
             l.as_ref().is_none_or(|l| {
-                book.layers
+                book.components
                     .get(l)
                     .is_some_and(|l| missing(l, &attach.controls).is_empty())
             })
@@ -1176,11 +1154,11 @@ fn check_attach(attach: &Attach) -> Result<(), AttachError> {
     Ok(())
 }
 
-/// The layer's controls the surface lacks or can't support (surfaces spec
-/// §5.4): each must be there with at least the inputs and outputs the layer
+/// The component's controls the surface lacks or can't support (surfaces spec
+/// §5.4): each must be there with at least the inputs and outputs the component
 /// lists for it.
-fn missing(layer: &Layer, controls: &[ControlDef]) -> Vec<String> {
-    layer
+fn missing(component: &Component, controls: &[ControlDef]) -> Vec<String> {
+    component
         .controls
         .iter()
         .filter(|needed| {
@@ -1204,19 +1182,12 @@ impl Surface {
     }
 }
 
-impl Layer {
-    /// Reads a layer from JSON, or one `invalid` problem.
-    pub fn parse(json: &serde_json::Value) -> Result<Layer, Vec<Problem>> {
-        crate::binding::deserialize(json, &[]).map_err(|p| vec![p])
-    }
-}
-
 /// Checks a surface: a name, a slug no other surface has, a model, and a
-/// start layer that exists.
+/// start component that exists.
 pub fn validate_surface(
     surface: &Surface,
     taken_slugs: &BTreeSet<String>,
-    layers: &BTreeMap<LayerId, Layer>,
+    components: &BTreeMap<ComponentId, Component>,
 ) -> Report {
     let mut errors = named("surface", &surface.name, &surface.slug, taken_slugs);
     if surface.model.trim().is_empty() {
@@ -1244,13 +1215,13 @@ pub fn validate_surface(
             }
         }
     }
-    if let Some(layer) = &surface.start_component
-        && !layers.contains_key(layer)
+    if let Some(component) = &surface.start_component
+        && !components.contains_key(component)
     {
         errors.push(Problem::new(
             vec![key("startComponent")],
             Code::UnknownComponent,
-            format!("no shown component {layer:?}"),
+            format!("no shown component {component:?}"),
         ));
     }
     Report {
@@ -1259,68 +1230,79 @@ pub fn validate_surface(
     }
 }
 
-/// The most controls a layer can list.
-pub const MAX_LAYER_CONTROLS: usize = 256;
+/// The most controls a component can list.
+pub const MAX_COMPONENT_CONTROLS: usize = 256;
 
-/// What a layer is checked against.
-pub struct LayerContext<'a> {
-    /// Slugs other layers have.
+/// What a component's own fields are checked against.
+pub struct FieldContext<'a> {
+    /// Slugs other components have.
     pub taken_slugs: &'a BTreeSet<String>,
-    /// The outputs the layer's bindings drive, by control.
-    pub bound: &'a BTreeMap<String, BTreeSet<OutputCapKind>>,
-    /// Every surface's ID, for `on`.
+    /// Every surface's ID, for `show.on`.
     pub surfaces: &'a BTreeSet<String>,
     /// Compiles expressions in its fields.
     pub evaluator: &'a dyn crate::expr::Evaluator,
-    /// The other layers, for `ambiguousOrder`.
-    pub others: &'a BTreeMap<LayerId, Layer>,
+    /// The other shown components, for `ambiguousOrder`.
+    pub others: &'a BTreeMap<ComponentId, Component>,
 }
 
-/// Checks a layer (surfaces spec §9): a name, a slug no other layer has, at
-/// most 256 controls with unique IDs, and every control bound on it still
-/// listed with the outputs its bindings drive. Its `on`, `when` and `rank`
-/// must name surfaces that exist and compile, and can't read resolution's
-/// results (`resolutionCycle`, surfaces spec §5.2).
-pub fn validate_layer(layer: &Layer, ctx: &LayerContext<'_>) -> Report {
-    let bound = ctx.bound;
-    let mut errors = named("layer", &layer.name, &layer.slug, ctx.taken_slugs);
-    if let Some(on) = &layer.on {
+/// Checks a component's own fields (surfaces spec §9): a name, a slug no
+/// other component has, and at most 256 controls with unique IDs. Its
+/// `show.on`, `show.when` and `show.rank` must name surfaces that exist and
+/// compile, and can't read resolution's results (`resolutionCycle`,
+/// surfaces spec §5.2). Its bindings are checked by
+/// [`crate::component::validate`].
+pub fn validate_fields(component: &Component, ctx: &FieldContext<'_>) -> Report {
+    let mut errors = named(
+        "component",
+        &component.name,
+        &component.slug,
+        ctx.taken_slugs,
+    );
+    if let Some(on) = &component.shows().on {
         for id in on.literal_ids() {
             if !ctx.surfaces.contains(id) {
                 errors.push(Problem::new(
-                    vec![key("on")],
+                    vec![key("show"), key("on")],
                     Code::UnknownSurface,
                     format!("no surface {id:?}"),
                 ));
             }
         }
         if let Selector::Expr(e) = on {
-            field_expr(e, vec![key("on"), key("expr")], ctx, &mut errors);
+            field_expr(
+                e,
+                vec![key("show"), key("on"), key("expr")],
+                ctx,
+                &mut errors,
+            );
         }
     }
-    match &layer.when {
+    match &component.shows().when {
         Some(When::Nav(group)) if !is_identifier(group) => errors.push(Problem::new(
-            vec![key("when"), key("nav")],
+            vec![key("show"), key("when"), key("nav")],
             Code::Invalid,
             format!("{group:?} isn't a navigation group's name: use letters, digits and _"),
         )),
-        Some(When::While(source)) => {
-            field_source(source, vec![key("when"), key("while")], ctx, &mut errors)
-        }
+        Some(When::While(source)) => field_source(
+            source,
+            vec![key("show"), key("when"), key("while")],
+            ctx,
+            &mut errors,
+        ),
         _ => {}
     }
-    if let Some(rank) = &layer.rank {
-        field_source(rank, vec![key("rank")], ctx, &mut errors);
+    if let Some(rank) = &component.shows().rank {
+        field_source(rank, vec![key("show"), key("rank")], ctx, &mut errors);
     }
-    if layer.controls.len() > MAX_LAYER_CONTROLS {
+    if component.controls.len() > MAX_COMPONENT_CONTROLS {
         errors.push(Problem::new(
             vec![key("controls")],
             Code::Invalid,
-            format!("a layer can have at most {MAX_LAYER_CONTROLS} controls"),
+            format!("a component can have at most {MAX_COMPONENT_CONTROLS} controls"),
         ));
     }
     let mut seen = BTreeSet::new();
-    for (i, control) in layer.controls.iter().enumerate() {
+    for (i, control) in component.controls.iter().enumerate() {
         let at = vec![key("controls"), PathSegment::Index(i as i64), key("id")];
         if control.id.is_empty() {
             errors.push(Problem::new(at, Code::Invalid, "a control needs an id"));
@@ -1332,56 +1314,39 @@ pub fn validate_layer(layer: &Layer, ctx: &LayerContext<'_>) -> Report {
             ));
         }
     }
-    for (id, outputs) in bound {
-        match layer.control(id) {
-            None => errors.push(Problem::new(
-                vec![key("controls")],
-                Code::UnknownControl,
-                format!("{id} is bound, but the layer doesn't list it"),
-            )),
-            Some(control) => {
-                for output in outputs.iter().filter(|o| !control.outputs.contains(o)) {
-                    errors.push(Problem::new(
-                        vec![key("controls")],
-                        Code::NoOutput,
-                        format!(
-                            "{id} has a binding that sets its {}, but the layer doesn't give it that output",
-                            output.as_str()
-                        ),
-                    ));
-                }
-            }
-        }
-    }
     Report {
         errors,
-        warnings: ambiguous(layer, ctx.others),
+        warnings: ambiguous(component, ctx.others),
     }
 }
 
-/// `ambiguousOrder` (surfaces spec §5.2): another layer at the same level and
+/// `ambiguousOrder` (surfaces spec §5.2): another component at the same level and
 /// literal rank covers one of the same controls and can be active at the
-/// same time. Two layers in one navigation group can't be. A rank that
+/// same time. Two components in one navigation group can't be. A rank that
 /// follows state isn't compared.
-fn ambiguous(layer: &Layer, others: &BTreeMap<LayerId, Layer>) -> Vec<Problem> {
-    let rank = |l: &Layer| match &l.rank {
+fn ambiguous(component: &Component, others: &BTreeMap<ComponentId, Component>) -> Vec<Problem> {
+    let rank = |l: &Component| match &l.shows().rank {
         None => Some(0.0),
         Some(crate::source::Source::Literal(r)) => Some(*r),
         Some(_) => None,
     };
-    let group = |l: &Layer| match l.when.clone().unwrap_or_default() {
+    let group = |l: &Component| match l.shows().when.clone().unwrap_or_default() {
         When::Nav(g) => Some(g),
         _ => None,
     };
-    let Some(mine) = rank(layer) else {
+    let Some(mine) = rank(component) else {
         return Vec::new();
     };
     others
         .values()
-        .filter(|o| o.id != layer.id && o.level == layer.level && rank(o) == Some(mine))
-        .filter(|o| group(o).is_none() || group(o) != group(layer))
+        .filter(|o| {
+            o.id != component.id
+                && o.shows().level == component.shows().level
+                && rank(o) == Some(mine)
+        })
+        .filter(|o| group(o).is_none() || group(o) != group(component))
         .filter_map(|o| {
-            let shared: Vec<&str> = layer
+            let shared: Vec<&str> = component
                 .controls
                 .iter()
                 .filter(|c| o.control(&c.id).is_some())
@@ -1389,12 +1354,12 @@ fn ambiguous(layer: &Layer, others: &BTreeMap<LayerId, Layer>) -> Vec<Problem> {
                 .collect();
             (!shared.is_empty()).then(|| {
                 Problem::new(
-                    vec![key("rank")],
+                    vec![key("show"), key("rank")],
                     Code::AmbiguousOrder,
                     format!(
                         "{} and {} can be active at once at the same level and rank, on {}: \
                          whichever became active last wins. Give one a different rank.",
-                        layer.name,
+                        component.name,
                         o.name,
                         shared.join(", ")
                     ),
@@ -1404,12 +1369,12 @@ fn ambiguous(layer: &Layer, others: &BTreeMap<LayerId, Layer>) -> Vec<Problem> {
         .collect()
 }
 
-/// A layer field's source: its expressions compile, and nothing in it
+/// A component field's source: its expressions compile, and nothing in it
 /// reads resolution's results.
 fn field_source<T>(
     source: &crate::source::Source<T>,
     base: Vec<PathSegment>,
-    ctx: &LayerContext<'_>,
+    ctx: &FieldContext<'_>,
     errors: &mut Vec<Problem>,
 ) {
     use crate::source::{Part, Ref, Root};
@@ -1437,7 +1402,7 @@ fn field_source<T>(
     });
 }
 
-fn field_expr(e: &str, at: Vec<PathSegment>, ctx: &LayerContext<'_>, errors: &mut Vec<Problem>) {
+fn field_expr(e: &str, at: Vec<PathSegment>, ctx: &FieldContext<'_>, errors: &mut Vec<Problem>) {
     if let Err(problem) = ctx.evaluator.check(e) {
         errors.push(Problem::new(at.clone(), Code::ExprSyntax, problem.message));
     }
@@ -1450,12 +1415,12 @@ fn resolution_cycle(at: Vec<PathSegment>) -> Problem {
     Problem::new(
         at,
         Code::ResolutionCycle,
-        "a layer's fields can't read which layers are active or control a control",
+        "a component's fields can't read which components are active or control a control",
     )
 }
 
 /// Whether the rest of a surface's path, after its slug, is a resolution
-/// result: `layers`, or `controls.<id>.layer`.
+/// result: `shown`, or `controls.<id>.component`.
 fn reads_resolution<'a>(mut rest: impl Iterator<Item = &'a str>) -> bool {
     match rest.next() {
         Some("shown") => true,
@@ -1465,7 +1430,7 @@ fn reads_resolution<'a>(mut rest: impl Iterator<Item = &'a str>) -> bool {
 }
 
 /// Whether an expression names a resolution result, as far as can be told
-/// without running it: `self.layers`, `self.controls.<id>.layer`, and the
+/// without running it: `self.shown`, `self.controls.<id>.component`, and the
 /// same under `surface.<slug>`. A computed path isn't caught.
 pub(crate) fn expr_reads_resolution(e: &str) -> bool {
     dotted_chains(e).iter().any(|chain| {
@@ -1541,7 +1506,7 @@ fn dotted_chains(e: &str) -> Vec<Vec<String>> {
     chains
 }
 
-/// The name and slug problems of a surface or layer.
+/// The name and slug problems of a surface or component.
 pub(crate) fn named(kind: &str, name: &str, slug: &str, taken: &BTreeSet<String>) -> Vec<Problem> {
     let mut errors = Vec::new();
     if name.trim().is_empty() {
@@ -1640,8 +1605,8 @@ async fn run(
             },
             _ = tokio::time::sleep_until(deadline.unwrap_or_else(Instant::now)), if deadline.is_some() => {
                 for found in task.recogniser.tick(Instant::now()) {
-                    let (cause, layer) = task.downs.get(&found.control).cloned().unzip();
-                    task.journal_events(layer.flatten().as_deref(), vec![found], cause);
+                    let (cause, component) = task.downs.get(&found.control).cloned().unzip();
+                    task.journal_events(component.flatten().as_deref(), vec![found], cause);
                 }
             }
         }
@@ -1656,9 +1621,9 @@ struct Task {
     recogniser: Recogniser,
     /// Each control's input state, as last written.
     controls: BTreeMap<String, InputState>,
-    /// The patch of each pressed control's press, and the layer shown then:
-    /// the cause and layer of its `long`, `hold` and `release`.
-    downs: BTreeMap<String, (Seq, Option<LayerId>)>,
+    /// The patch of each pressed control's press, and the component shown then:
+    /// the cause and component of its `long`, `hold` and `release`.
+    downs: BTreeMap<String, (Seq, Option<ComponentId>)>,
     drops: Drops,
     /// While an injected input is applied: its origin and cause.
     acting: Option<(Origin, Option<Seq>)>,
@@ -1704,7 +1669,7 @@ impl Task {
     /// Applies one input to its control's input state, a turn at a time,
     /// and journals the events each change gives.
     async fn input(&mut self, input: Input) -> Result<(), InjectError> {
-        // Cells of layers that became active since are added first.
+        // Cells of components that became active since are added first.
         self.inner.activated();
         let control = {
             let book = self.inner.book();
@@ -1874,9 +1839,9 @@ impl Task {
                 .filter(|a| a.session == self.session)?;
             book.surfaces[&self.surface].slug.clone()
         };
-        // The layer controlling the control as the input arrives, before
+        // The component controlling the control as the input arrives, before
         // the input itself can change that (surfaces spec §5.2).
-        let layer = self
+        let component = self
             .inner
             .resolver
             .controlling(&self.surface, &input.control);
@@ -1901,37 +1866,39 @@ impl Task {
             }
         };
         let state = self.controls.entry(input.control.clone()).or_default();
-        // The layer of a release is its press's; of anything else, the layer
+        // The component of a release is its press's; of anything else, the component
         // shown now.
-        let layer = match &write.change {
+        let component = match &write.change {
             Change::Pressed(true) => {
                 state.pressed = true;
                 self.downs
-                    .insert(input.control.clone(), (seq, layer.clone()));
-                layer
+                    .insert(input.control.clone(), (seq, component.clone()));
+                component
             }
             Change::Pressed(false) => {
                 state.pressed = false;
                 self.downs
                     .remove(&input.control)
-                    .map_or(layer, |(_, layer)| layer)
+                    .map_or(component, |(_, component)| component)
             }
             Change::Turned(n) => {
                 state.detents += n;
-                layer
+                component
             }
             Change::Value(v) => {
                 state.value = Some(v.clone());
-                layer
+                component
             }
             Change::Touched(t) => {
                 state.touched = *t;
-                layer
+                component
             }
         };
         // A press reads its control's timing, and keeps it (surfaces spec §11.4).
         let timing = match write.change {
-            Change::Pressed(true) => self.inner.press_timing(layer.as_deref(), &input.control),
+            Change::Pressed(true) => self
+                .inner
+                .press_timing(component.as_deref(), &input.control),
             _ => self.inner.timing,
         };
         let found = self.recogniser.change_timed(
@@ -1943,12 +1910,12 @@ impl Task {
         );
         // An echo is state only: nothing reacts to a device moving itself.
         if !input.echo {
-            self.journal_events(layer.as_deref(), found, Some(seq));
+            self.journal_events(component.as_deref(), found, Some(seq));
         }
         Some(write.edge.then_some(turn))
     }
 
-    fn journal_events(&self, layer: Option<&str>, found: Vec<Detected>, cause: Option<Seq>) {
+    fn journal_events(&self, component: Option<&str>, found: Vec<Detected>, cause: Option<Seq>) {
         for Detected {
             control,
             event,
@@ -1956,10 +1923,10 @@ impl Task {
             value,
         } in found
         {
-            // A release from a timer or detach carries its press's layer.
-            let layer = match (event, self.downs.get(&control)) {
+            // A release from a timer or detach carries its press's component.
+            let component = match (event, self.downs.get(&control)) {
                 (ControlEvent::Release, Some((_, pressed_on))) => pressed_on.as_deref(),
-                _ => layer,
+                _ => component,
             };
             // Addressed at the control (dataflow §3); a surface removed
             // since keeps its ID in place of its slug.
@@ -1978,7 +1945,7 @@ impl Task {
                 self.origin_and_cause().0,
                 Record::Event(EventRecord {
                     surface: Some(self.surface.clone()),
-                    component: layer.map(str::to_owned),
+                    component: component.map(str::to_owned),
                     control: Some(control.clone()),
                     ..EventRecord::at(
                         StatePath::new(
@@ -2049,7 +2016,7 @@ impl Task {
                 }
             }
         };
-        // Releases carry their presses' layers.
+        // Releases carry their presses' components.
         let released = self.recogniser.release_all();
         self.journal_events(None, released, Some(cause));
         inner.resolver.detach(&self.surface);
@@ -2066,7 +2033,7 @@ impl Inner {
     }
 
     /// Records what a binding sets, or that it's gone. When that changes
-    /// which properties or input a layer takes, surfaces are resolved again.
+    /// which properties or input a component takes, surfaces are resolved again.
     fn set_bound(&self, id: &str, now: Option<BoundAt>) {
         let map = {
             let mut bound = lock(&self.bound);
@@ -2086,13 +2053,15 @@ impl Inner {
     }
 
     /// A control's gesture timing at a press (surfaces spec §11.4): from the binding on
-    /// the layer controlling it, each setting read now, or the default. A
+    /// the component controlling it, each setting read now, or the default. A
     /// setting that fails is reported as the binding's problem.
-    fn press_timing(&self, layer: Option<&str>, control: &str) -> Timing {
+    fn press_timing(&self, component: Option<&str>, control: &str) -> Timing {
         let mut timing = self.timing;
-        let Some(layer) = layer else { return timing };
+        let Some(component) = component else {
+            return timing;
+        };
         let Some((binding, gestures)) = lock(&self.gestures)
-            .get(&(layer.to_owned(), control.to_owned()))
+            .get(&(component.to_owned(), control.to_owned()))
             .cloned()
         else {
             return timing;
@@ -2272,8 +2241,8 @@ impl Inner {
         ops
     }
 
-    /// A group's current layer.
-    fn current(book: &Book, surface: &str, group: &str) -> Option<LayerId> {
+    /// A group's current component.
+    fn current(book: &Book, surface: &str, group: &str) -> Option<ComponentId> {
         if group == MAIN_GROUP {
             book.shown.get(surface).cloned().flatten()
         } else {
@@ -2281,42 +2250,48 @@ impl Inner {
         }
     }
 
-    /// The slug of a group's current layer, or `null`.
+    /// The slug of a group's current component, or `null`.
     fn current_value(book: &Book, surface: &str, group: &str) -> Value {
         Self::current(book, surface, group)
-            .and_then(|p| book.layers.get(&p))
+            .and_then(|p| book.components.get(&p))
             .map_or(Value::Nil, |p| p.slug.as_str().into())
     }
 
-    /// Every `(surface, group)` whose current layer is `layer`.
-    fn navigated_to(book: &Book, layer: &str) -> Vec<(SurfaceId, String)> {
+    /// Every `(surface, group)` whose current component is `component`.
+    fn navigated_to(book: &Book, component: &str) -> Vec<(SurfaceId, String)> {
         let main = book
             .shown
             .iter()
-            .filter(|(_, l)| l.as_deref() == Some(layer))
+            .filter(|(_, l)| l.as_deref() == Some(component))
             .map(|(s, _)| (s.clone(), MAIN_GROUP.to_owned()));
         let others = book.groups.iter().flat_map(|(s, groups)| {
             groups
                 .iter()
-                .filter(|(_, l)| l.as_deref() == Some(layer))
+                .filter(|(_, l)| l.as_deref() == Some(component))
                 .map(|(g, _)| (s.clone(), g.clone()))
         });
         main.chain(others).collect()
     }
 
-    /// Sets a group's current layer.
-    fn set_current(&self, book: &mut Book, surface: &str, group: &str, layer: Option<LayerId>) {
+    /// Sets a group's current component.
+    fn set_current(
+        &self,
+        book: &mut Book,
+        surface: &str,
+        group: &str,
+        component: Option<ComponentId>,
+    ) {
         if group == MAIN_GROUP {
-            self.set_shown(book, surface, layer);
+            self.set_shown(book, surface, component);
         } else {
             book.groups
                 .entry(surface.to_owned())
                 .or_default()
-                .insert(group.to_owned(), layer);
+                .insert(group.to_owned(), component);
         }
     }
 
-    /// Tells [`Surfaces::on_active`] which layers became active since it
+    /// Tells [`Surfaces::on_active`] which components became active since it
     /// was last told.
     fn activated(&self) {
         let activated = self.resolver.take_activated();
@@ -2325,17 +2300,17 @@ impl Inner {
         }
         let hook = lock(&self.on_active).clone();
         if let Some(hook) = hook {
-            for (surface, layer) in activated {
-                hook(&surface, &layer);
+            for (surface, component) in activated {
+                hook(&surface, &component);
             }
         }
     }
 
-    /// Records the layer a surface shows, telling [`Surfaces::on_shown`] if
+    /// Records the component a surface shows, telling [`Surfaces::on_shown`] if
     /// it changed.
-    fn set_shown(&self, book: &mut Book, surface: &str, layer: Option<LayerId>) {
-        let old = book.shown.insert(surface.to_owned(), layer.clone());
-        if old.as_ref() == Some(&layer) {
+    fn set_shown(&self, book: &mut Book, surface: &str, component: Option<ComponentId>) {
+        let old = book.shown.insert(surface.to_owned(), component.clone());
+        if old.as_ref() == Some(&component) {
             return;
         }
         let hook = self
@@ -2344,7 +2319,7 @@ impl Inner {
             .unwrap_or_else(|e| e.into_inner())
             .clone();
         if let Some(hook) = hook {
-            hook(surface, layer.as_deref());
+            hook(surface, component.as_deref());
         }
     }
 
@@ -2364,14 +2339,14 @@ impl Inner {
         )
     }
 
-    /// `surface.<slug>.current.<group>`: a navigation group's current layer
+    /// `surface.<slug>.current.<group>`: a navigation group's current component
     /// (surfaces spec §5.3).
     fn current_path(slug: &str, group: &str) -> StatePath {
         StatePath::new(STATE_ROOT, vec![key(slug), key("current"), key(group)])
     }
 
     /// Tells the binding worker about an attached surface, so it draws it
-    /// from the layers resolution gives it.
+    /// from the components resolution gives it.
     fn show_on(&self, book: &Book, surface: &str) {
         if let Some(attached) = book.attached.get(surface) {
             self.bindings.show(
@@ -2411,28 +2386,24 @@ mod tests {
         }
     }
 
-    fn layer(controls: Vec<ControlSpec>) -> Layer {
-        Layer {
+    fn component(controls: Vec<ControlSpec>) -> Component {
+        Component {
             id: "l".into(),
             name: "Cams".into(),
             slug: "cams".into(),
             controls,
-            ..Layer::default()
+            ..Component::default()
         }
     }
 
     static NO_SURFACES: BTreeSet<String> = BTreeSet::new();
-    static NO_LAYERS: BTreeMap<LayerId, Layer> = BTreeMap::new();
+    static NO_LAYERS: BTreeMap<ComponentId, Component> = BTreeMap::new();
     static QJS: std::sync::LazyLock<crate::expr::QuickJs> =
         std::sync::LazyLock::new(crate::expr::QuickJs::default);
 
-    fn lctx<'a>(
-        taken: &'a BTreeSet<String>,
-        bound: &'a BTreeMap<String, BTreeSet<OutputCapKind>>,
-    ) -> LayerContext<'a> {
-        LayerContext {
+    fn lctx(taken: &BTreeSet<String>) -> FieldContext<'_> {
+        FieldContext {
             taken_slugs: taken,
-            bound,
             surfaces: &NO_SURFACES,
             evaluator: &*QJS,
             others: &NO_LAYERS,
@@ -2440,17 +2411,15 @@ mod tests {
     }
 
     #[test]
-    fn layers_that_tie_on_a_control_are_ambiguous() {
+    fn components_that_tie_on_a_control_are_ambiguous() {
         let none = BTreeSet::new();
-        let bound = BTreeMap::new();
-        let mk = |id: &str, json: serde_json::Value| {
-            let mut l = serde_json::json!({ "id": id, "name": id, "slug": id, "controls": [{ "id": "k3" }] });
-            l.as_object_mut()
-                .unwrap()
-                .extend(json.as_object().unwrap().clone());
-            Layer::parse(&l).unwrap()
+        let mk = |id: &str, show: serde_json::Value| {
+            Component::parse(&serde_json::json!({
+                "id": id, "name": id, "slug": id, "controls": [{ "id": "k3" }], "show": show
+            }))
+            .unwrap()
         };
-        let others: BTreeMap<LayerId, Layer> = [
+        let others: BTreeMap<ComponentId, Component> = [
             (
                 "strip".to_owned(),
                 mk("strip", serde_json::json!({ "when": { "always": true } })),
@@ -2458,12 +2427,12 @@ mod tests {
             ("cams".to_owned(), mk("cams", serde_json::json!({}))),
         ]
         .into();
-        let warned = |l: &Layer| {
-            let ctx = LayerContext {
+        let warned = |l: &Component| {
+            let ctx = FieldContext {
                 others: &others,
-                ..lctx(&none, &bound)
+                ..lctx(&none)
             };
-            validate_layer(l, &ctx)
+            validate_fields(l, &ctx)
                 .warnings
                 .iter()
                 .map(|p| serde_json::to_value(p).unwrap()["code"].clone())
@@ -2493,20 +2462,16 @@ mod tests {
     }
 
     #[test]
-    fn a_layers_fields_name_surfaces_and_cannot_read_resolution() {
+    fn show_names_surfaces_and_cannot_read_resolution() {
         let none = BTreeSet::new();
-        let bound = BTreeMap::new();
         let surfaces: BTreeSet<String> = ["s1".to_owned()].into();
-        let ctx = LayerContext {
+        let ctx = FieldContext {
             surfaces: &surfaces,
-            ..lctx(&none, &bound)
+            ..lctx(&none)
         };
-        let with = |json: serde_json::Value| {
-            let mut l = serde_json::json!({ "name": "Shift", "slug": "shift", "controls": [] });
-            l.as_object_mut()
-                .unwrap()
-                .extend(json.as_object().unwrap().clone());
-            codes(&validate_layer(&Layer::parse(&l).unwrap(), &ctx))
+        let with = |show: serde_json::Value| {
+            let c = serde_json::json!({ "name": "Shift", "slug": "shift", "controls": [], "show": show });
+            codes(&validate_fields(&Component::parse(&c).unwrap(), &ctx))
         };
         assert!(
             with(serde_json::json!({
@@ -2517,12 +2482,12 @@ mod tests {
         );
         assert_eq!(
             with(serde_json::json!({ "on": { "any": ["s1", "s2"] } })),
-            [(serde_json::json!(["on"]), "unknownSurface".into())]
+            [(serde_json::json!(["show", "on"]), "unknownSurface".into())]
         );
         assert_eq!(
             with(serde_json::json!({ "when": { "while": { "expr": "self.shown.length > 1" } } })),
             [(
-                serde_json::json!(["when", "while", "expr"]),
+                serde_json::json!(["show", "when", "while", "expr"]),
                 "resolutionCycle".into()
             )]
         );
@@ -2531,7 +2496,7 @@ mod tests {
                 serde_json::json!({ "rank": { "expr": "surface.deck.controls['k3'].component == 'cams' ? 1 : 0" } })
             ),
             [(
-                serde_json::json!(["rank", "expr"]),
+                serde_json::json!(["show", "rank", "expr"]),
                 "resolutionCycle".into()
             )]
         );
@@ -2540,15 +2505,15 @@ mod tests {
                 serde_json::json!({ "when": { "while": { "ref": { "root": "surface", "path": ["deck", "shown"] } } } })
             ),
             [(
-                serde_json::json!(["when", "while", "ref"]),
+                serde_json::json!(["show", "when", "while", "ref"]),
                 "resolutionCycle".into()
             )]
         );
         assert_eq!(
             with(serde_json::json!({ "when": { "nav": "pop over" } })),
-            [(serde_json::json!(["when", "nav"]), "invalid".into())]
+            [(serde_json::json!(["show", "when", "nav"]), "invalid".into())]
         );
-        // Input state and a layer's own helpers are fine to read.
+        // Input state and a component's own helpers are fine to read.
         assert!(
             with(serde_json::json!({
                 "when": { "while": { "expr": "self.controls.k3.layerName || component.cams.controls.k3.on" } }
@@ -2596,42 +2561,30 @@ mod tests {
     }
 
     #[test]
-    fn a_layer_lists_each_control_once_and_keeps_what_is_bound() {
+    fn a_component_lists_each_control_once() {
         let none = BTreeSet::new();
-        let ok = layer(vec![
+        let ok = component(vec![
             control("k0", vec![OutputCapKind::Image]),
             control("pad.36", vec![]),
         ]);
-        let image: BTreeSet<_> = [OutputCapKind::Image].into();
-        let bound = BTreeMap::from([("k0".to_owned(), image.clone())]);
-        assert!(validate_layer(&ok, &lctx(&none, &bound)).errors.is_empty());
+        assert!(validate_fields(&ok, &lctx(&none)).errors.is_empty());
 
-        let twice = layer(vec![control("k0", vec![]), control("k0", vec![])]);
+        let twice = component(vec![control("k0", vec![]), control("k0", vec![])]);
         assert_eq!(
-            codes(&validate_layer(&twice, &lctx(&none, &BTreeMap::new()))),
+            codes(&validate_fields(&twice, &lctx(&none))),
             [(
                 serde_json::json!(["controls", 1, "id"]),
                 "duplicateControl".into()
             )]
         );
 
-        let bound = BTreeMap::from([("k0".to_owned(), image.clone()), ("k9".to_owned(), image)]);
-        let lost = layer(vec![control("k0", vec![])]);
-        assert_eq!(
-            codes(&validate_layer(&lost, &lctx(&none, &bound))),
-            [
-                (serde_json::json!(["controls"]), "noOutput".into()),
-                (serde_json::json!(["controls"]), "unknownControl".into()),
-            ]
-        );
-
-        let many = layer(
+        let many = component(
             (0..257)
                 .map(|i| control(&format!("k{i}"), vec![]))
                 .collect(),
         );
         assert_eq!(
-            codes(&validate_layer(&many, &lctx(&none, &BTreeMap::new()))),
+            codes(&validate_fields(&many, &lctx(&none))),
             [(serde_json::json!(["controls"]), "invalid".into())]
         );
     }

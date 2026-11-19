@@ -116,13 +116,13 @@ describe("flow model", () => {
 
   it("reads which controls a trigger fires on, as written", () => {
     const flow = fixtures["../../../../crates/covalence-core/fixtures/flows/events.json"]!;
-    const layer = "01JBZ7P0D3F5G7H9J1K3L5M7PA";
+    const cams = "01JBZ7P0D3F5G7H9J1K3L5M7PA";
     const keys = flow.triggers[4]!;
-    expect(firesOn(keys, layer, "k1", "press")).toBe(false); // `any` with an `expr`: not a plain list
-    expect(firesOn(pressTrigger(layer, "k0"), layer, "k0", "press")).toBe(true);
-    expect(firesOn(pressTrigger(layer, "k0"), layer, "k0", "release")).toBe(false);
-    expect(firesOn({ kind: "event", from: { component: layer, controls: ["k1", "k2"] }, event: ["press", "long"] }, layer, "k2", "long")).toBe(true);
-    expect(firesOn({ kind: "event", from: { component: layer }, event: "*" }, layer, "k9", "turn")).toBe(true);
+    expect(firesOn(keys, cams, "k1", "press")).toBe(false); // `any` with an `expr`: not a plain list
+    expect(firesOn(pressTrigger(cams, "k0"), cams, "k0", "press")).toBe(true);
+    expect(firesOn(pressTrigger(cams, "k0"), cams, "k0", "release")).toBe(false);
+    expect(firesOn({ kind: "event", from: { component: cams, controls: ["k1", "k2"] }, event: ["press", "long"] }, cams, "k2", "long")).toBe(true);
+    expect(firesOn({ kind: "event", from: { component: cams }, event: "*" }, cams, "k9", "turn")).toBe(true);
     expect(describeTrigger(flow.triggers[0]!, (c) => c)).toBe("sys startup");
     expect(describeTrigger(flow.triggers[2]!, (c) => c)).toBe("surface.*.controls.* press");
     expect(describeTrigger(flow.triggers[5]!, (c) => c)).toBe("surface.*.controls.*.pressed (rising)");

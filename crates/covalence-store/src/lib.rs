@@ -232,31 +232,6 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
-    /// Writes and deletes several entities in one transaction: all of
-    /// them, or none. `None` deletes.
-    pub fn write_entities(&self, changes: &[(&str, &str, Option<&str>)]) -> Result<()> {
-        let tx = self.db.unchecked_transaction()?;
-        for (kind, id, body) in changes {
-            match body {
-                Some(body) => {
-                    tx.execute(
-                        "INSERT INTO entities (type, id, rev, body) VALUES (?1, ?2, 1, ?3)
-                         ON CONFLICT (type, id) DO UPDATE SET rev = rev + 1, body = excluded.body",
-                        [kind, id, body],
-                    )?;
-                }
-                None => {
-                    tx.execute(
-                        "DELETE FROM entities WHERE type = ?1 AND id = ?2",
-                        [kind, id],
-                    )?;
-                }
-            }
-        }
-        tx.commit()?;
-        Ok(())
-    }
-
     /// Returns whether the entity existed.
     pub fn delete_entity(&self, kind: &str, id: &str) -> Result<bool> {
         Ok(self.db.execute(
@@ -427,20 +402,6 @@ mod tests {
         assert!(store.delete_entity("connection", "a").unwrap());
         assert!(!store.delete_entity("connection", "a").unwrap());
         assert_eq!(store.entity("connection", "a").unwrap(), None);
-    }
-
-    #[test]
-    fn writes_entities_together() {
-        let store = Store::open_in_memory().unwrap();
-        store.put_entity("layer", "a", "{}").unwrap();
-        store
-            .write_entities(&[("component", "a", Some("{\"x\":1}")), ("layer", "a", None)])
-            .unwrap();
-        assert!(store.entity("layer", "a").unwrap().is_none());
-        assert_eq!(
-            store.entity("component", "a").unwrap().unwrap().body,
-            "{\"x\":1}"
-        );
     }
 
     #[test]

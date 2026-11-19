@@ -236,7 +236,7 @@ async fn a_plugin_drives_its_device_and_sockets_through_the_core() {
 
     // Output and feature reports reach the device.
     act(&server, "send", json!({ "hex": "0201ff" })).await;
-    // Draws (`0x07`) go out too: the deck is a surface, blank until a layer
+    // Draws (`0x07`) go out too: the deck is a surface, blank until a component
     // is shown.
     let output = |l: &covalence_devices::fake::Log| -> Vec<Vec<u8>> {
         l.writes.iter().filter(|w| w[0] != 0x07).cloned().collect()
@@ -394,8 +394,8 @@ async fn devices_stay_open_while_the_plugin_host_restarts() {
     server.app.clone().shutdown().await;
 }
 
-/// A layer of the test deck's 15 image keys, with a label on `k3`.
-async fn deck_layer(server: &Server) -> String {
+/// A component of the test deck's 15 image keys, with a label on `k3`.
+async fn deck_page(server: &Server) -> String {
     let controls: Vec<Value> = (0..15)
         .map(|k| {
             json!({
@@ -404,19 +404,19 @@ async fn deck_layer(server: &Server) -> String {
             })
         })
         .collect();
-    let (status, layer) = server
+    let (status, component) = server
         .post("/components", Server::page("Cams", json!(controls)))
         .await;
-    assert_eq!(status.as_u16(), 201, "{layer}");
-    let layer = layer["component"]["id"].as_str().unwrap().to_owned();
+    assert_eq!(status.as_u16(), 201, "{component}");
+    let component = component["component"]["id"].as_str().unwrap().to_owned();
     let (status, binding) = server
         .try_bind(
-            &layer,
+            &component,
             json!({ "control": "k3", "props": { "label": { "expr": "'Hi'" } } }),
         )
         .await;
     assert_eq!(status.as_u16(), 200, "{binding}");
-    layer
+    component
 }
 
 /// The JPEG images written to the fake deck's `key`, as the plugin writes
@@ -461,12 +461,12 @@ async fn a_plugin_provides_a_surface() {
         })
         .await;
 
-    // Showing a layer draws its keys on the device, as JPEG.
-    let layer = deck_layer(&server).await;
+    // Showing a component draws its keys on the device, as JPEG.
+    let component = deck_page(&server).await;
     let (status, shown) = server
         .post(
             &format!("/surfaces/{id}/current"),
-            json!({ "component": layer }),
+            json!({ "component": component }),
         )
         .await;
     assert_eq!(status.as_u16(), 200, "{shown}");
@@ -492,7 +492,7 @@ async fn a_plugin_provides_a_surface() {
         .await;
 
     // The host goes: the surface detaches, releasing a held key, and
-    // reattaches as the same entity, showing the same layer.
+    // reattaches as the same entity, showing the same component.
     fake.input("/dev/hidraw0", &[0x01, 3, 1]);
     server
         .eventually(WAIT, "k3 held", || async {

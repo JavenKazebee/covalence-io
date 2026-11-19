@@ -56,7 +56,7 @@ fn world() -> World {
     }
     for (id, slug) in [(CAMS, "cams"), (AUDIO, "audio")] {
         surfaces
-            .set_layer(common::deck_layer(id, slug, 5, 3))
+            .set_component(common::deck_page(id, slug, 5, 3))
             .unwrap();
     }
     surfaces.set_aliases([("vh".to_owned(), VH.to_owned())].into());
@@ -112,8 +112,8 @@ fn set(shared: &Shared, at: StatePath, v: Value) {
 }
 
 fn binding(id: &str, page: &str, control: &str, props: serde_json::Value) -> ControlBinding {
-    ControlBinding::parse(&json!({
-        "id": id, "layer": page, "control": control, "props": props,
+    common::placed(&json!({
+        "id": id, "component": page, "control": control, "props": props,
     }))
     .unwrap()
 }
@@ -407,7 +407,7 @@ async fn bench_a_full_page_of_expr_bindings() {
         let w = world();
         let page = format!("01JC5PAGEBENCH{cols}{rows}{size:0>9}");
         w.surfaces
-            .set_layer(common::deck_layer(
+            .set_component(common::deck_page(
                 &page,
                 &format!("bench{cols}{rows}"),
                 cols,
@@ -480,10 +480,10 @@ impl Actions for Timed {
     }
 }
 
-/// Key down → first action requested by its flow, while a full layer of
+/// Key down → first action requested by its flow, while a full component of
 /// `expr` bindings redraws for a state change made just before (the M5
 /// budget is 5 ms for a local surface). M6: the trigger is an event trigger,
-/// once on the layer's key and once a `*` path pattern, matched among 200
+/// once on the component's key and once a `*` path pattern, matched among 200
 /// other event triggers. Run with
 /// `cargo test --release -p covalence-core --test binding_worker bench -- --ignored --nocapture`.
 #[tokio::test(flavor = "multi_thread")]
@@ -491,7 +491,7 @@ impl Actions for Timed {
 async fn bench_key_down_to_first_action() {
     for (what, from) in [
         (
-            "a layer's key",
+            "a component's key",
             json!({ "component": CAMS, "controls": "k0" }),
         ),
         (
@@ -609,8 +609,8 @@ async fn a_toggle_helper_latches_a_key_and_its_events_start_flows() {
         Arc::new(QuickJs::default()),
     );
     let helper = json!({ "root": "component", "path": ["cams", "controls", "k3", "latched"] });
-    let b = ControlBinding::parse(&json!({
-        "id": "b3", "layer": CAMS, "control": "k3",
+    let b = common::placed(&json!({
+        "id": "b3", "component": CAMS, "control": "k3",
         "helpers": { "latched": { "use": "toggle" } },
         "props": { "background": {
             "use": "rules",
@@ -681,7 +681,7 @@ async fn a_toggle_helper_latches_a_key_and_its_events_start_flows() {
         .expect("the flow ran on `on`")
         .unwrap();
     assert!(requests.try_recv().is_err());
-    // The helper's events are at its cell, with its layer and control.
+    // The helper's events are at its cell, with its component and control.
     let events: Vec<_> = w
         .shared
         .journal
@@ -740,11 +740,12 @@ async fn a_value_binding_sets_a_level_and_records_what_was_sent() {
         ["e0", "e1", "f0", "f1"]
     );
     w.surfaces
-        .set_layer(covalence_core::surface::Layer {
+        .set_component(covalence_core::component::Component {
             id: MIX.into(),
             name: "mix".into(),
             slug: "mix".into(),
             controls: controls.iter().map(ControlDef::to_control_spec).collect(),
+            show: Some(covalence_core::component::Show::default()),
             ..Default::default()
         })
         .unwrap();
@@ -817,11 +818,11 @@ async fn a_value_binding_sets_a_level_and_records_what_was_sent() {
 
 #[test]
 fn a_value_needs_a_level_output_and_a_number() {
-    let layers: BTreeMap<String, covalence_core::surface::Layer> =
-        [(CAMS.to_owned(), common::deck_layer(CAMS, "cams", 5, 3))].into();
+    let components: BTreeMap<String, covalence_core::component::Component> =
+        [(CAMS.to_owned(), common::deck_page(CAMS, "cams", 5, 3))].into();
     let conns = [VH.to_owned()].into();
     let ctx = covalence_core::binding::Context {
-        layers: &layers,
+        components: &components,
         conns: &conns,
         taken: &Default::default(),
         evaluator: &covalence_core::expr::QuickJs::default(),
@@ -841,16 +842,16 @@ fn a_value_needs_a_level_output_and_a_number() {
 }
 
 /// surfaces spec §11.4: a helper with `scope: "surface"` has a cell on each surface,
-/// stepped only by that surface's input while its layer controls the
-/// control, and keeps its value while the surface shows another layer.
+/// stepped only by that surface's input while its component controls the
+/// control, and keeps its value while the surface shows another component.
 #[tokio::test]
 async fn a_surface_scoped_helper_keeps_one_value_per_surface() {
     use covalence_core::dataflow::Dataflow;
     use covalence_core::journal::{Origin, Record};
     let w = world();
     let dataflow = Dataflow::start(&w.shared);
-    let b = ControlBinding::parse(&json!({
-        "id": "b3", "layer": CAMS, "control": "k3",
+    let b = common::placed(&json!({
+        "id": "b3", "component": CAMS, "control": "k3",
         "helpers": { "latched": { "use": "toggle", "scope": "surface" } },
     }))
     .unwrap();
@@ -893,7 +894,7 @@ async fn a_surface_scoped_helper_keeps_one_value_per_surface() {
     assert_eq!(w.shared.state.value(&latched("deck")), Some(true.into()));
     assert_eq!(w.shared.state.value(&latched("other")), Some(false.into()));
 
-    // On another layer, the deck's k3 isn't this helper's.
+    // On another component, the deck's k3 isn't this helper's.
     w.surfaces
         .show(DECK, Some(AUDIO), Origin::system())
         .unwrap();
@@ -907,7 +908,7 @@ async fn a_surface_scoped_helper_keeps_one_value_per_surface() {
     settle().await;
     assert_eq!(w.shared.state.value(&latched("deck")), Some(false.into()));
 
-    // Its events are at its cell, with its surface, layer and control.
+    // Its events are at its cell, with its surface, component and control.
     let events: Vec<_> = w
         .shared
         .journal
@@ -937,18 +938,18 @@ async fn a_surface_scoped_helper_keeps_one_value_per_surface() {
 
 #[test]
 fn gesture_settings_must_be_durations() {
-    let layers: BTreeMap<String, covalence_core::surface::Layer> =
-        [(CAMS.to_owned(), common::deck_layer(CAMS, "cams", 5, 3))].into();
+    let components: BTreeMap<String, covalence_core::component::Component> =
+        [(CAMS.to_owned(), common::deck_page(CAMS, "cams", 5, 3))].into();
     let conns = [VH.to_owned()].into();
     let ctx = covalence_core::binding::Context {
-        layers: &layers,
+        components: &components,
         conns: &conns,
         taken: &Default::default(),
         evaluator: &covalence_core::expr::QuickJs::default(),
     };
     let problems = |gestures| {
-        let b = ControlBinding::parse(&json!({
-            "id": "b", "layer": CAMS, "control": "k0", "gestures": gestures,
+        let b = common::placed(&json!({
+            "id": "b", "component": CAMS, "control": "k0", "gestures": gestures,
         }))
         .unwrap();
         covalence_core::binding::validate(&b, &ctx)
@@ -969,8 +970,8 @@ fn gesture_settings_must_be_durations() {
         ]
     );
     assert!(
-        ControlBinding::parse(&json!({
-            "id": "b", "layer": CAMS, "control": "k0", "gestures": { "tripleWindow": 9 },
+        common::placed(&json!({
+            "id": "b", "component": CAMS, "control": "k0", "gestures": { "tripleWindow": 9 },
         }))
         .is_err()
     );
@@ -980,21 +981,21 @@ fn gesture_settings_must_be_durations() {
 /// would never step (surfaces spec §5.2.1).
 #[test]
 fn a_blocking_binding_has_no_helpers() {
-    let layers: BTreeMap<String, covalence_core::surface::Layer> =
-        [(CAMS.to_owned(), common::deck_layer(CAMS, "cams", 5, 3))].into();
+    let components: BTreeMap<String, covalence_core::component::Component> =
+        [(CAMS.to_owned(), common::deck_page(CAMS, "cams", 5, 3))].into();
     let conns = [VH.to_owned()].into();
     let ctx = covalence_core::binding::Context {
-        layers: &layers,
+        components: &components,
         conns: &conns,
         taken: &Default::default(),
         evaluator: &covalence_core::expr::QuickJs::default(),
     };
     let codes = |extra: serde_json::Value| {
-        let mut b = json!({ "id": "b", "layer": CAMS, "control": "k0" });
+        let mut b = json!({ "id": "b", "component": CAMS, "control": "k0" });
         b.as_object_mut()
             .unwrap()
             .extend(extra.as_object().unwrap().clone());
-        covalence_core::binding::validate(&ControlBinding::parse(&b).unwrap(), &ctx)
+        covalence_core::binding::validate(&common::placed(&b).unwrap(), &ctx)
             .errors
             .iter()
             .map(|p| serde_json::to_value(p).unwrap()["code"].clone())

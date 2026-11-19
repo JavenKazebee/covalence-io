@@ -356,24 +356,24 @@ export interface FlowDraft {
 let nextKey = 1;
 
 /** Whether a trigger fires on this event of this control, as written (IDs and lists). */
-export function firesOn(trigger: Trigger, layer: string, control: string, event: ControlEvent): boolean {
-  if (trigger.kind !== "event" || !("component" in trigger.from) || trigger.from.component !== layer) return false;
+export function firesOn(trigger: Trigger, component: string, control: string, event: ControlEvent): boolean {
+  if (trigger.kind !== "event" || !("component" in trigger.from) || trigger.from.component !== component) return false;
   const names = eventNames(trigger.event);
   if (!names.includes(event) && !names.includes("*")) return false;
   const controls = idsOf(trigger.from.controls);
   return trigger.from.controls === undefined || (controls !== null && controls.includes(control));
 }
 
-/** The controls of `layer` that an event trigger names by ID. */
-export function controlsNamed(trigger: Trigger, layer: string): string[] {
-  if (trigger.kind !== "event" || !("component" in trigger.from) || trigger.from.component !== layer) return [];
+/** The controls of `component` that an event trigger names by ID. */
+export function controlsNamed(trigger: Trigger, component: string): string[] {
+  if (trigger.kind !== "event" || !("component" in trigger.from) || trigger.from.component !== component) return [];
   return idsOf(trigger.from.controls) ?? [];
 }
 
-/** A trigger on a press of a layer's control. */
-export const pressTrigger = (layer: string, control: string): Trigger => ({
+/** A trigger on a press of a component's control. */
+export const pressTrigger = (component: string, control: string): Trigger => ({
   kind: "event",
-  from: { component: layer, controls: control },
+  from: { component: component, controls: control },
   event: "press",
 });
 
@@ -706,10 +706,10 @@ export function selectorText<Id>(selector: Selector<Id> | undefined, name: (id: 
 export function describeSource(
   from: EventSource,
   alias: (conn: string) => string,
-  layerName: (layer: string) => string = (layer) => layer,
+  componentName: (component: string) => string = (component) => component,
   surfaceName: (surface: string) => string = (surface) => surface,
 ): string {
-  if ("component" in from) return `${layerName(from.component)} ${selectorText(from.controls, (c) => c)}`;
+  if ("component" in from) return `${componentName(from.component)} ${selectorText(from.controls, (c) => c)}`;
   if ("surface" in from) return `${surfaceName(from.surface)} ${selectorText(from.controls, (c) => c)}`;
   if ("target" in from) {
     return selectorText(from.target, (t: TargetId) => alias(typeof t === "string" ? t : t.conn));
@@ -720,7 +720,7 @@ export function describeSource(
 export function describeTrigger(
   trigger: Trigger,
   alias: (conn: string) => string,
-  layerName: (layer: string) => string = (layer) => layer,
+  componentName: (component: string) => string = (component) => component,
 ): string {
   switch (trigger.kind) {
     case "api":
@@ -728,7 +728,7 @@ export function describeTrigger(
     case "call":
       return "Called by another flow";
     case "event":
-      return `${describeSource(trigger.from, alias, layerName)} ${eventNames(trigger.event).join(" or ")}${trigger.filter ? " (filtered)" : ""}`;
+      return `${describeSource(trigger.from, alias, componentName)} ${eventNames(trigger.event).join(" or ")}${trigger.filter ? " (filtered)" : ""}`;
     case "state": {
       const when = trigger.when === undefined ? "" : typeof trigger.when === "string" ? trigger.when : "a condition";
       const on = trigger.match === undefined ? when : `${trigger.match}${when ? ` where ${when}` : ""}`;

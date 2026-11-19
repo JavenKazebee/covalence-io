@@ -1,6 +1,8 @@
 //! Transform definitions (dataflow spec §4.4): every built-in's conformance
 //! suite, run through its definition and its native implementation.
 
+mod common;
+
 use std::time::{Duration, Instant};
 
 use covalence_core::source::Source;
@@ -133,9 +135,8 @@ fn native_steps_are_much_cheaper_than_sandboxed_ones() {
 
 #[test]
 fn helpers_on_a_binding_round_trip_and_must_be_reducers() {
-    use covalence_core::binding::ControlBinding;
     let json = json!({
-        "id": "b1", "layer": "L", "control": "k3", "props": {},
+        "id": "b1", "control": "k3", "props": {},
         "helpers": {
             "latched": { "use": "toggle", "as": "on" },
             "vol": { "use": "position", "max": 100, "holdoff": "300ms",
@@ -144,7 +145,7 @@ fn helpers_on_a_binding_round_trip_and_must_be_reducers() {
                      "journal": { "sampled": "100ms" } }
         }
     });
-    let b = ControlBinding::parse(&json).unwrap();
+    let b = common::placed(&json).unwrap();
     assert_eq!(serde_json::to_value(&b).unwrap(), json);
     let cells = b.helper_cells("cams");
     let homes: Vec<String> = cells.iter().map(|c| format!("{:?}", c.home.path)).collect();
@@ -153,10 +154,10 @@ fn helpers_on_a_binding_round_trip_and_must_be_reducers() {
     assert!(cells[1].control.as_ref().unwrap().input);
 
     for bad in [
-        json!({ "id": "b", "layer": "L", "control": "k", "helpers": { "x": { "use": "not", "input": true } } }),
-        json!({ "id": "b", "layer": "L", "control": "k", "helpers": { "x": { "as": "y" } } }),
-        json!({ "id": "b", "layer": "L", "control": "k", "helpers": { "x": { "use": "toggle", "scope": "room" } } }),
+        json!({ "id": "b", "control": "k", "helpers": { "x": { "use": "not", "input": true } } }),
+        json!({ "id": "b", "control": "k", "helpers": { "x": { "as": "y" } } }),
+        json!({ "id": "b", "control": "k", "helpers": { "x": { "use": "toggle", "scope": "room" } } }),
     ] {
-        assert!(ControlBinding::parse(&bad).is_err(), "{bad} parsed");
+        assert!(common::placed(&bad).is_err(), "{bad} parsed");
     }
 }

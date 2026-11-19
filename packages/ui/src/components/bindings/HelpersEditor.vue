@@ -4,7 +4,7 @@ import { api } from "../../api";
 import { helperPath, type Helper } from "../../bindings/model";
 import { useLiveState } from "../../live/useLiveState";
 import type { Json } from "../../sources/model";
-import type { Layer } from "../../surfaces/model";
+import type { Component } from "../../surfaces/model";
 import { omit, reducers, type CellProblem, type Sink } from "../../variables/model";
 import SinksEditor from "../SinksEditor.vue";
 
@@ -12,7 +12,7 @@ import SinksEditor from "../SinksEditor.vue";
  * A control's helpers (bindings spec §5): reducers on its input, each with a
  * live readout of its cell, its options and its sinks.
  */
-const props = defineProps<{ layer: Layer; control: string; binding: string }>();
+const props = defineProps<{ component: Component; control: string; binding: string }>();
 const helpers = defineModel<Record<string, Helper> | undefined>({ required: true });
 
 const entries = computed(() => Object.entries(helpers.value ?? {}));
@@ -72,12 +72,12 @@ defineExpose({ anyBad });
 
 // ---- Live values ----
 
-const layerLive = useLiveState(() => `layer.${props.layer.slug}.controls.${props.control}`);
+const componentLive = useLiveState(() => `component.${props.component.slug}.controls.${props.control}`);
 const surfaceLive = useLiveState("surface");
 function valuesOf(key: string, h: Helper): { where: string; value: string }[] {
   if (h.scope !== "surface") {
-    const path = helperPath(props.layer.slug, props.control, key, h);
-    const leaf = layerLive.leaves.value.find((l) => l.path === path);
+    const path = helperPath(props.component.slug, props.control, key, h);
+    const leaf = componentLive.leaves.value.find((l) => l.path === path);
     return [{ where: path, value: leaf === undefined ? "no value yet" : JSON.stringify(leaf.value) }];
   }
   const suffix = `.controls.${props.control}.helpers.${h.as ?? key}`;
@@ -97,8 +97,11 @@ async function loadProblems() {
 void loadProblems();
 const timer = setInterval(loadProblems, 5000);
 onBeforeUnmount(() => clearInterval(timer));
-const problemOf = (key: string) =>
-  problems.value.find((p) => p.cell === `helper:${props.binding}/${key}` || p.cell.startsWith(`helper:${props.binding}/${key}@`));
+/** A helper's cell is `helper:<component>/<binding>/<key>`, `@<surface>` for one per surface. */
+const problemOf = (key: string) => {
+  const cell = `helper:${props.component.id}/${props.binding}/${key}`;
+  return problems.value.find((p) => p.cell === cell || p.cell.startsWith(`${cell}@`));
+};
 
 const sinksOf = (h: Helper) => h.to ?? [];
 function setSinks(key: string, h: Helper, to: Sink[]) {
@@ -191,7 +194,7 @@ function setSinks(key: string, h: Helper, to: Sink[]) {
         <span
           v-if="valuesOf(key, h).length === 0"
           class="muted"
-        >No surface has shown this layer yet.</span>
+        >No surface has shown this yet.</span>
         <span
           v-if="problemOf(key)"
           class="error"

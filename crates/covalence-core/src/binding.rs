@@ -1,11 +1,11 @@
 //! Display bindings (bindings spec §1–§4, §9.2): how a control looks,
 //! kept in step with state.
 //!
-//! A [`ControlBinding`] binds properties of one control on one layer. Each
+//! A [`ControlBinding`] binds properties of one control on one component. Each
 //! property's binding is a [`Source`] (dataflow spec §10.1): a literal, a state path,
 //! an expression or a stateless transform ([`crate::transform`]). Paths and
 //! transforms are evaluated natively; expressions run on QuickJS. The worker
-//! in [`worker`] keeps the bindings of shown layers evaluated and draws what
+//! in [`worker`] keeps the bindings of shown components evaluated and draws what
 //! changes.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -14,12 +14,13 @@ use covalence_protocol::state::{Path, PathSegment};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 
+use crate::component::Component;
 use crate::expr::Evaluator;
 use crate::flow::{Code, Problem, Report};
 use crate::source::{Part, Ref, Source};
 use crate::state::{ConnId, StatePath};
 use crate::surface::render::{Look, Rgb};
-use crate::surface::{Layer, LayerId, OutputCapKind};
+use crate::surface::{ComponentId, OutputCapKind};
 use crate::transform::{MapTo, Transform};
 
 pub mod worker;
@@ -35,19 +36,19 @@ pub struct ControlBinding {
     pub id: String,
     /// The component it's in. Not stored: a component's bindings are
     /// embedded in it, and the component fills this in.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub layer: LayerId,
+    #[serde(skip)]
+    pub component: ComponentId,
     pub control: String,
     #[serde(default)]
     pub props: BTreeMap<Prop, Binding>,
     /// Reducers on the control's input, by key (bindings §5).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub helpers: BTreeMap<String, Helper>,
-    /// The control's gesture timing while this binding's layer controls it.
+    /// The control's gesture timing while this binding's component controls it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gestures: Option<Gestures>,
-    /// Whether the layer takes the control's input (surfaces spec §5.2.1).
-    /// When absent, a `replace` layer claims it and a `through` layer
+    /// Whether the component takes the control's input (surfaces spec §5.2.1).
+    /// When absent, a `replace` component claims it and a `through` component
     /// passes it down.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input: Option<InputMode>,
@@ -57,9 +58,9 @@ pub struct ControlBinding {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum InputMode {
-    /// Takes it: events carry this layer, and its helpers and triggers see them.
+    /// Takes it: events carry this component, and its helpers and triggers see them.
     Claim,
-    /// Leaves it to the layers below.
+    /// Leaves it to the components below.
     Pass,
     /// Takes it and does nothing with it.
     Block,
@@ -110,7 +111,7 @@ pub fn gesture_duration(value: &Json) -> Result<std::time::Duration, String> {
 }
 
 /// A helper (bindings §5, surfaces §4.3): a reducer whose `on` and input
-/// default to its control, and whose value is a cell under the layer.
+/// default to its control, and whose value is a cell under the component.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Helper {
     pub reducer: crate::transform::Reducer,
@@ -125,9 +126,7 @@ pub struct Helper {
 #[serde(rename_all = "lowercase")]
 pub enum HelperScope {
     /// `component.<slug>.controls.<id>.<name>`, shared by every surface.
-    /// Stored before M9 as `"layer"`.
     #[default]
-    #[serde(alias = "layer")]
     Component,
     /// `surface.<slug>.controls.<id>.helpers.<name>`, one per surface.
     Surface,
@@ -315,10 +314,10 @@ impl PropValue {
 
 /// What validation checks a binding against.
 pub struct Context<'a> {
-    pub layers: &'a BTreeMap<LayerId, Layer>,
+    pub components: &'a BTreeMap<ComponentId, Component>,
     pub conns: &'a BTreeSet<ConnId>,
-    /// `(layer, control)` pairs bound by other bindings.
-    pub taken: &'a BTreeSet<(LayerId, String)>,
+    /// `(component, control)` pairs bound by other bindings.
+    pub taken: &'a BTreeSet<(ComponentId, String)>,
     pub evaluator: &'a dyn Evaluator,
 }
 
@@ -335,9 +334,9 @@ fn at(base: &[PathSegment], more: &[PathSegment]) -> Path {
 }
 
 impl ControlBinding {
-    /// Its component-scoped helpers' cells, for a layer with this slug
+    /// Its component-scoped helpers' cells, for a component with this slug
     /// (surfaces §4.3): `component.<slug>.controls.<id>.<name>`, whose `on`
-    /// defaults to the control's events on the layer.
+    /// defaults to the control's events on the component.
     pub fn helper_cells(&self, layer_slug: &str) -> Vec<crate::dataflow::CellDef> {
         use crate::flow::EventSource;
         use crate::select::Selector;
@@ -356,7 +355,7 @@ impl ControlBinding {
                     ],
                 );
                 let from = EventSource::Component {
-                    component: self.layer.clone(),
+                    component: self.component.clone(),
                     controls: Some(Selector::One(self.control.clone())),
                 };
                 self.helper_cell(helper_cell_id(&self.id, k), h, home, from, None)
@@ -374,7 +373,7 @@ impl ControlBinding {
     /// Its surface-scoped helpers' cells on one surface (surfaces spec §11.4):
     /// `surface.<slug>.controls.<id>.helpers.<name>`, whose `on` defaults to
     /// the control's events on that surface. Only input that arrived while
-    /// the binding's layer controlled the control steps them.
+    /// the binding's component controlled the control steps them.
     pub fn surface_helper_cells(
         &self,
         surface: &str,
@@ -444,7 +443,7 @@ impl ControlBinding {
             },
             to: h.to.clone(),
             control: Some(ControlContext {
-                layer: self.layer.clone(),
+                component: self.component.clone(),
                 control: self.control.clone(),
                 input,
                 surface,
@@ -460,7 +459,7 @@ impl ControlBinding {
         }
     }
 
-    /// The outputs its properties drive, which its layer must give the
+    /// The outputs its properties drive, which its component must give the
     /// control (`noOutput`).
     pub fn outputs(&self) -> BTreeSet<OutputCapKind> {
         self.props.keys().map(|p| p.output()).collect()
@@ -547,40 +546,40 @@ fn find_targets(json: &Json, here: &mut Path, out: &mut Vec<Problem>) {
     }
 }
 
-/// Checks a parsed binding against layers, connections and the property
+/// Checks a parsed binding against components, connections and the property
 /// types.
 pub fn validate(binding: &ControlBinding, ctx: &Context) -> Report {
     let mut v = Validation {
         ctx,
         errors: Vec::new(),
     };
-    let control = match ctx.layers.get(&binding.layer) {
+    let control = match ctx.components.get(&binding.component) {
         None => {
             v.error(
-                vec![key("layer")],
+                vec![key("component")],
                 Code::UnknownLayer,
-                format!("no layer {:?}", binding.layer),
+                format!("no component {:?}", binding.component),
             );
             None
         }
-        Some(layer) => match layer.control(&binding.control) {
+        Some(component) => match component.control(&binding.control) {
             None => {
                 v.error(
                     vec![key("control")],
                     Code::UnknownControl,
-                    format!("the layer doesn't list a control {:?}", binding.control),
+                    format!("the component doesn't list a control {:?}", binding.control),
                 );
                 None
             }
             Some(control) => {
                 if ctx
                     .taken
-                    .contains(&(binding.layer.clone(), binding.control.clone()))
+                    .contains(&(binding.component.clone(), binding.control.clone()))
                 {
                     v.error(
                         vec![key("control")],
                         Code::DuplicateControl,
-                        format!("{} is already bound on this layer", binding.control),
+                        format!("{} is already bound on this component", binding.control),
                     );
                 }
                 Some(control)
@@ -603,7 +602,7 @@ pub fn validate(binding: &ControlBinding, ctx: &Context) -> Report {
                     vec![key("props"), key(prop.as_str())],
                     Code::NoOutput,
                     format!(
-                        "{} needs an {} output, and the layer doesn't give {} one",
+                        "{} needs an {} output, and the component doesn't give {} one",
                         prop.as_str(),
                         output.as_str(),
                         binding.control

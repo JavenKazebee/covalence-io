@@ -18,7 +18,7 @@ import { controlEvents, eventHelp } from "../surfaces/model";
 
 /**
  * Where an event trigger's events come from (dataflow §3.1), and which
- * events: a key on a layer or a surface, a connection by ID or plugin, or
+ * events: a key on a page or a surface, a connection by ID or plugin, or
  * any node by path, with `*` patterns.
  */
 const props = defineProps<{ index: number; problems: ShownProblem[] }>();
@@ -43,7 +43,7 @@ function setKind(next: EventSourceKind) {
   const t = trigger.value;
   switch (next) {
     case "component":
-      t.from = { component: surfaces.layers[0]?.id ?? "" };
+      t.from = { component: surfaces.shown[0]?.id ?? "" };
       t.event = "press";
       break;
     case "surface":
@@ -82,7 +82,7 @@ function setControls(text: string) {
 }
 
 const controlsOf = computed(() => {
-  if (kind.value === "component") return surfaces.layer(String(from.value.component))?.controls.map((c) => c.id) ?? [];
+  if (kind.value === "component") return surfaces.component(String(from.value.component))?.controls.map((c) => c.id) ?? [];
   return [];
 });
 
@@ -206,16 +206,16 @@ const fieldProblems = (field: string) => props.problems.filter((p) => p.path[2] 
     <template v-if="kind === 'component'">
       <select
         v-model="from.component"
-        :aria-label="`${label} layer`"
+        :aria-label="`${label} component`"
       >
         <option
-          v-if="!surfaces.layer(String(from.component))"
+          v-if="!surfaces.component(String(from.component))"
           :value="from.component"
         >
           {{ from.component || "Pick a page" }}
         </option>
         <option
-          v-for="l in surfaces.layers"
+          v-for="l in surfaces.components"
           :key="l.id"
           :value="l.id"
         >

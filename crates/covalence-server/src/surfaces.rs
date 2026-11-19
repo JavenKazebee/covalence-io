@@ -20,7 +20,7 @@ use covalence_core::journal::Origin;
 use covalence_core::state::ConnId;
 use covalence_core::surface::render::Rgb;
 use covalence_core::surface::{
-    self, ControlDef, Layer, LayerId, ShowError, Surface, SurfaceId, Surfaces,
+    self, ComponentId, ControlDef, ShowError, Surface, SurfaceId, Surfaces,
 };
 use covalence_core::text_path;
 use serde::Deserialize;
@@ -61,15 +61,6 @@ impl App {
         read(&self.components).clone()
     }
 
-    /// Every component as resolution reads it, shown or not: what event
-    /// triggers are checked against (surfaces spec §7).
-    pub fn component_layers(&self) -> BTreeMap<LayerId, Layer> {
-        read(&self.components)
-            .iter()
-            .map(|(id, c)| (id.clone(), c.layer()))
-            .collect()
-    }
-
     /// Evaluates a binding once against live state, as the binding worker
     /// would, and draws it. Blocks for up to the binding time limit.
     pub fn preview_binding(
@@ -100,7 +91,7 @@ struct NavigateBody {
     /// `main` when absent.
     #[serde(default)]
     group: Option<String>,
-    component: Option<LayerId>,
+    component: Option<ComponentId>,
 }
 
 /// Navigates one of a surface's navigation groups, `main` by default, to a
@@ -139,9 +130,9 @@ async fn navigate(
             "unknownComponent",
             e.to_string(),
         ),
-        Err(ShowError::DoesNotFit { layer, missing }) => {
+        Err(ShowError::DoesNotFit { component, missing }) => {
             let message = ShowError::DoesNotFit {
-                layer,
+                component,
                 missing: missing.clone(),
             }
             .to_string();
@@ -175,7 +166,7 @@ async fn surface_controls(
 async fn component_problems(State(app): State<Arc<App>>) -> Json<Vec<JsonValue>> {
     let fields = app
         .surfaces()
-        .layer_problems()
+        .show_problems()
         .into_iter()
         .map(|((component, field), message)| {
             json!({ "component": component, "field": ["show", field], "message": message })
@@ -335,13 +326,20 @@ impl EntityKind for Surface {
         if self.slug.is_empty() {
             self.slug = flow::derive_slug_for("surface", &self.name, &taken);
         }
-        surface::validate_surface(self, &taken, &app.surfaces.layers())
+        surface::validate_surface(self, &taken, &app.surfaces.components())
     }
 
     fn refs(&self) -> Vec<Ref> {
         self.start_component
             .iter()
-            .map(|layer| Ref::new(component::ENTITY, layer, "startComponent", OnDelete::Clear))
+            .map(|component| {
+                Ref::new(
+                    component::ENTITY,
+                    component,
+                    "startComponent",
+                    OnDelete::Clear,
+                )
+            })
             .collect()
     }
 
@@ -362,7 +360,7 @@ impl EntityKind for Surface {
         Ok(())
     }
 
-    /// Detaches it, and forgets the layer it showed and its helpers.
+    /// Detaches it, and forgets the component it showed and its helpers.
     fn unapply(id: &str, app: &App) -> Result<(), SaveError> {
         app.delete_entity(crate::SHOWN_ENTITY, id)?;
         app.surfaces.remove_surface(id)?;
@@ -413,10 +411,10 @@ impl EntityKind for Component {
         if self.slug.is_empty() {
             self.slug = flow::derive_slug_for("component", &self.name, &taken);
         }
-        let others: BTreeMap<LayerId, Layer> = read(&app.components)
+        let others: BTreeMap<ComponentId, Component> = read(&app.components)
             .values()
-            .filter(|c| c.id != self.id)
-            .filter_map(|c| c.shown().map(|l| (c.id.clone(), l)))
+            .filter(|c| c.id != self.id && c.show.is_some())
+            .map(|c| (c.id.clone(), c.clone()))
             .collect();
         let surfaces: BTreeSet<String> = read(&app.surface_entities).keys().cloned().collect();
         let conns = app.conn_ids();
@@ -435,14 +433,11 @@ impl EntityKind for Component {
     /// Shows it, or stops showing it, and replaces its bindings and their
     /// helpers' cells, which live under its slug.
     fn apply(&self, app: &App) -> Result<(), SaveError> {
-        match self.shown() {
-            Some(layer) => app.surfaces.set_layer(layer)?,
-            None => app.surfaces.remove_layer(&self.id)?,
-        }
+        app.surfaces.set_component(self.clone())?;
         let new = self.runtime_bindings();
         let gone: Vec<String> = read(&app.bindings)
             .values()
-            .filter(|b| b.layer == self.id && !new.iter().any(|n| n.id == b.id))
+            .filter(|b| b.component == self.id && !new.iter().any(|n| n.id == b.id))
             .map(|b| b.id.clone())
             .collect();
         for id in &gone {
@@ -457,16 +452,16 @@ impl EntityKind for Component {
     }
 
     fn unapply(id: &str, app: &App) -> Result<(), SaveError> {
-        app.surfaces.remove_layer(id)?;
+        app.surfaces.remove_component(id)?;
         let gone: Vec<String> = read(&app.bindings)
             .values()
-            .filter(|b| b.layer == id)
+            .filter(|b| b.component == id)
             .map(|b| b.id.clone())
             .collect();
         for b in &gone {
             app.remove_binding(b);
         }
-        app.forget_layer(id);
+        app.forget_component(id);
         Ok(())
     }
 

@@ -126,7 +126,7 @@ function time(ms: number | undefined): string {
             </div>
           </td>
           <td class="muted">
-            {{ f.triggers.length === 0 ? "None" : f.triggers.map((t) => describeTrigger(t, catalog.alias, surfaces.layerName)).join(", ") }}
+            {{ f.triggers.length === 0 ? "None" : f.triggers.map((t) => describeTrigger(t, catalog.alias, surfaces.componentName)).join(", ") }}
           </td>
           <td>
             <span

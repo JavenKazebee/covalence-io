@@ -119,7 +119,7 @@ pub enum Resolved {
 pub enum ScopeName {
     /// The own instance's parameters, in a template's body.
     Params,
-    /// Where it's being evaluated: a layer field's surface.
+    /// Where it's being evaluated: a component field's surface.
     #[serde(rename = "self")]
     This,
     /// A `forEach` instance's item, while its params are bound.

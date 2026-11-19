@@ -1,6 +1,7 @@
-// Surfaces and layers (surfaces spec §1, §2). Mirrors `covalence_core::surface`
+// Surfaces and components (surfaces spec §1, §2). Mirrors `covalence_core::surface`
 // by hand.
 
+import type { ControlBinding, RuntimeProblem } from "../bindings/model";
 import type { Problem } from "../flows/model";
 import { toExpr, type Aliases, type Source } from "../sources/model";
 
@@ -57,19 +58,34 @@ export interface ControlDef {
   outputs?: { kind: OutputKind; motor?: boolean }[];
 }
 
-/** A control a layer covers, and what it needs that control to do. */
-export interface LayerControl {
+/** A control a component covers, and what it needs that control to do. */
+export interface ControlSpec {
   id: string;
   at?: Placement;
   inputs?: InputKind[];
   outputs?: OutputKind[];
 }
 
-export interface Layer {
+/**
+ * Whatever is on a set of controls (composition spec §7): its controls, the
+ * bindings of each, and, when it's shown on surfaces, `show`. Mirrors
+ * `covalence_core::component` by hand.
+ */
+export interface Component {
+  /** Empty in a create request. */
   id: string;
   name: string;
+  /** Derived from `name` by the server when empty. */
   slug: string;
-  controls: LayerControl[];
+  controls: ControlSpec[];
+  /** One per bound control, with IDs unique in the component. */
+  bindings?: ControlBinding[];
+  /** Shown on surfaces (composition spec §7.3); absent, it's only used inside others. */
+  show?: Show;
+}
+
+/** Where and when a component is shown (surfaces spec §5.2, §5.3). */
+export interface Show {
   /** The surfaces it may appear on, by ID; every surface when absent (surfaces spec §1). */
   on?: string | string[] | { expr: string } | { any: unknown[] } | { all: unknown[] } | { not: unknown };
   /** When it's active; `{nav: "main"}` when absent (surfaces spec §5.3). */
@@ -78,11 +94,42 @@ export interface Layer {
   level?: Level;
   /** Its order within its level, 0 to 99. */
   rank?: Source;
-  /** `through`: sets only what it binds, the rest from the layers below (surfaces spec §5.2.1). */
+  /** `through`: sets only what it binds, the rest from the components below (surfaces spec §5.2.1). */
   cascade?: "replace" | "through";
 }
 
-/** When a layer is active (surfaces spec §5.3). Mirrors `covalence_core::surface::When`. */
+/** `GET /components/problems`: a failing `show` field or binding property. */
+export interface ComponentProblem {
+  component: string;
+  /** `["show", <field>]` or `["bindings", <id>, "props", <prop>]`. */
+  field: string[];
+  message: string;
+}
+
+/** A component's runtime problems with its binding properties, by binding ID. */
+export function bindingRuntime(problems: ComponentProblem[], component: string): RuntimeProblem[] {
+  return problems
+    .filter((p) => p.component === component && p.field[0] === "bindings" && p.field[2] === "props")
+    .map((p) => ({ binding: p.field[1]!, prop: p.field[3] as RuntimeProblem["prop"], message: p.message }));
+}
+
+/** A new binding's ID, unique in its component: the lowest free `b<n>`. */
+export function newBindingId(c: Component): string {
+  const taken = new Set((c.bindings ?? []).map((b) => b.id));
+  for (let n = 1; ; n++) {
+    const id = `b${n}`;
+    if (!taken.has(id)) return id;
+  }
+}
+
+/** A component's problems under one of its bindings, relative to it. */
+export function bindingProblems<P extends Problem>(problems: P[], index: number): P[] {
+  return problems
+    .filter((p) => p.path[0] === "bindings" && p.path[1] === index)
+    .map((p) => ({ ...p, path: p.path.slice(2) }));
+}
+
+/** When a component is active (surfaces spec §5.3). Mirrors `covalence_core::surface::When`. */
 export type When = { nav: string } | { always: true } | { while: Source };
 
 export const levels = ["under", "normal", "over"] as const;
@@ -104,7 +151,7 @@ export const presetNames: Record<Preset, string> = {
 
 const SHIFT = /^self\.controls\.([A-Za-z0-9_.-]+)\.pressed$/;
 
-/** The key a shift layer's `when` holds, if it's the shift preset. */
+/** The key a shift's `when` holds, if it's the shift preset. */
 export function shiftKey(when: When | undefined): string | undefined {
   if (when === undefined || !("while" in when)) return undefined;
   const w = when.while;
@@ -112,7 +159,7 @@ export function shiftKey(when: When | undefined): string | undefined {
   return SHIFT.exec(String(w.expr).trim())?.[1];
 }
 
-/** Which preset a layer's `when` is. */
+/** Which preset a `when` is. */
 export function presetOf(when: When | undefined): Preset {
   if (when === undefined || "nav" in when) return when === undefined || when.nav !== "popover" ? "nav" : "popover";
   if ("always" in when) return "always";
@@ -143,7 +190,7 @@ export function whenExpr(when: When | undefined, slug: string, aliases: Aliases)
   return toExpr(w.while, aliases);
 }
 
-/** "while k15 is held", "in main", "always": how a layer's `when` reads. */
+/** "while k15 is held", "in main", "always": how a `when` reads. */
 export function whenText(when: When | undefined): string {
   const w = when ?? { nav: MAIN_GROUP };
   if ("nav" in w) return w.nav === MAIN_GROUP ? "main" : `in ${w.nav}`;
@@ -159,27 +206,27 @@ export function literalRank(rank: Source | undefined): number | null {
 }
 
 /**
- * The layers that could control a control, highest first, as far as their
- * literal fields tell: by level, then literal rank (a computed one counts as
- * 0). Recency isn't known ahead, so ties keep the order given.
+ * The shown components that could control a control, highest first, as far
+ * as their literal fields tell: by level, then literal rank (a computed one
+ * counts as 0). Recency isn't known ahead, so ties keep the order given.
  */
-export function candidates(control: string, layers: readonly Layer[]): Layer[] {
-  const order = (l: Layer) => levels.indexOf(l.level ?? "normal") * 100 + (literalRank(l.rank) ?? 0);
-  return layers
-    .filter((l) => l.controls.some((c) => c.id === control))
+export function candidates(control: string, components: readonly Component[]): Component[] {
+  const order = (c: Component) => levels.indexOf(c.show?.level ?? "normal") * 100 + (literalRank(c.show?.rank) ?? 0);
+  return components
+    .filter((c) => c.show !== undefined && c.controls.some((k) => k.id === control))
     .map((l, i) => ({ l, i }))
     .sort((a, b) => order(b.l) - order(a.l) || a.i - b.i)
     .map(({ l }) => l);
 }
 
 /** "k3: Shift (over, while k15 is held), otherwise Cameras (main)". */
-export function candidatesText(control: string, layers: readonly Layer[]): string {
-  const found = candidates(control, layers);
-  if (found.length === 0) return `${control}: no layer covers it`;
-  const one = (l: Layer) => {
-    const level = l.level !== undefined && l.level !== "normal" ? `${l.level}, ` : "";
-    const through = l.cascade === "through" ? "through, " : "";
-    return `${l.name} (${level}${through}${whenText(l.when)})`;
+export function candidatesText(control: string, components: readonly Component[]): string {
+  const found = candidates(control, components);
+  if (found.length === 0) return `${control}: nothing shown covers it`;
+  const one = (c: Component) => {
+    const level = c.show?.level !== undefined && c.show.level !== "normal" ? `${c.show.level}, ` : "";
+    const through = c.show?.cascade === "through" ? "through, " : "";
+    return `${c.name} (${level}${through}${whenText(c.show?.when)})`;
   };
   return `${control}: ${found.map(one).join(", otherwise ")}`;
 }
@@ -189,8 +236,8 @@ export interface SavedSurface {
   warnings: Problem[];
 }
 
-export interface SavedLayer {
-  layer: Layer;
+export interface SavedComponent {
+  component: Component;
   warnings: Problem[];
 }
 
@@ -252,8 +299,8 @@ export function surfaceControls(surface: Pick<Surface, "model" | "virtual">): Co
   return model === undefined ? undefined : deckControls(model, surface.virtual);
 }
 
-/** What a new layer copies from a surface's control. */
-export function toLayerControl(def: ControlDef): LayerControl {
+/** What a new page copies from a surface's control. */
+export function toControlSpec(def: ControlDef): ControlSpec {
   return {
     id: def.id,
     at: { ...def.at },
@@ -263,11 +310,11 @@ export function toLayerControl(def: ControlDef): LayerControl {
 }
 
 /**
- * The layer's controls a surface with `controls` lacks or can't support
- * (surfaces spec §5.4). Empty when the layer fits.
+ * The component's controls a surface with `controls` lacks or can't support
+ * (surfaces spec §5.4). Empty when it fits.
  */
-export function missingControls(layer: Layer, controls: ControlDef[]): string[] {
-  return layer.controls
+export function missingControls(component: Pick<Component, "controls">, controls: ControlDef[]): string[] {
+  return component.controls
     .filter((needed) => {
       const there = controls.find((c) => c.id === needed.id);
       if (there === undefined) return true;
@@ -279,7 +326,7 @@ export function missingControls(layer: Layer, controls: ControlDef[]): string[] 
 }
 
 export interface Cell {
-  control: LayerControl;
+  control: ControlSpec;
   x: number;
   y: number;
   w: number;
@@ -290,7 +337,7 @@ export interface Cell {
  * Where the editor draws each control: at its `at`, or for one without, in a
  * row below the rest. Columns and rows are the extent of them all.
  */
-export function gridOf(controls: LayerControl[]): { cells: Cell[]; cols: number; rows: number } {
+export function gridOf(controls: ControlSpec[]): { cells: Cell[]; cols: number; rows: number } {
   const placed = controls.filter((c) => c.at !== undefined);
   const below = placed.reduce((n, c) => Math.max(n, c.at!.y + (c.at!.h ?? 1)), 0);
   let x = 0;
@@ -351,8 +398,8 @@ const eventInput: Record<ControlEvent, InputKind> = {
   untouch: "touch",
 };
 
-/** The events a layer's control can give, from the inputs the layer lists for it. */
-export function eventsFor(control: LayerControl | undefined): ControlEvent[] {
+/** The events a component's control can give, from the inputs it lists for it. */
+export function eventsFor(control: ControlSpec | undefined): ControlEvent[] {
   const inputs = new Set(control?.inputs ?? []);
   return controlEvents.filter((e) => inputs.has(eventInput[e]));
 }

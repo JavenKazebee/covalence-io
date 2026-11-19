@@ -14,7 +14,7 @@
 //! in the batch can refer to it.
 //!
 //! Checks that read the running core rather than the app's copies (a flow's
-//! layers, for one) see what's applied already, not the rest of the batch.
+//! components, for one) see what's applied already, not the rest of the batch.
 
 use std::any::Any;
 use std::collections::BTreeMap;

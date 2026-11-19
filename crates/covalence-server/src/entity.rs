@@ -117,7 +117,7 @@ pub struct Ref {
 pub enum OnDelete {
     /// It's deleted too.
     Cascade,
-    /// The reference is cleared: a surface whose start layer goes has none.
+    /// The reference is cleared: a surface whose start component goes has none.
     Clear,
 }
 

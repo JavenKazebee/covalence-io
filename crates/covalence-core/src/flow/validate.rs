@@ -9,6 +9,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::{Cond, EventSource, Flow, Names, Step, StepKind, Trigger};
+use crate::component::Component;
 use crate::compose;
 use crate::expr::{At, Evaluator};
 use crate::journal::ControlEvent;
@@ -16,7 +17,7 @@ use crate::param::ParamDef;
 use crate::select::{Controls, Issue, Pattern, Selector, Targets};
 use crate::source::{Part, Ref, ScopeName, Source};
 use crate::state::ConnId;
-use crate::surface::{self, Layer, LayerId};
+use crate::surface::{self, ComponentId};
 use crate::{core_conn, schema};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -43,17 +44,17 @@ pub enum Code {
     BadPath,
     /// A `branch` without arms.
     NoArms,
-    /// A binding on a layer that doesn't exist.
+    /// A binding on a component that doesn't exist.
     UnknownLayer,
     /// An event trigger, or a surface's start, naming a component that
     /// doesn't exist (surfaces spec §7).
     UnknownComponent,
-    /// A `control` trigger or binding on a control its layer doesn't list.
+    /// A `control` trigger or binding on a control its component doesn't list.
     UnknownControl,
-    /// A second binding for a control on the same layer, or a layer that
+    /// A second binding for a control on the same component, or a component that
     /// lists a control twice.
     DuplicateControl,
-    /// A binding on a control whose layer doesn't give it the output the
+    /// A binding on a control whose component doesn't give it the output the
     /// binding drives.
     NoOutput,
     /// A binding value that doesn't fit its property: a colour that isn't one.
@@ -62,9 +63,9 @@ pub enum Code {
     ReadOnly,
     /// Computed variables whose reads form a cycle (dataflow §5.3).
     Cycle,
-    /// A layer field that reads layer resolution's results (surfaces spec §5.2).
+    /// A component field that reads component resolution's results (surfaces spec §5.2).
     ResolutionCycle,
-    /// A layer's `on` naming a surface that doesn't exist.
+    /// A component's `on` naming a surface that doesn't exist.
     UnknownSurface,
     /// A `call` step on a flow that doesn't exist.
     UnknownFlow,
@@ -107,7 +108,7 @@ pub enum Code {
     NoTimeout,
     /// A `set` to a variable no `variable` entity declares (dataflow §6).
     UndeclaredVariable,
-    /// Two layers that can be active at once, at the same level and rank,
+    /// Two components that can be active at once, at the same level and rank,
     /// on the same control: recency decides (surfaces spec §5.2).
     AmbiguousOrder,
 }
@@ -153,8 +154,8 @@ pub struct Context<'a> {
     pub conns: &'a BTreeMap<ConnId, Option<&'a Manifest>>,
     /// Slugs taken by other flows.
     pub taken_slugs: &'a BTreeSet<String>,
-    /// Every layer, by ID.
-    pub layers: &'a BTreeMap<LayerId, Layer>,
+    /// Every component, by ID.
+    pub components: &'a BTreeMap<ComponentId, Component>,
     /// Every surface's ID.
     pub surfaces: &'a BTreeSet<String>,
     /// Every flow by ID, this one included as it's being saved: `call`
@@ -872,7 +873,7 @@ impl<'a> Validation<'a> {
                 component,
                 controls,
             } => {
-                let Some(def) = self.ctx.layers.get(component) else {
+                let Some(def) = self.ctx.components.get(component) else {
                     self.error(
                         join(at, &[key("component")]),
                         Code::UnknownComponent,
@@ -963,7 +964,7 @@ impl<'a> Validation<'a> {
                         at.clone(),
                         Code::Unsupported,
                         format!(
-                            "{} gives no {name:?} events: that needs a {} input, and the layer doesn't list one for it",
+                            "{} gives no {name:?} events: that needs a {} input, and the component doesn't list one for it",
                             control.id,
                             needs.as_str()
                         ),

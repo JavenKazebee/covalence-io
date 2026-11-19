@@ -62,7 +62,6 @@ describe("binding model", () => {
   it("keeps what the editor doesn't edit: other properties, helpers and gestures", () => {
     const binding: ControlBinding = {
       id: "b",
-      layer: "p",
       control: "f0",
       props: { value: { ref: { conn: VH, path: ["level"] } }, label: "Vol" },
       helpers: { level: { use: "absolute", follow: { ref: { conn: VH, path: ["level"] } } } },
@@ -125,7 +124,7 @@ describe("binding model", () => {
   });
 
   it("leaves out properties left unbound, in the editor's order", () => {
-    const draft: ControlBinding = { id: "", layer: "p", control: "k0", props: { background: newSource("expr"), label: undefined } };
+    const draft: ControlBinding = { id: "", control: "k0", props: { background: newSource("expr"), label: undefined } };
     expect(Object.keys(fromDraft(draft).props)).toEqual(["background"]);
   });
 });

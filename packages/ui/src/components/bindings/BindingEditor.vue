@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch, type Ref } from "vue";
-import { api, ApiError } from "../../api";
+import { ApiError } from "../../api";
 import { provideInvalid } from "../../bindings/editing";
 import {
   fromDraft,
@@ -18,7 +18,8 @@ import { usePreviews } from "../../bindings/usePreviews";
 import { firesOn, newFlowDraft, pressTrigger, type ShownProblem } from "../../flows/model";
 import { navigate } from "../../nav";
 import { useFlowsStore } from "../../stores/flows";
-import type { Layer } from "../../surfaces/model";
+import { useSurfacesStore } from "../../stores/surfaces";
+import type { Component } from "../../surfaces/model";
 import HelpersEditor from "./HelpersEditor.vue";
 import PropEditor from "./PropEditor.vue";
 
@@ -28,7 +29,7 @@ import PropEditor from "./PropEditor.vue";
  * deletes the binding.
  */
 const props = defineProps<{
-  layer: Layer;
+  component: Component;
   control: string;
   stored: ControlBinding | undefined;
   runtime: RuntimeProblem[];
@@ -38,11 +39,12 @@ const props = defineProps<{
 const emit = defineEmits<{ saved: [] }>();
 
 const flows = useFlowsStore();
+const surfaces = useSurfacesStore();
 const invalid = provideInvalid();
 
-// Mounted per control (keyed by the layer editor), so the draft starts from what's stored.
+// Mounted per control (keyed by the component editor), so the draft starts from what's stored.
 // Deeply reactive, but typed without unwrapping: sources nest too deeply for `UnwrapRef`.
-const draft = ref<unknown>(props.stored === undefined ? newDraft(props.layer.id, props.control) : toDraft(props.stored)) as Ref<ControlBinding>;
+const draft = ref<unknown>(props.stored === undefined ? newDraft(props.control) : toDraft(props.stored)) as Ref<ControlBinding>;
 const problems = ref<ShownProblem[]>([]);
 const saving = ref(false);
 const saveError = ref<string | null>(null);
@@ -57,7 +59,7 @@ const empty = computed(() => isEmpty(sending.value));
 
 // ---- Input (surfaces spec §5.2.1) ----
 
-const through = computed(() => props.layer.cascade === "through");
+const through = computed(() => props.component.show?.cascade === "through");
 /** What the key does with presses when `input` isn't set. */
 const defaultInput = computed<InputMode>(() => (through.value ? "pass" : "claim"));
 const input = computed<InputMode | "">({
@@ -68,7 +70,7 @@ const input = computed<InputMode | "">({
   },
 });
 /**
- * On a `through` layer, a key given something that needs its presses (a
+ * In a `through` component, a key given something that needs its presses (a
  * helper, a flow) claims them, so it's stored rather than inferred.
  */
 function claimIfThrough() {
@@ -81,12 +83,12 @@ watch(
   },
 );
 const helpersEditor = ref<InstanceType<typeof HelpersEditor> | null>(null);
-const baseline = computed(() => JSON.stringify(props.stored === undefined ? newDraft(props.layer.id, props.control) : fromDraft(props.stored)));
+const baseline = computed(() => JSON.stringify(props.stored === undefined ? newDraft(props.control) : fromDraft(props.stored)));
 const dirty = computed(() => JSON.stringify(sending.value) !== baseline.value);
 
 const runtimeOf = (prop: string) => props.runtime.find((p) => p.prop === prop)?.message;
 const problemsOf = (prop: string) => problems.value.filter((p) => p.path[0] === "props" && p.path[1] === prop);
-/** Problems no property shows: the layer, the control, the binding as a whole. */
+/** Problems no property shows: the control, the binding as a whole. */
 const otherProblems = computed(() => [
   ...problems.value.filter((p) => !(p.path[0] === "props" && allProps.includes(p.path[1] as never))),
   ...(result.value?.problems ?? []).map((p) => ({ ...p, warning: false })),
@@ -102,12 +104,12 @@ async function save() {
   saving.value = true;
   try {
     if (empty.value) {
-      if (props.stored !== undefined) await api.deleteBinding(props.stored);
-      draft.value = newDraft(props.layer.id, props.control);
+      if (props.stored !== undefined) await surfaces.removeBinding(props.component.id, props.stored.id);
+      draft.value = newDraft(props.control);
       problems.value = [];
       savedNote.value = "Unbound.";
     } else {
-      const saved = sending.value.id === "" ? await api.createBinding(sending.value) : await api.updateBinding(sending.value);
+      const saved = await surfaces.saveBinding(props.component.id, sending.value);
       draft.value = toDraft(saved.binding);
       problems.value = saved.warnings.map((p) => ({ ...p, warning: true }));
       savedNote.value = saved.warnings.length > 0 ? "Saved, with warnings." : "Saved.";
@@ -130,7 +132,7 @@ async function save() {
 }
 
 function revert() {
-  draft.value = props.stored === undefined ? newDraft(props.layer.id, props.control) : toDraft(props.stored);
+  draft.value = props.stored === undefined ? newDraft(props.control) : toDraft(props.stored);
   problems.value = [];
   saveError.value = null;
   savedNote.value = null;
@@ -139,9 +141,9 @@ function revert() {
 // ---- When pressed ----
 
 /** The flow that runs when this key is pressed, if there is one. */
-const pressFlow = computed(() => flows.flows.find((f) => f.triggers.some((t) => firesOn(t, props.layer.id, props.control, "press"))));
+const pressFlow = computed(() => flows.flows.find((f) => f.triggers.some((t) => firesOn(t, props.component.id, props.control, "press"))));
 
-/** A flow on a `through` layer's key needs its presses: it claims them first. */
+/** A flow on a key in a `through` component needs its presses: it claims them first. */
 async function whenPressedAndClaim() {
   if (through.value && draft.value.input === undefined) {
     claimIfThrough();
@@ -158,8 +160,8 @@ function whenPressed() {
   // A Button-view flow: this key's press, then steps in order.
   const flow = newFlowDraft();
   const label = preview.value?.look.label.trim();
-  flow.name = `${props.layer.name} ${props.control}${label ? ` (${label})` : ""}`;
-  flow.triggers = [pressTrigger(props.layer.id, props.control)];
+  flow.name = `${props.component.name} ${props.control}${label ? ` (${label})` : ""}`;
+  flow.triggers = [pressTrigger(props.component.id, props.control)];
   flows.prefill = flow;
   navigate({ tab: "flows", flow: "new" });
 }
@@ -217,7 +219,7 @@ function whenPressed() {
         v-model="input"
       >
         <option value="">
-          {{ inputModeNames[defaultInput] }} (this layer's default)
+          {{ inputModeNames[defaultInput] }} (the default here)
         </option>
         <option
           v-for="m in inputModes"
@@ -232,7 +234,7 @@ function whenPressed() {
     <HelpersEditor
       ref="helpersEditor"
       v-model="draft.helpers"
-      :layer="layer"
+      :component="component"
       :control="control"
       :binding="draft.id"
     />

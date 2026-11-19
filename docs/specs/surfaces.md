@@ -16,7 +16,7 @@ Shapes use TypeScript notation. The source of truth is the Rust types in `covale
 
 **Markers.** Unmarked rules are implemented (M5 Phases 1–4). **(Now)** is the reshaping in [M5 Phase 5](../milestones/m5-surfaces-and-bindings.md), which replaced pages, the `k`-grid, `input.raw` and the `gesture` shapes; it's implemented too. **(M6)** to **(M9)** name the milestone that implements a rule: [M6](../milestones/m6-primitives.md) (sources, selectors, event triggers, core actions), [M7](../milestones/m7-surfaces-from-plugins.md) (hardware surfaces), [M8](../milestones/m8-dataflow.md) (helpers as reducers, layer resolution), [M9](../milestones/m9-composition.md) (templates and components). **(Later)** has no milestone yet.
 
-**(M9) Layers became components.** M5 and M8 built `layer` and `control_binding` entities; they're components shown on surfaces now, with their bindings embedded ([composition §7.4](composition.md#74-what-components-replace) lists each rename). The rules of resolution, cascading, fit and navigation are what M8 built for layers. The running core still resolves a shown component as the layer M8 built (`covalence_core::component`).
+**(M9) Layers became components.** M5 and M8 built `layer` and `control_binding` entities; they're components shown on surfaces now, with their bindings embedded ([composition §7.4](composition.md#74-what-components-replace) lists each rename). The rules of resolution, cascading, fit and navigation are what M8 built for layers.
 
 Values that may follow state are `Source`s, and sets of controls are `Selector`s, as defined in the [dataflow spec](dataflow.md) §1–§2.
 

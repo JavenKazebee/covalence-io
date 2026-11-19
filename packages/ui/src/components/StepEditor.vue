@@ -175,7 +175,7 @@ function coreDefaults(action: string): Record<string, Json> {
   const flow = flows.flows[0]?.id ?? "";
   switch (action) {
     case "navigate":
-      return { surface, component: surfaces.layers[0]?.id ?? null };
+      return { surface, component: surfaces.shown[0]?.id ?? null };
     case "inject":
       return { surface, control: "k0", input: "down" };
     case "cancelRuns":
@@ -229,8 +229,8 @@ function setOutput(name: string, on: boolean) {
   step.value.outputs[name] = newSource("literal", expectOf(props.ctx.outputs[name]?.type));
 }
 
-/** The controls the target surface's layers list, to pick from. */
-const controlIds = computed(() => [...new Set(surfaces.layers.flatMap((l) => l.controls.map((c) => c.id)))]);
+/** The controls the shown components list, to pick from. */
+const controlIds = computed(() => [...new Set(surfaces.shown.flatMap((l) => l.controls.map((c) => c.id)))]);
 
 const pressInputs: Record<string, string> = {
   down: "Press",
@@ -448,9 +448,9 @@ function toggleElse() {
 
         <template v-if="step.action === 'navigate'">
           <div class="field">
-            <label :for="`${prefix}-layer`">To layer</label>
+            <label :for="`${prefix}-component`">To page</label>
             <select
-              :id="`${prefix}-layer`"
+              :id="`${prefix}-component`"
               :value="step.params.component ?? ''"
               @change="step.params.component = ($event.target as HTMLSelectElement).value || null"
             >
@@ -458,7 +458,7 @@ function toggleElse() {
                 Nothing
               </option>
               <option
-                v-for="l in surfaces.layers"
+                v-for="l in surfaces.shown"
                 :key="l.id"
                 :value="l.id"
               >

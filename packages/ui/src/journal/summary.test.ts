@@ -7,13 +7,13 @@ const CALL = "01M5G0BXZ5X3WHGEVZW8PV0WQS";
 const FLOW = "01JC0000000000000000000001";
 const RUN = "01JC00000000000000000RUN042";
 const SURFACE = "01JC0000000000000000000201";
-const LAYER = "01JBZ7P0D3F5G7H9J1K3L5M7PA";
+const CAMS = "01JBZ7P0D3F5G7H9J1K3L5M7PA";
 const ctx: SummaryContext = {
   alias: (id) => (id === CONN ? "vh" : id),
   callName: (call) => (call === CALL ? "vh.route" : undefined),
   flowName: (id) => (id === FLOW ? "Route twice" : id),
   surfaceName: (id) => (id === SURFACE ? "FOH deck" : id),
-  layerName: (id) => (id === LAYER ? "Cameras" : id),
+  componentName: (id) => (id === CAMS ? "Cameras" : id),
 };
 
 function entry(kind: string, data: unknown): JournalEntry {
@@ -117,11 +117,11 @@ group("journal summaries", () => {
     );
   });
 
-  it("names control events by surface, control and layer", () => {
+  it("names control events by surface, control and component", () => {
     const at = (control: string) => ({ conn: "surface", path: ["fohDeck", "controls", control] });
     const ev = (control: string, event: string, extra: Record<string, unknown> = {}) =>
       entry("event", { path: at(control), event, surface: SURFACE, control, ...extra });
-    expect(describe(ev("k3", "press", { component: LAYER }), ctx)).toBe("FOH deck k3 press on Cameras");
+    expect(describe(ev("k3", "press", { component: CAMS }), ctx)).toBe("FOH deck k3 press on Cameras");
     expect(describe(ev("k0", "hold", { payload: { delta: 2 } }), ctx)).toBe("FOH deck k0 hold ×2");
     expect(describe(ev("dial", "turn", { payload: { delta: 3 } }), ctx)).toBe("FOH deck dial turn +3");
     expect(describe(ev("fader", "change", { payload: { value: 0.5 } }), ctx)).toBe("FOH deck fader change 0.5");

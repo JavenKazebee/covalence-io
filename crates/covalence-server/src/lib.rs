@@ -70,7 +70,7 @@ use covalence_core::select::TargetView;
 use covalence_core::state::ConnId;
 use covalence_core::surface::gesture::Timing;
 use covalence_core::surface::render::Renderer;
-use covalence_core::surface::{self, LayerId, Surface, SurfaceId, Surfaces};
+use covalence_core::surface::{self, ComponentId, Surface, SurfaceId, Surfaces};
 use covalence_core::variable::Variable;
 use covalence_core::{Core, CoreError, Shared};
 use covalence_protocol::connection::{ConnCreate, ConnMode};
@@ -86,7 +86,6 @@ mod core_actions;
 mod devices;
 mod entity;
 mod flows;
-mod migrate;
 mod plugin_surfaces;
 mod surfaces;
 mod ui;
@@ -101,19 +100,19 @@ pub use ui::{DEFAULT_UI_DIR, with_ui};
 /// Entity type for connections in the store.
 const CONNECTION: &str = "connection";
 
-/// The current layer of each surface's `main` group, by surface ID: kept so
-/// a surface shows it again after a restart, in place of its start layer.
+/// The current component of each surface's `main` group, by surface ID: kept so
+/// a surface shows it again after a restart, in place of its start component.
 const SHOWN_ENTITY: &str = "surface_shown";
 
 #[derive(Serialize, Deserialize)]
 struct Shown {
     surface: SurfaceId,
-    layer: Option<LayerId>,
+    component: Option<ComponentId>,
 }
 
 /// Roots that aliases may not take (state spec §1.1): the reserved roots,
 /// `core`, the core connection's alias (core actions §1), and `self`, a
-/// layer field's surface (dataflow §8).
+/// component field's surface (dataflow §8).
 const RESERVED_ROOTS: &[&str] = &[
     "vars",
     "sys",
@@ -293,7 +292,7 @@ pub struct App {
     /// Every component's bindings as the running core has them, by
     /// `<component>/<binding>` (composition spec §7.1).
     bindings: RwLock<BTreeMap<String, ControlBinding>>,
-    /// Attaches surfaces and draws the bindings of the layers they show.
+    /// Attaches surfaces and draws the bindings of the components they show.
     surfaces: Surfaces,
     /// Evaluates `expr` bindings for previews, with the binding worker's limit.
     binding_evaluator: QuickJs,
@@ -309,9 +308,9 @@ pub struct App {
     /// Computed variables', helpers' and params' cells, and their sinks
     /// (dataflow §5).
     dataflow: Arc<Dataflow>,
-    /// The surfaces each layer has been shown on, which have its bindings'
+    /// The surfaces each component has been shown on, which have its bindings'
     /// surface-scoped helpers (surfaces spec §11.4).
-    shown_on: Mutex<BTreeMap<LayerId, BTreeSet<SurfaceId>>>,
+    shown_on: Mutex<BTreeMap<ComponentId, BTreeSet<SurfaceId>>>,
 }
 
 impl App {
@@ -340,11 +339,6 @@ impl App {
             })
             .collect();
 
-        // Stored entities take the shapes the core reads now, before any
-        // is loaded (composition spec §7.4).
-        for warning in migrate::migrate(&store)? {
-            tracing::warn!("migrated: {warning}");
-        }
         let conns = load(&store, CONNECTION, |c: &Connection| c.id.clone())?;
         // Flows were validated when they were saved; they aren't checked again
         // here (flow spec §8.4).
@@ -368,21 +362,21 @@ impl App {
             }
         }
         // What each surface showed last: it shows it again when it attaches,
-        // and its surface-scoped helpers on that layer are there from the start.
+        // and its surface-scoped helpers on that component are there from the start.
         let kept_shown = load(&store, SHOWN_ENTITY, |s: &Shown| s.surface.clone())?;
-        let mut shown_on: BTreeMap<LayerId, BTreeSet<SurfaceId>> = BTreeMap::new();
+        let mut shown_on: BTreeMap<ComponentId, BTreeSet<SurfaceId>> = BTreeMap::new();
         for shown in kept_shown.values() {
-            if let Some(layer) = &shown.layer
+            if let Some(component) = &shown.component
                 && surface_entities.contains_key(&shown.surface)
             {
                 shown_on
-                    .entry(layer.clone())
+                    .entry(component.clone())
                     .or_default()
                     .insert(shown.surface.clone());
             }
         }
         for b in bindings.values() {
-            if let Some(component) = components.get(&b.layer) {
+            if let Some(component) = components.get(&b.component) {
                 dataflow.replace(
                     &binding::helper_cell_id(&b.id, ""),
                     helper_cells(b, &component.slug, &shown_on, &surface_entities, None),
@@ -392,8 +386,8 @@ impl App {
         }
         let surfaces = Surfaces::new(core.shared().clone(), Timing::default());
         surfaces.set_aliases(alias_map(&conns));
-        for layer in components.values().filter_map(Component::shown) {
-            surfaces.set_layer(layer)?;
+        for component in components.values() {
+            surfaces.set_component(component.clone())?;
         }
         for surface in surface_entities.values() {
             surfaces.set_surface(surface.clone())?;
@@ -402,7 +396,7 @@ impl App {
             surfaces.set_binding(binding.clone());
         }
         for shown in kept_shown.into_values() {
-            surfaces.restore_shown(&shown.surface, shown.layer)?;
+            surfaces.restore_shown(&shown.surface, shown.component)?;
         }
 
         let evaluator = Arc::new(QuickJs::default());
@@ -431,21 +425,21 @@ impl App {
                 tracing::error!("cannot journal sys:startup: {e}");
             }
             let keeping = app.clone();
-            // A surface has a layer's surface-scoped helpers once it's
-            // shown the layer: as its `main` group's current layer, even
+            // A surface has a component's surface-scoped helpers once it's
+            // shown the component: as its `main` group's current component, even
             // detached, or active (surfaces spec §11.4).
-            surfaces.on_shown(Arc::new(move |surface, layer| {
+            surfaces.on_shown(Arc::new(move |surface, component| {
                 if let Some(app) = keeping.upgrade() {
-                    app.keep_shown(surface, layer);
-                    if let Some(layer) = layer {
-                        app.shown_on_surface(surface, layer);
+                    app.keep_shown(surface, component);
+                    if let Some(component) = component {
+                        app.shown_on_surface(surface, component);
                     }
                 }
             }));
             let adding = app.clone();
-            surfaces.on_active(Arc::new(move |surface, layer| {
+            surfaces.on_active(Arc::new(move |surface, component| {
                 if let Some(app) = adding.upgrade() {
-                    app.shown_on_surface(surface, layer);
+                    app.shown_on_surface(surface, component);
                 }
             }));
             App {
@@ -546,72 +540,74 @@ impl App {
             .replace(&binding::helper_cell_id(&b.id, ""), cells, None);
     }
 
-    /// Re-syncs the bindings with surface-scoped helpers on these layers.
-    fn sync_surface_helpers(&self, layers: &BTreeSet<LayerId>, renamed: Option<&Surface>) {
+    /// Re-syncs the bindings with surface-scoped helpers on these components.
+    fn sync_surface_helpers(&self, components: &BTreeSet<ComponentId>, renamed: Option<&Surface>) {
         let bindings: Vec<ControlBinding> = read(&self.bindings)
             .values()
-            .filter(|b| layers.contains(&b.layer) && b.has_surface_helpers())
+            .filter(|b| components.contains(&b.component) && b.has_surface_helpers())
             .cloned()
             .collect();
         for b in bindings {
-            let slug = read(&self.components).get(&b.layer).map(|l| l.slug.clone());
+            let slug = read(&self.components)
+                .get(&b.component)
+                .map(|l| l.slug.clone());
             if let Some(slug) = slug {
                 self.sync_helpers_with(&b, &slug, renamed);
             }
         }
     }
 
-    /// A surface shows a layer: the first time, its bindings' surface-scoped
+    /// A surface shows a component: the first time, its bindings' surface-scoped
     /// helpers get a cell on that surface, kept until the binding or the
     /// surface is deleted (surfaces spec §11.4). Called with the surfaces locked.
-    fn shown_on_surface(&self, surface: &str, layer: &str) {
+    fn shown_on_surface(&self, surface: &str, component: &str) {
         let new = self
             .shown_on
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .entry(layer.to_owned())
+            .entry(component.to_owned())
             .or_default()
             .insert(surface.to_owned());
         if new {
-            self.sync_surface_helpers(&BTreeSet::from([layer.to_owned()]), None);
+            self.sync_surface_helpers(&BTreeSet::from([component.to_owned()]), None);
         }
     }
 
     /// A surface's slug changed: its helpers' cells move with it.
     pub(crate) fn surface_renamed(&self, surface: &Surface) {
-        let layers: BTreeSet<LayerId> = self
+        let components: BTreeSet<ComponentId> = self
             .shown_on
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .iter()
             .filter(|(_, on)| on.contains(&surface.id))
-            .map(|(layer, _)| layer.clone())
+            .map(|(component, _)| component.clone())
             .collect();
-        self.sync_surface_helpers(&layers, Some(surface));
+        self.sync_surface_helpers(&components, Some(surface));
     }
 
     /// A surface was deleted: its helpers go with it.
     pub(crate) fn forget_surface(&self, surface: &str) {
-        let mut layers = BTreeSet::new();
-        for (layer, on) in self
+        let mut components = BTreeSet::new();
+        for (component, on) in self
             .shown_on
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .iter_mut()
         {
             if on.remove(surface) {
-                layers.insert(layer.clone());
+                components.insert(component.clone());
             }
         }
-        self.sync_surface_helpers(&layers, None);
+        self.sync_surface_helpers(&components, None);
     }
 
-    /// A layer was deleted; its bindings, and their cells, go with it.
-    pub(crate) fn forget_layer(&self, layer: &str) {
+    /// A component was deleted; its bindings, and their cells, go with it.
+    pub(crate) fn forget_component(&self, component: &str) {
         self.shown_on
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .remove(layer);
+            .remove(component);
     }
 
     /// Tells the runtime the current aliases, after a connection changes.
@@ -674,14 +670,14 @@ impl App {
         Ok(())
     }
 
-    /// Stores the layer a surface shows, for after a restart.
-    fn keep_shown(&self, surface: &str, layer: Option<&str>) {
+    /// Stores the component a surface shows, for after a restart.
+    fn keep_shown(&self, surface: &str, component: Option<&str>) {
         let shown = Shown {
             surface: surface.to_owned(),
-            layer: layer.map(str::to_owned),
+            component: component.map(str::to_owned),
         };
         if let Err(e) = self.put_entity(SHOWN_ENTITY, surface, &shown) {
-            tracing::error!(%surface, "cannot store the layer a surface shows: {e}");
+            tracing::error!(%surface, "cannot store the component a surface shows: {e}");
         }
     }
 
@@ -1030,19 +1026,19 @@ fn is_valid_alias(alias: &str) -> bool {
         && !expr::is_taken_name(alias)
 }
 
-/// A binding's helper cells (surfaces §4.3): its layer-scoped helpers under
-/// the layer, and its surface-scoped ones on each surface that has shown the
-/// layer. `renamed` stands in for its stored entity.
+/// A binding's helper cells (surfaces §4.3): its component-scoped helpers under
+/// the component, and its surface-scoped ones on each surface that has shown the
+/// component. `renamed` stands in for its stored entity.
 fn helper_cells(
     b: &ControlBinding,
     layer_slug: &str,
-    shown_on: &BTreeMap<LayerId, BTreeSet<SurfaceId>>,
+    shown_on: &BTreeMap<ComponentId, BTreeSet<SurfaceId>>,
     surfaces: &BTreeMap<SurfaceId, Surface>,
     renamed: Option<&Surface>,
 ) -> Vec<covalence_core::dataflow::CellDef> {
     let mut cells = b.helper_cells(layer_slug);
     if b.has_surface_helpers() {
-        for id in shown_on.get(&b.layer).into_iter().flatten() {
+        for id in shown_on.get(&b.component).into_iter().flatten() {
             let surface = renamed.filter(|s| &s.id == id).or_else(|| surfaces.get(id));
             if let Some(s) = surface {
                 cells.extend(b.surface_helper_cells(&s.id, &s.slug));

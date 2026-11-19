@@ -1319,9 +1319,9 @@ async fn layer_sources_pick_controls_and_the_payload_carries_context() {
         "concurrency": "parallel",
         "body": [{ "id": "note", "kind": "set", "path": "vars.seen", "value": "[trigger.path, trigger.surface, trigger.component, trigger.control, trigger.payload.delta]" }],
     }));
-    let turn = |layer: &str, control: &str| EventRecord {
+    let turn = |component: &str, control: &str| EventRecord {
         surface: Some("S1".into()),
-        component: Some(layer.into()),
+        component: Some(component.into()),
         control: Some(control.into()),
         ..EventRecord::at(
             StatePath::new("surface", vec![key("deck"), key("controls"), key(control)]),

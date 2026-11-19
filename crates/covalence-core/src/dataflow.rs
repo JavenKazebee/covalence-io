@@ -94,14 +94,14 @@ pub struct CellDef {
 /// The control a helper belongs to.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ControlContext {
-    /// The layer's ID.
-    pub layer: String,
+    /// The component's ID.
+    pub component: String,
     pub control: String,
     /// The reducer has no `input` of its own: the control's `turn` and
     /// `change` events move it (bindings §5).
     pub input: bool,
     /// The surface of a helper with `scope: "surface"` (surfaces spec §11.4): its
-    /// events carry it, and only input that arrived while `layer` controlled
+    /// events carry it, and only input that arrived while `component` controlled
     /// the control steps it.
     pub surface: Option<String>,
 }
@@ -980,14 +980,14 @@ impl Turn<'_> {
                 continue;
             }
             // Control input is at the control, `surface.<slug>.controls.<id>`;
-            // a helper's events are at its cell, under the layer or deeper.
+            // a helper's events are at its cell, under the component or deeper.
             let at_surface =
                 event.path.conn == crate::surface::STATE_ROOT && event.path.path.len() == 3;
-            // A surface's own helper hears its layer's input only.
+            // A surface's own helper hears its component's input only.
             if at_surface
                 && let Some(c) = &cell.def.control
                 && c.surface.is_some()
-                && event.component.as_ref() != Some(&c.layer)
+                && event.component.as_ref() != Some(&c.component)
             {
                 continue;
             }
@@ -1429,7 +1429,7 @@ impl Turn<'_> {
         for (seq, e) in emitted {
             let record = EventRecord {
                 surface: def.control.as_ref().and_then(|c| c.surface.clone()),
-                component: def.control.as_ref().map(|c| c.layer.clone()),
+                component: def.control.as_ref().map(|c| c.component.clone()),
                 control: def.control.as_ref().map(|c| c.control.clone()),
                 ..EventRecord::at(
                     def.home.clone(),

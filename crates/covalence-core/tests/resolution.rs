@@ -1,4 +1,4 @@
-//! Layer resolution (surfaces spec §5.2): which layer controls each
+//! Component resolution (surfaces spec §5.2): which component controls each
 //! control, from `on`, `when`, `level` and `rank`, written to state in the
 //! turn that changed it and drawn from there.
 
@@ -7,12 +7,13 @@ use std::time::Duration;
 
 use covalence_core::Shared;
 use covalence_core::binding::ControlBinding;
+use covalence_core::component::Component;
 use covalence_core::journal::{InputKind, Journal, Origin, Record};
 use covalence_core::state::StatePath;
 use covalence_core::surface::gesture::Timing;
 use covalence_core::surface::render::{Look, Renderer, Rgb};
 use covalence_core::surface::{
-    Attach, ControlDef, Draw, ImageDef, Input, InputCap, Layer, Link, Output, OutputCap, Placement,
+    Attach, ControlDef, Draw, ImageDef, Input, InputCap, Link, Output, OutputCap, Placement,
     Surface, Surfaces,
 };
 use covalence_protocol::Value;
@@ -52,15 +53,15 @@ fn world() -> World {
             .unwrap();
     }
     surfaces
-        .set_layer(common::deck_layer(CAMS, "cams", 5, 3))
+        .set_component(common::deck_page(CAMS, "cams", 5, 3))
         .unwrap();
     World { shared, surfaces }
 }
 
-/// A layer covering some of the deck's keys, with fields from `json`.
-fn layer(id: &str, slug: &str, keys: &[u32], json: serde_json::Value) -> Layer {
-    let full = common::deck_layer(id, slug, 5, 3);
-    let mut l = serde_json::to_value(Layer {
+/// A shown component covering some of the deck's keys, with `show` from `json`.
+fn component(id: &str, slug: &str, keys: &[u32], json: serde_json::Value) -> Component {
+    let full = common::deck_page(id, slug, 5, 3);
+    let mut l = serde_json::to_value(Component {
         controls: full
             .controls
             .into_iter()
@@ -69,10 +70,8 @@ fn layer(id: &str, slug: &str, keys: &[u32], json: serde_json::Value) -> Layer {
         ..full
     })
     .unwrap();
-    l.as_object_mut()
-        .unwrap()
-        .extend(json.as_object().unwrap().clone());
-    Layer::parse(&l).unwrap()
+    l["show"] = json;
+    Component::parse(&l).unwrap()
 }
 
 fn deck() -> Attach {
@@ -155,9 +154,9 @@ fn image(look: Look) -> Vec<u8> {
     Renderer::default().render(&look, 72, 72, "png", 0).unwrap()
 }
 
-fn label(id: &str, layer: &str, control: &str, text: &str) -> ControlBinding {
-    ControlBinding::parse(&json!({
-        "id": id, "layer": layer, "control": control,
+fn label(id: &str, component: &str, control: &str, text: &str) -> ControlBinding {
+    common::placed(&json!({
+        "id": id, "component": component, "control": control,
         "props": { "label": text, "background": "#202020" },
     }))
     .unwrap()
@@ -179,7 +178,7 @@ fn look(text: &str) -> Look {
 async fn a_shift_layer_takes_three_keys_while_its_key_is_held() {
     let w = world();
     w.surfaces
-        .set_layer(layer(
+        .set_component(component(
             SHIFT,
             "shift",
             &[2, 3, 4],
@@ -197,9 +196,9 @@ async fn a_shift_layer_takes_three_keys_while_its_key_is_held() {
     let mut link = w.surfaces.attach(DECK, deck()).unwrap();
     w.surfaces.flush().await;
     assert_eq!(draws(&mut link)["k3"], image(look("Cam 3")));
-    let layers = path(&["deck", "shown"]);
+    let components = path(&["deck", "shown"]);
     let k3 = path(&["deck", "controls", "k3", "component"]);
-    assert_eq!(w.shared.state.value(&layers), Some(slugs(&["cams"])));
+    assert_eq!(w.shared.state.value(&components), Some(slugs(&["cams"])));
     assert_eq!(w.shared.state.value(&k3), Some("cams".into()));
     let resolution = w.surfaces.resolution(DECK).unwrap();
     assert!(resolution.armed.contains(SHIFT), "shift is evaluated ahead");
@@ -210,7 +209,7 @@ async fn a_shift_layer_takes_three_keys_while_its_key_is_held() {
         .unwrap();
     until(&w, &k3, "shift".into()).await;
     assert_eq!(
-        w.shared.state.value(&layers),
+        w.shared.state.value(&components),
         Some(slugs(&["shift", "cams"]))
     );
     assert_eq!(
@@ -230,7 +229,7 @@ async fn a_shift_layer_takes_three_keys_while_its_key_is_held() {
     );
     assert!(!drawn.contains_key("k5"));
 
-    // `why` on k3's layer reaches the press.
+    // `why` on k3's component reaches the press.
     let entries = w.shared.journal.range(1, usize::MAX).unwrap();
     let resolved = entries
         .iter()
@@ -275,19 +274,19 @@ async fn a_shift_layer_takes_three_keys_while_its_key_is_held() {
 
     link.input.send(press("k14", InputKind::Up)).await.unwrap();
     until(&w, &k3, "cams".into()).await;
-    assert_eq!(w.shared.state.value(&layers), Some(slugs(&["cams"])));
+    assert_eq!(w.shared.state.value(&components), Some(slugs(&["cams"])));
     w.surfaces.flush().await;
     assert_eq!(draws(&mut link)["k3"], image(look("Cam 3")));
 }
 
-/// Level beats rank, rank beats recency, and recency beats age; a layer
+/// Level beats rank, rank beats recency, and recency beats age; a component
 /// that becomes active again goes back on top of its level and rank.
 #[tokio::test]
 async fn layers_are_ordered_by_level_then_rank_then_recency() {
     let w = world();
     let while_var = |name: &str| json!({ "while": { "ref": { "root": "vars", "path": [name] } } });
     w.surfaces
-        .set_layer(layer(
+        .set_component(component(
             SHIFT,
             "a",
             &[0],
@@ -295,7 +294,7 @@ async fn layers_are_ordered_by_level_then_rank_then_recency() {
         ))
         .unwrap();
     w.surfaces
-        .set_layer(layer(
+        .set_component(component(
             MODE,
             "b",
             &[0],
@@ -303,7 +302,7 @@ async fn layers_are_ordered_by_level_then_rank_then_recency() {
         ))
         .unwrap();
     w.surfaces
-        .set_layer(layer(
+        .set_component(component(
             STRIP,
             "strip",
             &[0, 1],
@@ -312,7 +311,7 @@ async fn layers_are_ordered_by_level_then_rank_then_recency() {
         .unwrap();
     let _link = w.surfaces.attach(DECK, deck()).unwrap();
     let k0 = path(&["deck", "controls", "k0", "component"]);
-    let layers = path(&["deck", "shown"]);
+    let components = path(&["deck", "shown"]);
     let set = |name: &str, on: bool| {
         let at = StatePath::new("vars", vec![PathSegment::Key(name.into())]);
         let meta = covalence_core::state::Meta {
@@ -328,7 +327,7 @@ async fn layers_are_ordered_by_level_then_rank_then_recency() {
     w.surfaces.flush().await;
     // An `under` strip loses to the page, whatever its rank.
     assert_eq!(
-        w.shared.state.value(&layers),
+        w.shared.state.value(&components),
         Some(slugs(&["cams", "strip"]))
     );
     assert_eq!(w.shared.state.value(&k0), Some("cams".into()));
@@ -344,12 +343,12 @@ async fn layers_are_ordered_by_level_then_rank_then_recency() {
     set("a", true);
     assert_eq!(w.shared.state.value(&k0), Some("a".into()), "on top again");
     assert_eq!(
-        w.shared.state.value(&layers),
+        w.shared.state.value(&components),
         Some(slugs(&["a", "b", "cams", "strip"]))
     );
     // A rank puts `b` above `a` however recent `a` is.
     w.surfaces
-        .set_layer(layer(
+        .set_component(component(
             MODE,
             "b",
             &[0],
@@ -361,7 +360,7 @@ async fn layers_are_ordered_by_level_then_rank_then_recency() {
     set("a", false);
     set("b", false);
     w.surfaces
-        .set_layer(layer(CAMS, "cams", &[5, 6], json!({})))
+        .set_component(component(CAMS, "cams", &[5, 6], json!({})))
         .unwrap();
     assert_eq!(w.shared.state.value(&k0), Some("strip".into()));
     assert_eq!(
@@ -369,17 +368,17 @@ async fn layers_are_ordered_by_level_then_rank_then_recency() {
             .state
             .value(&path(&["deck", "controls", "k9", "component"])),
         Some(Value::Nil),
-        "a key no active layer covers is nobody's"
+        "a key no active component covers is nobody's"
     );
 }
 
 /// A popover is opened by navigating its group to it, and closed by
-/// navigating the group to nothing. `on` keeps a layer to its surfaces.
+/// navigating the group to nothing. `on` keeps a component to its surfaces.
 #[tokio::test]
 async fn popovers_open_by_navigation_and_on_picks_surfaces() {
     let w = world();
     w.surfaces
-        .set_layer(layer(
+        .set_component(component(
             POP,
             "pop",
             &[6, 7, 8],
@@ -422,24 +421,24 @@ async fn popovers_open_by_navigation_and_on_picks_surfaces() {
     );
 }
 
-fn bound(id: &str, layer: &str, control: &str, json: serde_json::Value) -> ControlBinding {
-    let mut b = json!({ "id": id, "layer": layer, "control": control });
+fn bound(id: &str, component: &str, control: &str, json: serde_json::Value) -> ControlBinding {
+    let mut b = json!({ "id": id, "component": component, "control": control });
     b.as_object_mut()
         .unwrap()
         .extend(json.as_object().unwrap().clone());
-    ControlBinding::parse(&b).unwrap()
+    common::placed(&b).unwrap()
 }
 
 /// The milestone's `cascade: through` shift: it binds only `label` and
-/// claims input, so held keys keep the base layer's background, and k3's
+/// claims input, so held keys keep the base component's background, and k3's
 /// `look` names where each property comes from. A key it covers but doesn't
-/// bind passes input down. A lock layer that binds a label and blocks input
+/// bind passes input down. A lock component that binds a label and blocks input
 /// leaves the look live and takes presses away from the page.
 #[tokio::test]
 async fn a_through_layer_sets_only_what_it_binds() {
     let w = world();
     w.surfaces
-        .set_layer(layer(
+        .set_component(component(
             SHIFT,
             "shift",
             &[3, 4],
@@ -450,7 +449,7 @@ async fn a_through_layer_sets_only_what_it_binds() {
         ))
         .unwrap();
     w.surfaces
-        .set_layer(layer(
+        .set_component(component(
             MODE,
             "lock",
             &[3, 4],
@@ -517,7 +516,7 @@ async fn a_through_layer_sets_only_what_it_binds() {
     link.input.send(press("k14", InputKind::Up)).await.unwrap();
     until(&w, &at("k3", "component"), "cams".into()).await;
 
-    // Locked: presses are the lock layer's, so nothing on Cameras sees them,
+    // Locked: presses are the lock component's, so nothing on Cameras sees them,
     // and the key's look stays live.
     let meta = covalence_core::state::Meta {
         ts: 0,

@@ -1,25 +1,33 @@
 import { defineStore } from "pinia";
 import { computed, ref, shallowRef } from "vue";
-import { api } from "../api";
-import type { Layer, SavedLayer, SavedSurface, Surface } from "../surfaces/model";
+import { api, relative } from "../api";
+import type { ControlBinding, SavedBinding } from "../bindings/model";
+import {
+  bindingProblems,
+  newBindingId,
+  type Component,
+  type SavedComponent,
+  type SavedSurface,
+  type Surface,
+} from "../surfaces/model";
 
 /**
- * Surfaces and layers over HTTP. Neither is on the WebSocket, so this
+ * Surfaces and components over HTTP. Neither is on the WebSocket, so this
  * refreshes after its own saves. What a surface shows is live state under
- * `surface` (surfaces spec §2).
+ * `surface` (surfaces spec §3).
  */
 export const useSurfacesStore = defineStore("surfaces", () => {
   const surfaces = ref<Surface[]>([]);
-  // Replaced whole on each load; shallow, as `rank` and `when` sources nest deeply.
-  const layers = shallowRef<Layer[]>([]);
+  // Replaced whole on each load; shallow, as sources nest deeply.
+  const components = shallowRef<Component[]>([]);
   const loaded = ref(false);
   const error = ref<string | null>(null);
 
   async function refresh() {
     try {
-      const [s, p] = await Promise.all([api.surfaces(), api.layers()]);
+      const [s, c] = await Promise.all([api.surfaces(), api.components()]);
       surfaces.value = s.sort((a, b) => a.name.localeCompare(b.name));
-      layers.value = p.sort((a, b) => a.name.localeCompare(b.name));
+      components.value = c.sort((a, b) => a.name.localeCompare(b.name));
       error.value = null;
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e);
@@ -43,41 +51,73 @@ export const useSurfacesStore = defineStore("surfaces", () => {
     }
   }
 
-  async function saveLayer(layer: Layer): Promise<SavedLayer> {
-    const saved = layer.id === "" ? await api.createLayer(layer) : await api.updateLayer(layer);
+  /** Creates the component when it has no ID, else replaces it, bindings and all. */
+  async function saveComponent(component: Component): Promise<SavedComponent> {
+    const saved = await api.saveComponent(component);
     await refresh();
     return saved;
   }
 
-  /** Deletes the layer and its bindings, and clears it as any surface's start layer. */
-  async function removeLayer(id: string) {
+  /** Deletes the component, and clears it as any surface's start. */
+  async function removeComponent(id: string) {
     try {
-      await api.deleteLayer(id);
+      await api.deleteComponent(id);
     } finally {
       await refresh();
     }
   }
 
+  /**
+   * Adds a binding to its component, or replaces the one with its ID, and
+   * puts the component back (composition spec §7.1). One with no ID gets one.
+   * A 422's problems are the binding's, relative to it.
+   */
+  async function saveBinding(component: string, binding: ControlBinding): Promise<SavedBinding> {
+    const c = await api.component(component);
+    const bindings = [...(c.bindings ?? [])];
+    const id = binding.id === "" ? newBindingId(c) : binding.id;
+    const at = bindings.findIndex((b) => b.id === id);
+    const index = at === -1 ? bindings.length : at;
+    bindings[index] = { ...binding, id };
+    try {
+      const saved = await saveComponent({ ...c, bindings });
+      const stored = (saved.component.bindings ?? []).find((b) => b.id === id)!;
+      return { binding: stored, warnings: bindingProblems(saved.warnings, index) };
+    } catch (e) {
+      throw relative(e, (problems) => bindingProblems(problems, index));
+    }
+  }
+
+  /** Takes a binding out of its component. */
+  async function removeBinding(component: string, binding: string) {
+    const c = await api.component(component);
+    await saveComponent({ ...c, bindings: (c.bindings ?? []).filter((b) => b.id !== binding) });
+  }
+
   const surfaceById = computed(() => new Map(surfaces.value.map((s) => [s.id, s])));
-  const layerById = computed(() => new Map(layers.value.map((p) => [p.id, p])));
-  const layerBySlug = computed(() => new Map(layers.value.map((p) => [p.slug, p])));
+  const componentById = computed(() => new Map(components.value.map((c) => [c.id, c])));
+  const componentBySlug = computed(() => new Map(components.value.map((c) => [c.slug, c])));
 
   return {
     surfaces,
-    layers,
+    components,
+    /** The components shown on surfaces: pages, shifts, popovers. */
+    shown: computed(() => components.value.filter((c) => c.show !== undefined)),
     loaded,
     error,
     refresh,
     saveSurface,
     removeSurface,
-    saveLayer,
-    removeLayer,
+    saveComponent,
+    removeComponent,
+    saveBinding,
+    removeBinding,
     surface: (id: string) => surfaceById.value.get(id),
-    layer: (id: string) => layerById.value.get(id),
-    /** `surface.<slug>.current.main` holds a layer's slug. */
-    layerBySlug: (slug: string) => layerBySlug.value.get(slug),
+    component: (id: string) => componentById.value.get(id),
+    /** `surface.<slug>.current.main` holds a component's slug. */
+    componentBySlug: (slug: string) => componentBySlug.value.get(slug),
     /** A surface's name, or its ID if it isn't known. */
     surfaceName: (id: string) => surfaceById.value.get(id)?.name ?? id,
-    layerName: (id: string) => layerById.value.get(id)?.name ?? id,
+    componentName: (id: string) => componentById.value.get(id)?.name ?? id,
   };
 });

@@ -16,7 +16,6 @@ Users build bigger things out of smaller ones, and reuse them by parameters, nev
 - [ ] Two simulated PTZ plugins with different preset actions behind one "Camera" template: its `recallPreset` is an owned flow that branches on `target(params.ptz).plugin`, and one layer recalls presets on both. A step constrained to `{plugin: …}` works on a selected camera of that plugin with no composite.
 - [ ] A composite template "Camera" with three instances, one per camera. Editing the template changes all three, and a change that breaks an instance's params is refused, naming it.
 - [ ] One "Cameras" composite instance with `forEach` over a list in `vars`. Each item is a target at `cams.items[<key>]`, accepted by `{template: <Camera>}`. Adding an item to the list adds a camera, journaled `instance.added`; removing one ends it, and its owned flow's active run is cancelled with `removed`.
-- [ ] A project saved before M9, with pages, a shift layer, a `through` overlay, helpers and flows triggered by its keys, loads as shown components with the same resolution, looks, helper values and flow triggers, and the migration's warnings list each rewritten expression.
 - [ ] A shown component template "Camera control" with a `camera` param, instanced per camera. One flow owned by the template handles a key on every instance with that instance's `params.camera`. A free-standing flow on the same key gets `trigger.instance` and `trigger.component` but no `params`.
 - [ ] A "Camera strip" with a `recordKey` component param, a child of a page three times with one bound to a different record key: that strip's record key is the other component, a fix to the strip reaches all three, and a record key whose controls don't fit is refused with `badInstance`.
 - [ ] A "Tally key" component, a child of a page four times with a different camera each, draws each key's tally, and its owned flow selects that key's camera. One event trigger `{component: <Tally key>}` fires for all four. The key editor shows "Tally key, camera = Cam B".
@@ -62,8 +61,8 @@ Users build bigger things out of smaller ones, and reuse them by parameters, nev
 - [x] **Flows:** flow templates and instances, with `forEach`. An instance runs its template's steps with its identity; each `forEach` item runs as `<instance>[<key>]`. The UI lists instances but can't edit them yet (Phase 6).
 
 ### Phase 4: Components (Rust)
-- [x] **Components' names** ([composition §7.4](../specs/composition.md#74-what-components-replace)): the `component` root, `surface.<slug>.shown`, `.controls.<id>.component`, `startComponent`, `{component}` event sources, `trigger.component` and the event's `component`, helpers' `scope: "component"`, `navigate {component}` and `POST /surfaces/{id}/current {component}`, `unknownComponent`. Stored projects migrate when the server starts, in one transaction, and each rewritten expression is logged as a warning. The M5 and M8 tests pass on the new names.
-- [x] **Layers become components:** the `component` entity with embedded bindings and `show`, and `/components`, `/components/problems` and `/components/preview`. A shown component is resolved, cascaded, armed and navigated as M8's layers were; one without `show` isn't a candidate. Bindings are keyed `<component>/<binding>` in the running core, so their helpers' cells never meet. The migration merges stored layers and their bindings into components, dropping bindings whose layer is gone, with a warning. Until Phase 6, the UI edits a shown component as a layer and its bindings one by one, putting the component back whole on each save.
+- [x] **Components' names** ([composition §7.4](../specs/composition.md#74-what-components-replace)): the `component` root, `surface.<slug>.shown`, `.controls.<id>.component`, `startComponent`, `{component}` event sources, `trigger.component` and the event's `component`, helpers' `scope: "component"`, `navigate {component}` and `POST /surfaces/{id}/current {component}`, `unknownComponent`. The M5 and M8 tests pass on the new names. Projects saved before aren't migrated (composition §11.8).
+- [x] **Layers become components:** the `component` entity with embedded bindings and `show`, and `/components`, `/components/problems` and `/components/preview`. A shown component is resolved, cascaded, armed and navigated as M8's layers were; one without `show` isn't a candidate. Bindings are keyed `<component>/<binding>` in the running core, so their helpers' cells never meet. The UI's layer editor is a component editor: it edits `show`, and saves a binding by putting its component back.
 - [ ] Per-instance evaluation of a component template's bindings, helpers and children; shown `forEach` instances and `navigate` with `item`.
 - [ ] Children: control mapping and fit (`doesNotFit`, `unmappedControl`), owned controls (`duplicateControl`), homes under `parts`, helpers' cells under each instance, owned flows with `{controls}` triggers, `{component}` triggers matching every use, the instance chain on control events, nesting, `recursiveTemplate` and `tooDeep`.
 - [ ] Params that hold a component: `{param}` as a child's `template`, and the fit check.
@@ -78,7 +77,7 @@ Users build bigger things out of smaller ones, and reuse them by parameters, nev
 - [ ] One instance panel for every kind: the template it uses, its params form, `forEach`, its live items, "Detach", and where the template is used.
 - [ ] A composite editor: params, a state tree of sources, actions (forward or owned flow), events, and where the template is used as a constraint.
 - [ ] Owned flows in the composite and component editors.
-- [ ] The layer editor becomes the component editor: a shown component's preset (page, shift, popover, overlay, section) instead of its raw `show` fields, with the fields under "Advanced"; children from a palette onto its keys; "Save as component" from a key; and the key editor's chain of containers.
+- [ ] The component editor: a shown component's preset (page, shift, popover, overlay, section) instead of its raw `show` fields, with the fields under "Advanced"; children from a palette onto its keys; "Save as component" from a key; and the key editor's chain of containers.
 - [ ] A transform editor with a test bench: feed input sequences, see states, values and events.
 
 ### Phase 7: Acceptance
@@ -86,7 +85,7 @@ Users build bigger things out of smaller ones, and reuse them by parameters, nev
 
 ## Ordering
 
-Phase 0 first, then Phases 1 and 2. Phases 3, 4 and 5 can run side by side once Phase 2 is in; Phase 4's migration lands first within it, since everything after it is built on components rather than layers. Phase 6 follows the APIs, and Phase 7 joins them.
+Phase 0 first, then Phases 1 and 2. Phases 3, 4 and 5 can run side by side once Phase 2 is in; Phase 4's renames land first within it, since everything after them is built on components rather than layers. Phase 6 follows the APIs, and Phase 7 joins them.
 
 ## Out of scope
 

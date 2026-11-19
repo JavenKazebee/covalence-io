@@ -62,7 +62,7 @@ pub struct Entry {
 impl Entry {
     /// Whether it can be recomputed from the inputs and the project, so it's
     /// kept in memory only (state spec §2.4): patches and events from cells,
-    /// helpers and layer resolution, events derived from control input
+    /// helpers and component resolution, events derived from control input
     /// state, and `trigger.matched`.
     pub fn is_derived(&self) -> bool {
         is_derived(&self.origin, &self.record)
@@ -256,8 +256,8 @@ pub struct EventRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface: Option<String>,
     /// Control input: the shown component that controlled the control, by
-    /// ID (surfaces spec §5.2). Entries from before M9 call it `layer`.
-    #[serde(default, alias = "layer", skip_serializing_if = "Option::is_none")]
+    /// ID (surfaces spec §5.2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub component: Option<String>,
     /// Control input: the control's ID.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -1,16 +1,16 @@
-//! Layer resolution (surfaces spec §5.2): which layer controls each control
+//! Component resolution (surfaces spec §5.2): which component controls each control
 //! of each attached surface.
 //!
-//! For each surface, a layer is a candidate where it fits (§5.4) and its
+//! For each surface, a component is a candidate where it fits (§5.4) and its
 //! `on` picks the surface, and active while its `when` holds. The active
-//! layers are ordered by `level` and `rank`, then by how recently each
+//! components are ordered by `level` and `rank`, then by how recently each
 //! became active, then oldest first by ID, and each control goes to the
-//! highest active layer that covers it.
+//! highest active component that covers it.
 //!
 //! **Where it runs.** The [`Resolver`] is the state tree's resolver
 //! ([`LiveState::set_resolver`]): it runs in every turn, after cells have
 //! settled (dataflow §5.3), and re-resolves a surface when the turn's
-//! changes touch what its layers' fields read, or when layers, the surface
+//! changes touch what its components' fields read, or when components, the surface
 //! or its controls changed. Its results are state, written in the same
 //! turn, so bindings, triggers and `why` see them with the change that
 //! caused them:
@@ -19,11 +19,11 @@
 //!   `null`.
 //!
 //! Each is journaled as a `state.patch` with origin `{core: "dataflow"}` and
-//! `cause` → the latest change among what the surface's layer fields read.
+//! `cause` → the latest change among what the surface's component fields read.
 //! The binding worker and the surface's input take the same results from
 //! [`Resolver::resolution`].
 //!
-//! **Armed layers** (§5.2) are candidates that aren't active but whose
+//! **Armed components** (§5.2) are candidates that aren't active but whose
 //! `when` reads the surface's input state. They're listed so the binding
 //! worker keeps them evaluated, and a held shift redraws without waiting
 //! for its bindings.
@@ -34,8 +34,9 @@ use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use covalence_protocol::Value;
 use serde_json::Value as Json;
 
-use super::{Cascade, ControlDef, Layer, LayerId, STATE_ROOT, SurfaceId, When, key, missing};
+use super::{Cascade, ComponentId, ControlDef, STATE_ROOT, SurfaceId, When, key, missing};
 use crate::binding::{InputMode, Prop};
+use crate::component::Component;
 use crate::expr::{Limits, QuickJs, Scope};
 use crate::journal::{CoreOrigin, Journal, JournalOp, NewEntry, Origin, Record, StatePatchRecord};
 use crate::source::Eval;
@@ -44,23 +45,23 @@ use crate::state::{ConnId, Dirty, LiveState, Meta, Quality, Settler, Source, Sta
 /// What resolution found for one surface.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Resolution {
-    /// The active layers, highest first.
-    pub active: Vec<LayerId>,
-    /// The layer that has each control's input, by control ID: the
-    /// controlling layer. A control no active layer covers isn't listed.
-    pub controls: BTreeMap<String, LayerId>,
+    /// The active components, highest first.
+    pub active: Vec<ComponentId>,
+    /// The component that has each control's input, by control ID: the
+    /// controlling component. A control no active component covers isn't listed.
+    pub controls: BTreeMap<String, ComponentId>,
     /// Where each control's bound properties come from (surfaces spec
-    /// §5.2.1). A property no layer sets isn't listed: it's the default.
-    pub look: BTreeMap<String, BTreeMap<Prop, LayerId>>,
-    /// Inactive layers whose `when` reads the surface's input state.
-    pub armed: BTreeSet<LayerId>,
+    /// §5.2.1). A property no component sets isn't listed: it's the default.
+    pub look: BTreeMap<String, BTreeMap<Prop, ComponentId>>,
+    /// Inactive components whose `when` reads the surface's input state.
+    pub armed: BTreeSet<ComponentId>,
 }
 
 impl Resolution {
-    /// The layers whose bindings should be kept evaluated for the surface:
+    /// The components whose bindings should be kept evaluated for the surface:
     /// those a control's look or input comes from, and armed ones.
-    pub fn evaluated(&self) -> impl Iterator<Item = &LayerId> {
-        let shown: BTreeSet<&LayerId> = self
+    pub fn evaluated(&self) -> impl Iterator<Item = &ComponentId> {
+        let shown: BTreeSet<&ComponentId> = self
             .controls
             .values()
             .chain(self.look.values().flat_map(BTreeMap::values))
@@ -69,7 +70,7 @@ impl Resolution {
     }
 }
 
-/// What a layer's binding on a control sets, for resolution: the
+/// What a component's binding on a control sets, for resolution: the
 /// properties it binds and what it does with input.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Bound {
@@ -77,35 +78,35 @@ pub struct Bound {
     pub input: Option<InputMode>,
 }
 
-/// Bindings by `(layer, control)`.
-pub type BoundMap = BTreeMap<(LayerId, String), Bound>;
+/// Bindings by `(component, control)`.
+pub type BoundMap = BTreeMap<(ComponentId, String), Bound>;
 
-/// Resolves layers for every attached surface, in the state turn.
+/// Resolves components for every attached surface, in the state turn.
 pub struct Resolver {
     state: Weak<LiveState>,
     journal: Arc<Journal>,
     inner: Mutex<Inner>,
     /// The latest resolution of each attached surface.
     published: Mutex<BTreeMap<SurfaceId, Arc<Resolution>>>,
-    /// Layers that became active on a surface, for whoever adds the cells
+    /// Components that became active on a surface, for whoever adds the cells
     /// they have there (surfaces spec §11.4).
-    activated: Mutex<Vec<(SurfaceId, LayerId)>>,
+    activated: Mutex<Vec<(SurfaceId, ComponentId)>>,
 }
 
 struct Inner {
-    layers: Arc<BTreeMap<LayerId, Layer>>,
+    components: Arc<BTreeMap<ComponentId, Component>>,
     bound: Arc<BoundMap>,
-    /// Every surface's ID: the universe of a layer's `on`.
+    /// Every surface's ID: the universe of a component's `on`.
     universe: Vec<SurfaceId>,
     aliases: Arc<BTreeMap<String, ConnId>>,
-    /// Evaluates layer fields, with a binding's limit.
+    /// Evaluates component fields, with a binding's limit.
     evaluator: QuickJs,
     surfaces: BTreeMap<SurfaceId, Target>,
-    /// Counts activations, so a layer that becomes active goes on top of
+    /// Counts activations, so a component that becomes active goes on top of
     /// its level and rank.
     activations: u64,
-    /// Each layer field's last error, by layer ID and field.
-    problems: BTreeMap<(LayerId, &'static str), String>,
+    /// Each component field's last error, by component ID and field.
+    problems: BTreeMap<(ComponentId, &'static str), String>,
 }
 
 /// One surface, as resolution sees it.
@@ -113,13 +114,13 @@ struct Target {
     slug: String,
     controls: Vec<ControlDef>,
     attached: bool,
-    /// What its layers' fields read when it was last resolved.
+    /// What its components' fields read when it was last resolved.
     reads: BTreeSet<StatePath>,
     /// Resolved at the next turn, whatever its changes.
     due: bool,
-    /// Its active layers, with when each became active (0: before anything
-    /// was seen, so ties go to the oldest layer).
-    active: BTreeMap<LayerId, u64>,
+    /// Its active components, with when each became active (0: before anything
+    /// was seen, so ties go to the oldest component).
+    active: BTreeMap<ComponentId, u64>,
     /// Whether it has been resolved since it was added.
     resolved: bool,
 }
@@ -130,7 +131,7 @@ impl Resolver {
             state: Arc::downgrade(state),
             journal,
             inner: Mutex::new(Inner {
-                layers: Arc::new(BTreeMap::new()),
+                components: Arc::new(BTreeMap::new()),
                 bound: Arc::new(BTreeMap::new()),
                 universe: Vec::new(),
                 aliases: Arc::new(BTreeMap::new()),
@@ -151,10 +152,10 @@ impl Resolver {
         lock(&self.inner)
     }
 
-    /// Replaces the layers. Every surface is resolved at the next turn.
-    pub fn set_layers(&self, layers: Arc<BTreeMap<LayerId, Layer>>) {
+    /// Replaces the components. Every surface is resolved at the next turn.
+    pub fn set_components(&self, components: Arc<BTreeMap<ComponentId, Component>>) {
         let mut inner = self.lock();
-        inner.layers = layers;
+        inner.components = components;
         inner.all_due();
     }
 
@@ -183,7 +184,7 @@ impl Resolver {
     }
 
     /// A surface attached, or was renamed while attached: it's resolved at
-    /// the next turn, keeping the order its layers became active in.
+    /// the next turn, keeping the order its components became active in.
     pub fn attach(&self, surface: &str, slug: &str, controls: Vec<ControlDef>) {
         let mut inner = self.lock();
         let target = inner
@@ -223,8 +224,8 @@ impl Resolver {
         lock(&self.published).get(surface).cloned()
     }
 
-    /// The layer controlling a control now.
-    pub fn controlling(&self, surface: &str, control: &str) -> Option<LayerId> {
+    /// The component controlling a control now.
+    pub fn controlling(&self, surface: &str, control: &str) -> Option<ComponentId> {
         lock(&self.published)
             .get(surface)?
             .controls
@@ -232,14 +233,14 @@ impl Resolver {
             .cloned()
     }
 
-    /// The layers that became active on a surface since this was last
+    /// The components that became active on a surface since this was last
     /// called, once each.
-    pub fn take_activated(&self) -> Vec<(SurfaceId, LayerId)> {
+    pub fn take_activated(&self) -> Vec<(SurfaceId, ComponentId)> {
         std::mem::take(&mut *lock(&self.activated))
     }
 
-    /// Each failing layer field's last error, by layer ID and field.
-    pub fn problems(&self) -> BTreeMap<(LayerId, &'static str), String> {
+    /// Each failing component field's last error, by component ID and field.
+    pub fn problems(&self) -> BTreeMap<(ComponentId, &'static str), String> {
         self.lock().problems.clone()
     }
 }
@@ -251,12 +252,12 @@ impl Inner {
         }
     }
 
-    fn note(&mut self, layer: &str, field: &'static str, error: Option<String>) {
-        let at = (layer.to_owned(), field);
+    fn note(&mut self, component: &str, field: &'static str, error: Option<String>) {
+        let at = (component.to_owned(), field);
         match error {
             Some(message) => {
                 if self.problems.get(&at) != Some(&message) {
-                    tracing::warn!(%layer, field, "a layer field failed: {message}");
+                    tracing::warn!(%component, field, "a component field failed: {message}");
                     self.problems.insert(at, message);
                 }
             }
@@ -267,9 +268,9 @@ impl Inner {
     }
 }
 
-/// One candidate layer, evaluated for a surface.
+/// One candidate component, evaluated for a surface.
 struct Candidate<'a> {
-    layer: &'a Layer,
+    component: &'a Component,
     active: bool,
     /// Its level's base plus its rank (surfaces spec §5.3).
     order: f64,
@@ -305,7 +306,7 @@ impl Settler for Resolver {
 
 impl Resolver {
     fn resolve(&self, inner: &mut Inner, state: &Arc<LiveState>, surface: &str, dirty: &mut Dirty) {
-        let layers = inner.layers.clone();
+        let components = inner.components.clone();
         let bound = inner.bound.clone();
         let aliases = inner.aliases.clone();
         let Some(target) = inner.surfaces.get(surface) else {
@@ -323,26 +324,31 @@ impl Resolver {
         let mut reads = BTreeSet::new();
         let mut candidates = Vec::new();
         let mut problems: Vec<(String, &'static str, Option<String>)> = Vec::new();
-        for layer in layers.values() {
-            if !missing(layer, &controls).is_empty() {
+        for component in components.values() {
+            if !missing(component, &controls).is_empty() {
                 continue;
             }
-            if let Some(on) = &layer.on {
+            if let Some(on) = &component.shows().on {
                 let mut eval = Eval::new(&scope, &inner.evaluator);
                 let picked = on.picks(surface, &inner.universe, Some(&mut eval));
                 reads.extend(eval.reads);
                 let error = picked.as_ref().err().map(ToString::to_string);
-                problems.push((layer.id.clone(), "on", error));
+                problems.push((component.id.clone(), "on", error));
                 if !picked.unwrap_or(false) {
                     continue;
                 }
             }
-            let (active, when_reads) = match layer.when.as_ref().unwrap_or(&When::default()) {
+            let (active, when_reads) = match component
+                .shows()
+                .when
+                .as_ref()
+                .unwrap_or(&When::default())
+            {
                 When::Nav(group) => {
                     let path =
                         StatePath::new(STATE_ROOT, vec![key(&slug), key("current"), key(group)]);
                     let current = state.value(&path);
-                    let active = matches!(&current, Some(Value::String(s)) if s.as_str() == Some(layer.slug.as_str()));
+                    let active = matches!(&current, Some(Value::String(s)) if s.as_str() == Some(component.slug.as_str()));
                     (active, BTreeSet::from([path]))
                 }
                 When::Always(_) => (true, BTreeSet::new()),
@@ -351,19 +357,19 @@ impl Resolver {
                     let value = eval.raw(source);
                     let value = match value {
                         Ok(Some(v)) => {
-                            problems.push((layer.id.clone(), "when", None));
+                            problems.push((component.id.clone(), "when", None));
                             Some(v)
                         }
                         Ok(None) => source.fallback().cloned(),
                         Err(e) => {
-                            problems.push((layer.id.clone(), "when", Some(e.to_string())));
+                            problems.push((component.id.clone(), "when", Some(e.to_string())));
                             source.fallback().cloned()
                         }
                     };
                     (crate::transform::truthy(value.as_ref()), eval.reads)
                 }
             };
-            let rank = match &layer.rank {
+            let rank = match &component.shows().rank {
                 None => 0.0,
                 Some(source) => {
                     let mut eval = Eval::new(&scope, &inner.evaluator);
@@ -373,7 +379,7 @@ impl Resolver {
                         Ok(Some(Json::Number(n))) => n.as_f64(),
                         Ok(Some(_)) => {
                             problems.push((
-                                layer.id.clone(),
+                                component.id.clone(),
                                 "rank",
                                 Some("a rank is a number".into()),
                             ));
@@ -381,7 +387,7 @@ impl Resolver {
                         }
                         Ok(None) => None,
                         Err(e) => {
-                            problems.push((layer.id.clone(), "rank", Some(e.to_string())));
+                            problems.push((component.id.clone(), "rank", Some(e.to_string())));
                             None
                         }
                     };
@@ -393,27 +399,27 @@ impl Resolver {
             let reads_input = when_reads.iter().any(|r| r.is_within(&input_path));
             reads.extend(when_reads);
             candidates.push(Candidate {
-                layer,
+                component,
                 active,
-                order: layer.level.base() + rank,
+                order: component.shows().level.base() + rank,
                 reads_input,
             });
         }
-        for (layer, field, error) in problems {
-            inner.note(&layer, field, error);
+        for (component, field, error) in problems {
+            inner.note(&component, field, error);
         }
 
-        // Activation order: a layer that just became active goes on top.
+        // Activation order: a component that just became active goes on top.
         let mut activations = inner.activations;
         let target = inner.surfaces.get_mut(surface).expect("still there");
         let first = !target.resolved;
         let mut active = BTreeMap::new();
         let mut newly = Vec::new();
         for c in candidates.iter().filter(|c| c.active) {
-            let at = match target.active.get(&c.layer.id) {
+            let at = match target.active.get(&c.component.id) {
                 Some(&at) => at,
                 None => {
-                    newly.push(c.layer.id.clone());
+                    newly.push(c.component.id.clone());
                     if first {
                         0
                     } else {
@@ -422,7 +428,7 @@ impl Resolver {
                     }
                 }
             };
-            active.insert(c.layer.id.clone(), at);
+            active.insert(c.component.id.clone(), at);
         }
         target.active = active;
         target.reads = reads;
@@ -434,35 +440,35 @@ impl Resolver {
         order.sort_by(|a, b| {
             b.order
                 .total_cmp(&a.order)
-                .then(target.active[&b.layer.id].cmp(&target.active[&a.layer.id]))
-                .then(a.layer.id.cmp(&b.layer.id))
+                .then(target.active[&b.component.id].cmp(&target.active[&a.component.id]))
+                .then(a.component.id.cmp(&b.component.id))
         });
-        let ordered: Vec<&Layer> = order.iter().map(|c| c.layer).collect();
+        let ordered: Vec<&Component> = order.iter().map(|c| c.component).collect();
         let mut by_input = BTreeMap::new();
         let mut look = BTreeMap::new();
         for control in &controls {
             let (input, props) = cascade(&control.id, &ordered, &bound);
-            if let Some(layer) = input {
-                by_input.insert(control.id.clone(), layer);
+            if let Some(component) = input {
+                by_input.insert(control.id.clone(), component);
             }
             if !props.is_empty() {
                 look.insert(control.id.clone(), props);
             }
         }
         let resolution = Resolution {
-            active: order.iter().map(|c| c.layer.id.clone()).collect(),
+            active: order.iter().map(|c| c.component.id.clone()).collect(),
             controls: by_input,
             look,
             armed: candidates
                 .iter()
                 .filter(|c| !c.active && c.reads_input)
-                .map(|c| c.layer.id.clone())
+                .map(|c| c.component.id.clone())
                 .collect(),
         };
 
         // What changed, as state.
-        let slug_of = |id: &LayerId| -> Value {
-            layers
+        let slug_of = |id: &ComponentId| -> Value {
+            components
                 .get(id)
                 .map_or(Value::Nil, |l| l.slug.as_str().into())
         };
@@ -496,7 +502,7 @@ impl Resolver {
                     props
                         .into_iter()
                         .flatten()
-                        .map(|(prop, layer)| (prop.as_str().into(), slug_of(layer)))
+                        .map(|(prop, component)| (prop.as_str().into(), slug_of(component)))
                         .collect(),
                 ),
             ));
@@ -551,7 +557,7 @@ impl Resolver {
         {
             Ok(entry) => entry,
             Err(e) => {
-                tracing::error!(%surface, "cannot journal layer resolution: {e}");
+                tracing::error!(%surface, "cannot journal component resolution: {e}");
                 return;
             }
         };
@@ -573,27 +579,27 @@ impl Resolver {
 }
 
 /// Who has a control's input, and where each of its properties comes from
-/// (surfaces spec §5.2.1), given the active layers highest first.
+/// (surfaces spec §5.2.1), given the active components highest first.
 ///
-/// Going down: a property comes from the first layer that binds it or is a
-/// `replace` layer, which leaves what it doesn't bind blank. Input is one
-/// more property: it goes to the first layer whose binding claims or blocks
-/// it, or the first `replace` layer. A binding's input defaults to `claim`
-/// on a `replace` layer and `pass` on a `through` one.
+/// Going down: a property comes from the first component that binds it or is a
+/// `replace` component, which leaves what it doesn't bind blank. Input is one
+/// more property: it goes to the first component whose binding claims or blocks
+/// it, or the first `replace` component. A binding's input defaults to `claim`
+/// on a `replace` component and `pass` on a `through` one.
 pub fn cascade(
     control: &str,
-    ordered: &[&Layer],
+    ordered: &[&Component],
     bound: &BoundMap,
-) -> (Option<LayerId>, BTreeMap<Prop, LayerId>) {
+) -> (Option<ComponentId>, BTreeMap<Prop, ComponentId>) {
     let mut input = None;
     let mut props = BTreeMap::new();
     let mut open: BTreeSet<Prop> = Prop::ALL.into_iter().collect();
-    for layer in ordered.iter().filter(|l| l.control(control).is_some()) {
-        let binding = bound.get(&(layer.id.clone(), control.to_owned()));
-        let replace = layer.cascade == Cascade::Replace;
+    for component in ordered.iter().filter(|l| l.control(control).is_some()) {
+        let binding = bound.get(&(component.id.clone(), control.to_owned()));
+        let replace = component.shows().cascade == Cascade::Replace;
         for prop in binding.map(|b| &b.props).into_iter().flatten() {
             if open.remove(prop) {
-                props.insert(*prop, layer.id.clone());
+                props.insert(*prop, component.id.clone());
             }
         }
         let mode = binding.and_then(|b| b.input).unwrap_or(if replace {
@@ -602,10 +608,10 @@ pub fn cascade(
             InputMode::Pass
         });
         if input.is_none() && (mode != InputMode::Pass || replace) {
-            input = Some(layer.id.clone());
+            input = Some(component.id.clone());
         }
         if replace {
-            // Nothing under a replace layer shows.
+            // Nothing under a replace component shows.
             break;
         }
     }

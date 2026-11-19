@@ -9,27 +9,30 @@ import {
   presetOf,
   presetWhen,
   shiftKey,
-  toLayerControl,
+  toControlSpec,
   virtualDeck,
   whenExpr,
-  type Layer,
+  bindingProblems,
+  bindingRuntime,
+  newBindingId,
+  type Component,
 } from "./model";
 
-const layer = (controls: Layer["controls"]): Layer => ({ id: "l", name: "L", slug: "l", controls });
+const page = (controls: Component["controls"]): Component => ({ id: "l", name: "L", slug: "l", controls, show: {} });
 
-describe("layers", () => {
+describe("components", () => {
   it("copy a surface's controls with their capabilities", () => {
     const k7 = deckControls(virtualDeck)[7]!;
-    expect(toLayerControl(k7)).toEqual({ id: "k7", at: { x: 2, y: 1 }, inputs: ["momentary"], outputs: ["image"] });
+    expect(toControlSpec(k7)).toEqual({ id: "k7", at: { x: 2, y: 1 }, inputs: ["momentary"], outputs: ["image"] });
   });
 
   it("fit a surface that has each control with what it needs", () => {
     const deck = deckControls(virtualDeck);
-    expect(missingControls(layer(deck.map(toLayerControl)), deck)).toEqual([]);
+    expect(missingControls(page(deck.map(toControlSpec)), deck)).toEqual([]);
     // Fewer controls is fine; a missing one or a missing capability isn't.
-    expect(missingControls(layer([{ id: "k0" }]), deck)).toEqual([]);
+    expect(missingControls(page([{ id: "k0" }]), deck)).toEqual([]);
     expect(
-      missingControls(layer([{ id: "k15" }, { id: "k1", inputs: ["relative"] }, { id: "k2", outputs: ["led"] }]), deck),
+      missingControls(page([{ id: "k15" }, { id: "k1", inputs: ["relative"] }, { id: "k2", outputs: ["led"] }]), deck),
     ).toEqual(["k15", "k1", "k2"]);
   });
 
@@ -50,7 +53,7 @@ describe("layers", () => {
   });
 
   it("move between controls by position", () => {
-    const { cells } = gridOf(deckControls(virtualDeck).map(toLayerControl));
+    const { cells } = gridOf(deckControls(virtualDeck).map(toControlSpec));
     expect(neighbour(cells, "k0", 1, 0)).toBe("k1");
     expect(neighbour(cells, "k0", 0, 1)).toBe("k5");
     expect(neighbour(cells, "k0", -1, 0)).toBeUndefined();
@@ -65,7 +68,7 @@ describe("layers", () => {
   });
 });
 
-describe("layer fields", () => {
+describe("show", () => {
   const none = { alias: () => undefined, conn: () => undefined };
   const keys = (ids: string[]) => ids.map((id) => ({ id }));
 
@@ -85,19 +88,58 @@ describe("layer fields", () => {
   });
 
   it("list a control's candidates, highest first", () => {
-    const cams: Layer = { id: "c", name: "Cameras", slug: "cams", controls: keys(["k3", "k4"]) };
-    const shift: Layer = {
+    const cams: Component = { id: "c", name: "Cameras", slug: "cams", controls: keys(["k3", "k4"]), show: {} };
+    const shift: Component = {
       id: "s",
       name: "Shift",
       slug: "shift",
       controls: keys(["k3"]),
-      level: "over",
-      when: presetWhen("shift", "k15"),
+      show: { level: "over", when: presetWhen("shift", "k15") },
     };
-    const strip: Layer = { id: "t", name: "Strip", slug: "strip", controls: keys(["k3"]), level: "under", rank: 50, when: { always: true } };
-    expect(candidatesText("k3", [strip, cams, shift])).toBe(
+    const strip: Component = {
+      id: "t",
+      name: "Strip",
+      slug: "strip",
+      controls: keys(["k3"]),
+      show: { level: "under", rank: 50, when: { always: true } },
+    };
+    const key: Component = { id: "k", name: "Key", slug: "key", controls: keys(["k3"]) };
+    expect(candidatesText("k3", [strip, key, cams, shift])).toBe(
       "k3: Shift (over, while k15 is held), otherwise Cameras (main), otherwise Strip (under, always)",
     );
-    expect(candidatesText("k9", [cams])).toBe("k9: no layer covers it");
+    expect(candidatesText("k9", [cams])).toBe("k9: nothing shown covers it");
+  });
+});
+
+describe("bindings in a component", () => {
+  const cams: Component = {
+    id: "C",
+    name: "Cameras",
+    slug: "cams",
+    controls: [{ id: "k0" }],
+    bindings: [{ id: "b1", control: "k0", props: {} }],
+  };
+
+  it("gives a new binding the lowest free ID", () => {
+    expect(newBindingId(cams)).toBe("b2");
+    expect(newBindingId({ ...cams, bindings: [{ id: "b2", control: "k0", props: {} }] })).toBe("b1");
+  });
+
+  it("takes a binding's save problems relative to it", () => {
+    const problems = [
+      { path: ["show", "when", "nav"], code: "invalid", message: "" },
+      { path: ["bindings", 1, "props", "label"], code: "noOutput", message: "" },
+    ];
+    expect(bindingProblems(problems, 1).map((p) => p.path)).toEqual([["props", "label"]]);
+    expect(bindingProblems(problems, 0)).toEqual([]);
+  });
+
+  it("picks one component's binding properties from the runtime problems", () => {
+    const runtime = [
+      { component: "C", field: ["show", "rank"], message: "not a number" },
+      { component: "C", field: ["bindings", "b1", "props", "label"], message: "boom" },
+      { component: "D", field: ["bindings", "b1", "props", "label"], message: "elsewhere" },
+    ];
+    expect(bindingRuntime(runtime, "C")).toEqual([{ binding: "b1", prop: "label", message: "boom" }]);
   });
 });

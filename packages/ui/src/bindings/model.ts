@@ -64,10 +64,10 @@ export type Value = string | number | boolean | null;
 /** A property's binding: any source (bindings spec §2, dataflow §1). */
 export type Binding = Source;
 
+/** One control's bindings, embedded in its component (composition spec §7.1). */
 export interface ControlBinding {
-  /** Empty in a create request. */
+  /** Unique in its component; empty until it's first saved. */
   id: string;
-  layer: string;
   control: string;
   /** The editor's properties, and any others (`value`), kept as they are. */
   props: Partial<Record<Prop, Binding>> & Record<string, Binding | undefined>;
@@ -76,8 +76,8 @@ export interface ControlBinding {
   /** Per-control gesture timing (surfaces spec §4.2), kept as it is. */
   gestures?: Record<string, Source>;
   /**
-   * Whether its layer takes the control's input (surfaces spec §5.2.1). When
-   * absent, a `replace` layer claims it and a `through` layer passes it down.
+   * Whether its component takes the control's input (surfaces spec §5.2.1).
+   * When absent, a `replace` component claims it and a `through` one passes it down.
    */
   input?: InputMode;
 }
@@ -87,13 +87,13 @@ export type InputMode = (typeof inputModes)[number];
 
 export const inputModeNames: Record<InputMode, string> = {
   claim: "Takes presses",
-  pass: "Passes presses to the layer below",
+  pass: "Passes presses to what's below",
   block: "Takes presses and ignores them",
 };
 
 /**
  * A helper (bindings spec §5): a reducer whose `on` and `input` default to
- * its control, its value a cell under the layer or, with `scope: "surface"`,
+ * its control, its value a cell under its component or, with `scope: "surface"`,
  * per surface.
  */
 export type Helper = {
@@ -104,12 +104,12 @@ export type Helper = {
   journal?: "full" | { sampled: string };
 } & { [option: string]: Json | Sink[] | undefined };
 
-/** Where a helper's value is: `layer.<slug>.controls.<id>.<as>`, or per surface. */
-export function helperPath(layerSlug: string, control: string, key: string, helper: Helper, surfaceSlug?: string): string {
+/** Where a helper's value is: `component.<slug>.controls.<id>.<as>`, or per surface. */
+export function helperPath(componentSlug: string, control: string, key: string, helper: Helper, surfaceSlug?: string): string {
   const name = helper.as ?? key;
   return helper.scope === "surface"
     ? `surface.${surfaceSlug ?? "*"}.controls.${control}.helpers.${name}`
-    : `component.${layerSlug}.controls.${control}.${name}`;
+    : `component.${componentSlug}.controls.${control}.${name}`;
 }
 
 export interface SavedBinding {
@@ -223,7 +223,7 @@ export function toDraft(binding: ControlBinding): ControlBinding {
  * it doesn't edit, and helpers and gestures as they are.
  */
 export function fromDraft(draft: ControlBinding): ControlBinding {
-  const out: ControlBinding = { id: draft.id, layer: draft.layer, control: draft.control, props: {} };
+  const out: ControlBinding = { id: draft.id, control: draft.control, props: {} };
   const others = Object.keys(draft.props).filter((p) => !(props as readonly string[]).includes(p));
   for (const prop of [...props, ...others]) {
     const binding = draft.props[prop];
@@ -245,8 +245,8 @@ export function isEmpty(binding: ControlBinding): boolean {
   );
 }
 
-export function newDraft(layer: string, control: string): ControlBinding {
-  return { id: "", layer, control, props: {} };
+export function newDraft(control: string): ControlBinding {
+  return { id: "", control, props: {} };
 }
 
 /** Every ref a binding reads directly, for showing which connections it needs. */

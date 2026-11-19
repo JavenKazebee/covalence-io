@@ -3,10 +3,10 @@
 //! bindings of each; one with `show` is shown on surfaces, a candidate in
 //! resolution (surfaces spec §5.2).
 //!
-//! The running core still resolves and draws **layers**: a shown component
-//! becomes a [`Layer`] (its controls and `show`), and its bindings are set
-//! one by one, each with the component as its layer and an ID of
-//! `<component>/<binding>` ([`binding_id`]).
+//! [`crate::surface::Surfaces`] resolves and draws shown components. Their
+//! bindings run one by one, each knowing its component and with an ID of
+//! `<component>/<binding>` ([`binding_id`]), so two components' bindings and
+//! helper cells never meet.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -16,9 +16,7 @@ use crate::binding::{self, ControlBinding};
 use crate::flow::{Code, Problem, Report};
 use crate::select::{Entities, Selector};
 use crate::source::Source;
-use crate::surface::{
-    self, Cascade, ControlSpec, Layer, LayerContext, LayerId, Level, OutputCapKind, When,
-};
+use crate::surface::{self, Cascade, ComponentId, ControlSpec, FieldContext, Level, When};
 use covalence_protocol::state::PathSegment;
 
 /// The entity type in the store.
@@ -90,33 +88,13 @@ impl Component {
                 })?;
             }
         }
-        let mut component: Component = binding::deserialize(json, &[]).map_err(|p| vec![p])?;
-        for b in &mut component.bindings {
-            b.layer.clear();
-        }
-        Ok(component)
+        binding::deserialize(json, &[]).map_err(|p| vec![p])
     }
 
-    /// What resolution reads: its controls and `show`, with `show`'s
-    /// defaults when it has none.
-    pub fn layer(&self) -> Layer {
-        let show = self.show.clone().unwrap_or_default();
-        Layer {
-            id: self.id.clone(),
-            name: self.name.clone(),
-            slug: self.slug.clone(),
-            controls: self.controls.clone(),
-            on: show.on,
-            when: show.when,
-            level: show.level,
-            rank: show.rank,
-            cascade: show.cascade,
-        }
-    }
-
-    /// Its layer, if it's shown.
-    pub fn shown(&self) -> Option<Layer> {
-        self.show.as_ref().map(|_| self.layer())
+    /// Its `show`, or `show`'s defaults when it isn't shown.
+    pub fn shows(&self) -> &Show {
+        static NOT_SHOWN: std::sync::LazyLock<Show> = std::sync::LazyLock::new(Show::default);
+        self.show.as_ref().unwrap_or(&NOT_SHOWN)
     }
 
     /// Its bindings as the running core has them: on this component, with
@@ -126,7 +104,7 @@ impl Component {
             .iter()
             .map(|b| ControlBinding {
                 id: binding_id(&self.id, &b.id),
-                layer: self.id.clone(),
+                component: self.id.clone(),
                 ..b.clone()
             })
             .collect()
@@ -148,23 +126,18 @@ pub struct Context<'a> {
     /// Compiles expressions.
     pub evaluator: &'a dyn crate::expr::Evaluator,
     /// The other shown components, for `ambiguousOrder`.
-    pub others: &'a BTreeMap<LayerId, Layer>,
+    pub others: &'a BTreeMap<ComponentId, Component>,
 }
 
-/// Checks a component: what surfaces spec §9 checks of a layer, under
-/// `show` for its fields, and each binding as bindings spec §2.1 checks one,
-/// under `bindings`, with unique IDs and at most one per control.
+/// Checks a component: its own fields ([`surface::validate_fields`]), and
+/// each binding as bindings spec §2.1 checks one, under `bindings`, with
+/// unique IDs and at most one per control.
 pub fn validate(component: &Component, ctx: &Context<'_>) -> Report {
-    // Its bindings are checked against its controls below, where a problem
-    // can name the binding; the layer check needn't repeat it.
-    let bound: BTreeMap<String, BTreeSet<OutputCapKind>> = BTreeMap::new();
     let none = BTreeMap::new();
-    let layer = component.layer();
-    let report = surface::validate_layer(
-        &layer,
-        &LayerContext {
+    let report = surface::validate_fields(
+        component,
+        &FieldContext {
             taken_slugs: ctx.taken_slugs,
-            bound: &bound,
             surfaces: ctx.surfaces,
             evaluator: ctx.evaluator,
             others: if component.show.is_some() {
@@ -174,18 +147,9 @@ pub fn validate(component: &Component, ctx: &Context<'_>) -> Report {
             },
         },
     );
-    let under_show = |p: Problem| match p.path.first() {
-        Some(PathSegment::Key(k))
-            if ["on", "when", "level", "rank", "cascade"].contains(&k.as_str()) =>
-        {
-            prefixed(p, &[key("show")])
-        }
-        _ => p,
-    };
-    let mut errors: Vec<Problem> = report.errors.into_iter().map(under_show).collect();
-    let mut warnings: Vec<Problem> = report.warnings.into_iter().map(under_show).collect();
-
-    let layers = BTreeMap::from([(component.id.clone(), layer)]);
+    let mut errors = report.errors;
+    let mut warnings = report.warnings;
+    let components = BTreeMap::from([(component.id.clone(), component.clone())]);
     let mut ids = BTreeSet::new();
     for (i, b) in component.bindings.iter().enumerate() {
         let at = [key("bindings"), PathSegment::Index(i as i64)];
@@ -204,20 +168,20 @@ pub fn validate(component: &Component, ctx: &Context<'_>) -> Report {
                 &at,
             ));
         }
-        let taken: BTreeSet<(LayerId, String)> = component
+        let taken: BTreeSet<(ComponentId, String)> = component
             .bindings
             .iter()
             .take(i)
             .map(|o| (component.id.clone(), o.control.clone()))
             .collect();
         let placed = ControlBinding {
-            layer: component.id.clone(),
+            component: component.id.clone(),
             ..b.clone()
         };
         let report = binding::validate(
             &placed,
             &binding::Context {
-                layers: &layers,
+                components: &components,
                 conns: ctx.conns,
                 taken: &taken,
                 evaluator: ctx.evaluator,
@@ -289,27 +253,26 @@ mod tests {
             "bindings": [{ "id": "b", "control": "k0", "props": { "label": "Hi" } }],
             "show": { "level": "over", "cascade": "through" }
         }));
-        let layer = c.shown().unwrap();
         assert_eq!(
-            (layer.level, layer.cascade),
+            (c.shows().level, c.shows().cascade),
             (Level::Over, Cascade::Through)
         );
         let runtime = c.runtime_bindings();
         assert_eq!(
-            (runtime[0].id.as_str(), runtime[0].layer.as_str()),
+            (runtime[0].id.as_str(), runtime[0].component.as_str()),
             ("C/b", "C")
         );
         assert_eq!(split_binding_id("C/b"), Some(("C", "b")));
         // Stored without the component it's in.
         assert!(
             serde_json::to_value(&c).unwrap()["bindings"][0]
-                .get("layer")
+                .get("component")
                 .is_none()
         );
         assert!(check(&c).is_ok(), "{:?}", check(&c).errors);
 
         let used = Component { show: None, ..c };
-        assert!(used.shown().is_none());
+        assert_eq!(used.shows(), &Show::default());
     }
 
     #[test]

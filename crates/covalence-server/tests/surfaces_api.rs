@@ -63,7 +63,7 @@ fn id(entity: &Value) -> &str {
 }
 
 /// A page of the virtual deck's 15 keys.
-fn deck_layer(name: &str) -> Value {
+fn deck_page(name: &str) -> Value {
     Server::page(name, json!(keys(15)))
 }
 
@@ -104,9 +104,9 @@ async fn surfaces_components_and_bindings_are_validated_and_stored() {
     let server = Server::start();
 
     // Components: a slug from the name, and each control listed once.
-    let cams = create(&server, "/components", "component", deck_layer("Cameras")).await;
+    let cams = create(&server, "/components", "component", deck_page("Cameras")).await;
     assert_eq!(cams["slug"], "cameras");
-    let mut twice = deck_layer("Bad");
+    let mut twice = deck_page("Bad");
     twice["controls"][1]["id"] = json!("k0");
     let (status, body) = server.post("/components", twice).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
@@ -208,7 +208,7 @@ async fn surfaces_components_and_bindings_are_validated_and_stored() {
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(codes(&body)[0].1, "exprSyntax", "{body}");
 
-    let audio = create(&server, "/components", "component", deck_layer("Audio")).await;
+    let audio = create(&server, "/components", "component", deck_page("Audio")).await;
     server
         .bind(id(&audio), json!({ "control": "k0", "props": {} }))
         .await;
@@ -236,11 +236,11 @@ async fn surfaces_components_and_bindings_are_validated_and_stored() {
     );
 
     // Flows save event triggers, checked against components.
-    let control_flow = |layer: &str| {
+    let control_flow = |component: &str| {
         json!({
             "name": "On press",
             "enabled": true, "concurrency": "ignore",
-            "triggers": [{ "kind": "event", "from": { "component": layer, "controls": "k3" }, "event": "press" }],
+            "triggers": [{ "kind": "event", "from": { "component": component, "controls": "k3" }, "event": "press" }],
             "body": [{ "id": "s", "kind": "set", "path": "vars.pressed", "value": "true" }],
         })
     };
@@ -339,21 +339,21 @@ async fn surfaces_components_and_bindings_survive_a_restart() {
     };
 
     let app = start();
-    let mut cameras = deck_layer("Cameras");
+    let mut cameras = deck_page("Cameras");
     cameras["bindings"] =
         json!([{ "id": "b", "control": "k0", "props": { "label": { "expr": "'Hi'" } } }]);
-    let (layer, _) = app.save::<Component>(&cameras, None).await.unwrap();
+    let (component, _) = app.save::<Component>(&cameras, None).await.unwrap();
     let (surface, _) = app
         .save::<Surface>(
-            &json!({ "name": "FOH deck", "model": "virtual.deck15", "startComponent": layer.id }),
+            &json!({ "name": "FOH deck", "model": "virtual.deck15", "startComponent": component.id }),
             None,
         )
         .await
         .unwrap();
-    // What surfaces show is kept: one moved off its start layer, and one with
-    // no start layer, shown something while detached.
+    // What surfaces show is kept: one moved off its start component, and one with
+    // no start component, shown something while detached.
     let (lights, _) = app
-        .save::<Component>(&deck_layer("Lights"), None)
+        .save::<Component>(&deck_page("Lights"), None)
         .await
         .unwrap();
     let (side, _) = app
@@ -368,7 +368,7 @@ async fn surfaces_components_and_bindings_survive_a_restart() {
         .show(&surface.id, Some(&lights.id), system())
         .unwrap();
     app.surfaces()
-        .show(&side.id, Some(&layer.id), system())
+        .show(&side.id, Some(&component.id), system())
         .unwrap();
     // A key held when the server stops.
     let link = app
@@ -412,7 +412,7 @@ async fn surfaces_components_and_bindings_survive_a_restart() {
     assert_eq!(
         app.components(),
         BTreeMap::from([
-            (layer.id.clone(), layer.clone()),
+            (component.id.clone(), component.clone()),
             (lights.id.clone(), lights.clone())
         ])
     );
@@ -423,10 +423,10 @@ async fn surfaces_components_and_bindings_survive_a_restart() {
             (side.id.clone(), side.clone())
         ])
     );
-    // Each shows what it showed last, not its start layer, and says so in
+    // Each shows what it showed last, not its start component, and says so in
     // state before it attaches.
     assert_eq!(app.surfaces().shown(&surface.id), Some(lights.id.clone()));
-    assert_eq!(app.surfaces().shown(&side.id), Some(layer.id.clone()));
+    assert_eq!(app.surfaces().shown(&side.id), Some(component.id.clone()));
     let current = |slug: &str| {
         app.core()
             .shared()
@@ -444,12 +444,12 @@ async fn surfaces_components_and_bindings_survive_a_restart() {
         .surfaces()
         .attach(&side.id, core_attach("sideDeck"))
         .unwrap();
-    assert_eq!(app.surfaces().shown(&side.id), Some(layer.id.clone()));
+    assert_eq!(app.surfaces().shown(&side.id), Some(component.id.clone()));
     assert_eq!(current("sideDeck"), Some("cameras".into()));
     drop(side_link);
     // Shown components reach the core, which resolves them.
-    assert_eq!(app.surfaces().layers()[&layer.id], layer.shown().unwrap());
-    assert_eq!(app.components()[&layer.id].bindings.len(), 1);
+    assert_eq!(app.surfaces().components()[&component.id], component);
+    assert_eq!(app.components()[&component.id].bindings.len(), 1);
     app.shutdown().await;
 }
 
@@ -648,23 +648,23 @@ async fn a_web_surface_presses_routes_and_redraws() {
     let vh = videohub(&server, "vh").await;
     let vh2 = videohub(&server, "vh2").await;
 
-    let layer = create(&server, "/components", "component", deck_layer("Cameras")).await;
+    let component = create(&server, "/components", "component", deck_page("Cameras")).await;
     let deck = create(
         &server,
         "/surfaces",
         "surface",
-        json!({ "name": "FOH deck", "model": "virtual.deck15", "startComponent": id(&layer) }),
+        json!({ "name": "FOH deck", "model": "virtual.deck15", "startComponent": id(&component) }),
     )
     .await;
-    let k0 = server.bind(id(&layer), label_of("k0", &vh)).await;
-    server.bind(id(&layer), label_of("k2", &vh2)).await;
+    let k0 = server.bind(id(&component), label_of("k0", &vh)).await;
+    server.bind(id(&component), label_of("k2", &vh2)).await;
     let (status, body) = server
         .post(
             "/flows",
             json!({
                 "name": "Route on press",
                 "enabled": true, "concurrency": "ignore",
-                "triggers": [{ "kind": "event", "from": { "component": id(&layer), "controls": "k1" }, "event": "press" }],
+                "triggers": [{ "kind": "event", "from": { "component": id(&component), "controls": "k1" }, "event": "press" }],
                 "body": [{
                     "id": "route1", "kind": "action", "target": { "conn": vh },
                     "action": "route", "params": { "output": 1, "input": 3 },
@@ -754,13 +754,13 @@ async fn a_web_surface_presses_routes_and_redraws() {
     // Editing a binding while shown redraws its key before the API answers.
     let mut edited = k0.clone();
     edited["props"]["background"] = json!({ "expr": "'#0000ff'" });
-    let (status, body) = server.try_bind(id(&layer), edited).await;
+    let (status, body) = server.try_bind(id(&component), edited).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let (control, _) = next_draw(&mut ws, "fohDeck").await;
     assert_eq!(control, "k0");
 
     // Switching to a page with nothing bound blanks the bound keys.
-    let empty = create(&server, "/components", "component", deck_layer("Empty")).await;
+    let empty = create(&server, "/components", "component", deck_page("Empty")).await;
     let (status, body) = server
         .post(
             &format!("/surfaces/{}/current", id(&deck)),
@@ -820,12 +820,12 @@ async fn a_web_surface_presses_routes_and_redraws() {
 async fn a_web_surface_must_attach_as_itself() {
     let server = Server::start();
     let addr = server.listen().await;
-    let layer = create(&server, "/components", "component", deck_layer("Cameras")).await;
+    let component = create(&server, "/components", "component", deck_page("Cameras")).await;
     let deck = create(
         &server,
         "/surfaces",
         "surface",
-        json!({ "name": "FOH deck", "model": "virtual.deck15", "startComponent": id(&layer) }),
+        json!({ "name": "FOH deck", "model": "virtual.deck15", "startComponent": id(&component) }),
     )
     .await;
 
@@ -917,8 +917,8 @@ async fn flows_drive_the_deck_and_other_flows_through_core() {
     // Rehearsal: device actions would be suppressed; core's are internal.
     server.app.core().set_simulate(true);
 
-    let cams = create(&server, "/components", "component", deck_layer("Cameras")).await;
-    let audio = create(&server, "/components", "component", deck_layer("Audio")).await;
+    let cams = create(&server, "/components", "component", deck_page("Cameras")).await;
+    let audio = create(&server, "/components", "component", deck_page("Audio")).await;
     let deck = create(
         &server,
         "/surfaces",
@@ -935,7 +935,7 @@ async fn flows_drive_the_deck_and_other_flows_through_core() {
         })
         .await;
 
-    // A press on the audio layer's k3 notes itself.
+    // A press on the audio component's k3 notes itself.
     create(
         &server,
         "/flows",
@@ -1090,12 +1090,12 @@ async fn flows_drive_the_deck_and_other_flows_through_core() {
 }
 
 /// surfaces spec §11.4: a surface-scoped helper gets a cell on a surface the first time
-/// it shows the helper's layer, moves with the surface's slug, and goes when
+/// it shows the helper's component, moves with the surface's slug, and goes when
 /// the surface is deleted.
 #[tokio::test(flavor = "multi_thread")]
 async fn surface_scoped_helpers_live_on_the_surfaces_that_showed_their_layer() {
     let server = Server::start();
-    let cams = create(&server, "/components", "component", deck_layer("Cams")).await;
+    let cams = create(&server, "/components", "component", deck_page("Cams")).await;
     let deck = create(
         &server,
         "/surfaces",

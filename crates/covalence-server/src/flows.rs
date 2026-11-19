@@ -324,7 +324,7 @@ impl EntityKind for Flow {
         if self.slug.is_empty() {
             self.slug = flow::derive_slug(&self.name, &taken);
         }
-        let layers = app.component_layers();
+        let components = app.components();
         let surfaces: BTreeSet<String> = read(&app.surface_entities).keys().cloned().collect();
         let mut by_id: BTreeMap<String, Flow> = flows.clone();
         by_id.insert(self.id.clone(), self.clone());
@@ -338,7 +338,7 @@ impl EntityKind for Flow {
             &flow::Context {
                 conns: &by_conn,
                 taken_slugs: &taken,
-                layers: &layers,
+                components: &components,
                 surfaces: &surfaces,
                 flows: &by_id,
                 evaluator: app.evaluator.as_ref(),

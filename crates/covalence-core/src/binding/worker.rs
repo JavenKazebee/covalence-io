@@ -1,14 +1,14 @@
 //! The binding worker (bindings spec §3, §9.2): a thread of its own
-//! that keeps the bindings of shown layers evaluated and draws what changes.
+//! that keeps the bindings of shown components evaluated and draws what changes.
 //!
 //! One turn takes every state change waiting on the feed, re-evaluates the
-//! properties whose reads they touch on layers some surface shows, and
+//! properties whose reads they touch on components some surface shows, and
 //! redraws each control whose resolved look differs from what that surface
-//! last got. A layer that comes into view is evaluated in full first.
+//! last got. A component that comes into view is evaluated in full first.
 //!
-//! Which layer a control shows is layer resolution's (surfaces spec §5.2,
+//! Which component a control shows is component resolution's (surfaces spec §5.2,
 //! [`crate::surface::resolve`]), done in the state turn before the worker
-//! sees it. The worker keeps the bindings of controlling layers evaluated,
+//! sees it. The worker keeps the bindings of controlling components evaluated,
 //! and of armed ones, so a shift layer that becomes active is drawn at once.
 //!
 //! A `value` property drives a `level` output (surfaces spec §11.4). Each level sent is
@@ -34,7 +34,7 @@ use crate::surface::Output;
 use crate::surface::render::{Look, Renderer};
 use crate::surface::resolve::{Resolution, Resolver};
 use crate::surface::{
-    ControlDef, Draw, LayerId, OutputCap, OutputCapKind, SurfaceId, requested_level_path,
+    ComponentId, ControlDef, Draw, OutputCap, OutputCapKind, SurfaceId, requested_level_path,
 };
 
 /// An `expr` binding's time limit (bindings spec §9.2).
@@ -54,7 +54,7 @@ enum Command {
     Set(Box<ControlBinding>),
     Remove(String),
     Aliases(Arc<BTreeMap<String, ConnId>>),
-    /// A surface is shown through `outputs`, with the layers resolution
+    /// A surface is shown through `outputs`, with the components resolution
     /// gives it.
     Show {
         surface: SurfaceId,
@@ -68,7 +68,7 @@ enum Command {
 
 impl Bindings {
     /// Starts the worker on its own thread, drawing each control from the
-    /// layer `resolver` gives it.
+    /// component `resolver` gives it.
     pub fn start(shared: Shared, resolver: Arc<Resolver>) -> Self {
         let (commands, rx) = mpsc::unbounded_channel();
         let problems = Arc::new(Mutex::new(Problems::new()));
@@ -189,11 +189,11 @@ struct Worker {
     evaluator: QuickJs,
     aliases: Arc<BTreeMap<String, ConnId>>,
     bindings: BTreeMap<String, ControlBinding>,
-    /// Binding IDs by `(layer, control)`.
-    by_control: BTreeMap<(LayerId, String), String>,
+    /// Binding IDs by `(component, control)`.
+    by_control: BTreeMap<(ComponentId, String), String>,
     shown: BTreeMap<SurfaceId, Shown>,
-    /// The bound controls of shown layers, evaluated.
-    resolved: BTreeMap<(LayerId, String), Resolved>,
+    /// The bound controls of shown components, evaluated.
+    resolved: BTreeMap<(ComponentId, String), Resolved>,
     renderer: Renderer,
     problems: Arc<Mutex<Problems>>,
     resolver: Arc<Resolver>,
@@ -201,7 +201,7 @@ struct Worker {
 
 struct Shown {
     slug: String,
-    /// Which layer controls each control, as last taken from the resolver.
+    /// Which component controls each control, as last taken from the resolver.
     resolution: Arc<Resolution>,
     controls: Vec<ControlDef>,
     outputs: mpsc::Sender<Output>,
@@ -288,27 +288,27 @@ pub fn look(props: &BTreeMap<Prop, Evaluated>, state: &LiveState) -> Look {
     look
 }
 
-/// A control's look, its level, and what its `value` read, from the layers
-/// its properties come from (surfaces spec §5.2.1). From one layer, that's
-/// the layer's own evaluated look; from several, the properties are put
+/// A control's look, its level, and what its `value` read, from the components
+/// its properties come from (surfaces spec §5.2.1). From one component, that's
+/// the component's own evaluated look; from several, the properties are put
 /// together.
 fn compose<'r>(
-    sources: Option<&BTreeMap<Prop, LayerId>>,
+    sources: Option<&BTreeMap<Prop, ComponentId>>,
     control: &str,
-    resolved: &'r BTreeMap<(LayerId, String), Resolved>,
+    resolved: &'r BTreeMap<(ComponentId, String), Resolved>,
     state: &LiveState,
 ) -> (Look, Option<f64>, Option<&'r BTreeSet<StatePath>>) {
     let Some(sources) = sources else {
         return (Look::default(), None, None);
     };
-    let of = |layer: &LayerId| resolved.get(&(layer.clone(), control.to_owned()));
+    let of = |component: &ComponentId| resolved.get(&(component.clone(), control.to_owned()));
     let value = sources.get(&Prop::Value).and_then(of);
     let value_reads = value
         .and_then(|r| r.props.get(&Prop::Value))
         .map(|e| &e.reads);
-    let mut layers = sources.values();
-    let first = layers.next();
-    if let Some(only) = first.filter(|f| layers.all(|l| l == *f)) {
+    let mut components = sources.values();
+    let first = components.next();
+    if let Some(only) = first.filter(|f| components.all(|l| l == *f)) {
         let r = of(only);
         return (
             r.map(|r| r.look.clone()).unwrap_or_default(),
@@ -318,7 +318,7 @@ fn compose<'r>(
     }
     let props: BTreeMap<Prop, Evaluated> = sources
         .iter()
-        .filter_map(|(prop, layer)| Some((*prop, of(layer)?.props.get(prop)?.clone())))
+        .filter_map(|(prop, component)| Some((*prop, of(component)?.props.get(prop)?.clone())))
         .collect();
     let level = match props.get(&Prop::Value).and_then(|e| e.value.as_ref()) {
         Some(PropValue::Level(v)) => Some(*v),
@@ -395,7 +395,7 @@ impl Worker {
             }
         }
         let resolved = self.take_resolutions();
-        let keys: Vec<(LayerId, String)> = self.resolved.keys().cloned().collect();
+        let keys: Vec<(ComponentId, String)> = self.resolved.keys().cloned().collect();
         let mut changed = BTreeSet::new();
         for key in keys {
             if self.reevaluate(&key, dirty.as_ref()) {
@@ -414,7 +414,7 @@ impl Worker {
         match command {
             Command::Set(binding) => {
                 self.forget(&binding.id);
-                let key = (binding.layer.clone(), binding.control.clone());
+                let key = (binding.component.clone(), binding.control.clone());
                 self.by_control.insert(key.clone(), binding.id.clone());
                 self.bindings.insert(binding.id.clone(), *binding);
                 if self.is_visible(&key.0) {
@@ -486,23 +486,23 @@ impl Worker {
     }
 
     /// Removes a binding, returning where it was.
-    fn forget(&mut self, id: &str) -> Option<(LayerId, String)> {
+    fn forget(&mut self, id: &str) -> Option<(ComponentId, String)> {
         let old = self.bindings.remove(id)?;
-        let key = (old.layer, old.control);
+        let key = (old.component, old.control);
         self.by_control.remove(&key);
         let mut problems = lock(&self.problems);
         problems.retain(|(binding, _), _| binding != id);
         Some(key)
     }
 
-    fn is_visible(&self, layer: &str) -> bool {
+    fn is_visible(&self, component: &str) -> bool {
         self.shown
             .values()
-            .any(|s| s.resolution.evaluated().any(|l| l == layer))
+            .any(|s| s.resolution.evaluated().any(|l| l == component))
     }
 
     /// Takes each shown surface's latest resolution. Whether any changed,
-    /// in which case the layers kept evaluated are brought up to date.
+    /// in which case the components kept evaluated are brought up to date.
     fn take_resolutions(&mut self) -> bool {
         let mut changed = false;
         for (surface, shown) in &mut self.shown {
@@ -518,21 +518,21 @@ impl Worker {
         changed
     }
 
-    /// Evaluates layers that came into view in full, and drops layers that
-    /// nothing shows any more. In view are the layers controlling a control
+    /// Evaluates components that came into view in full, and drops components that
+    /// nothing shows any more. In view are the components controlling a control
     /// of a shown surface, and armed ones (surfaces spec §5.2).
     fn track_visible(&mut self) {
-        let visible: BTreeSet<LayerId> = self
+        let visible: BTreeSet<ComponentId> = self
             .shown
             .values()
             .flat_map(|s| s.resolution.evaluated().cloned())
             .collect();
         self.resolved
-            .retain(|(layer, _), _| visible.contains(layer));
-        let fresh: Vec<(LayerId, String)> = self
+            .retain(|(component, _), _| visible.contains(component));
+        let fresh: Vec<(ComponentId, String)> = self
             .by_control
             .keys()
-            .filter(|(layer, _)| visible.contains(layer))
+            .filter(|(component, _)| visible.contains(component))
             .filter(|key| !self.resolved.contains_key(*key))
             .cloned()
             .collect();
@@ -542,14 +542,14 @@ impl Worker {
     }
 
     /// Evaluates every property of one control.
-    fn resolve(&mut self, key: &(LayerId, String)) {
+    fn resolve(&mut self, key: &(ComponentId, String)) {
         self.resolved.insert(key.clone(), Resolved::default());
         self.reevaluate(key, None);
     }
 
     /// Re-evaluates the properties of one control whose reads `dirty`
     /// touches (all of them for `None`). Whether its look changed.
-    fn reevaluate(&mut self, key: &(LayerId, String), dirty: Option<&Dirty>) -> bool {
+    fn reevaluate(&mut self, key: &(ComponentId, String), dirty: Option<&Dirty>) -> bool {
         let Some(binding) = self
             .by_control
             .get(key)

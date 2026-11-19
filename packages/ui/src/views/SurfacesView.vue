@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { api, ApiError } from "../api";
-import LayerEditor from "../components/LayerEditor.vue";
+import ComponentEditor from "../components/ComponentEditor.vue";
 import SurfacePanel from "../components/SurfacePanel.vue";
 import { useLiveState } from "../live/useLiveState";
 import { hrefOf, navigate } from "../nav";
 import { useCatalogStore } from "../stores/catalog";
 import { useSurfacesStore } from "../stores/surfaces";
-import { deckControls, missingControls, models, surfaceControls, toLayerControl, VIRTUAL_DECK, virtualDeck, type ControlDef } from "../surfaces/model";
+import { deckControls, missingControls, models, surfaceControls, toControlSpec, VIRTUAL_DECK, virtualDeck, type ControlDef } from "../surfaces/model";
 
-defineProps<{ surface?: string; layer?: string; control?: string }>();
+defineProps<{ surface?: string; component?: string; control?: string }>();
 
 const surfaces = useSurfacesStore();
 const catalog = useCatalogStore();
@@ -20,23 +20,23 @@ onMounted(() => void surfaces.refresh());
 const value = (path: string) => live.leaves.value.find((l) => l.path === path)?.value;
 const connected = (slug: string) => value(`surface.${slug}.connected`) === true;
 const showing = (slug: string) => {
-  const layer = value(`surface.${slug}.current.main`);
-  return typeof layer === "string" ? (surfaces.layerBySlug(layer)?.name ?? layer) : null;
+  const current = value(`surface.${slug}.current.main`);
+  return typeof current === "string" ? (surfaces.componentBySlug(current)?.name ?? current) : null;
 };
 
 // ---- Creating ----
 
 const deckName = ref("");
 const deckError = ref<string | null>(null);
-const layerName = ref("");
-/** What a new layer copies its controls from: `surface:<id>`, or `model:<id>` with no surfaces yet. */
-const layerFrom = ref("");
+const pageName = ref("");
+/** What a new page copies its controls from: `surface:<id>`, or `model:<id>` with no surfaces yet. */
+const pageFrom = ref("");
 const from = computed({
   get: () =>
-    layerFrom.value || (surfaces.surfaces[0] === undefined ? `model:${VIRTUAL_DECK}` : `surface:${surfaces.surfaces[0].id}`),
-  set: (value: string) => (layerFrom.value = value),
+    pageFrom.value || (surfaces.surfaces[0] === undefined ? `model:${VIRTUAL_DECK}` : `surface:${surfaces.surfaces[0].id}`),
+  set: (value: string) => (pageFrom.value = value),
 });
-const layerError = ref<string | null>(null);
+const pageError = ref<string | null>(null);
 
 function message(e: unknown): string {
   const found = e instanceof ApiError ? e.problems : null;
@@ -46,8 +46,8 @@ function message(e: unknown): string {
 
 async function createDeck() {
   deckError.value = null;
-  // The first deck shows the first layer that fits it.
-  const fits = surfaces.layers.find((l) => missingControls(l, deckControls(virtualDeck)).length === 0);
+  // The first deck shows the first page that fits it.
+  const fits = surfaces.shown.find((l) => missingControls(l, deckControls(virtualDeck)).length === 0);
   try {
     const saved = await surfaces.saveSurface({
       id: "",
@@ -64,7 +64,7 @@ async function createDeck() {
 }
 
 /**
- * The controls a new layer copies (surfaces spec §1): what the surface last
+ * The controls a new page copies (surfaces spec §1): what the surface last
  * attached with, or what its model attaches with if it hasn't attached since
  * the server started.
  */
@@ -84,23 +84,23 @@ async function controlsFrom(from: string): Promise<ControlDef[]> {
   return deckControls(models[id] ?? virtualDeck);
 }
 
-async function createLayer() {
-  layerError.value = null;
+async function createPage() {
+  pageError.value = null;
   try {
-    const controls = (await controlsFrom(from.value)).map(toLayerControl);
-    const saved = await surfaces.saveLayer({ id: "", name: layerName.value.trim(), slug: "", controls });
-    layerName.value = "";
-    navigate({ tab: "surfaces", layer: saved.layer.id });
+    const controls = (await controlsFrom(from.value)).map(toControlSpec);
+    const saved = await surfaces.saveComponent({ id: "", name: pageName.value.trim(), slug: "", controls, show: {} });
+    pageName.value = "";
+    navigate({ tab: "surfaces", component: saved.component.id });
   } catch (e) {
-    layerError.value = message(e);
+    pageError.value = message(e);
   }
 }
 </script>
 
 <template>
-  <LayerEditor
-    v-if="layer !== undefined"
-    :id="layer"
+  <ComponentEditor
+    v-if="component !== undefined"
+    :id="component"
     :control="control"
   />
   <SurfacePanel
@@ -126,7 +126,7 @@ async function createLayer() {
         v-else-if="surfaces.surfaces.length === 0"
         class="muted"
       >
-        No surfaces yet. A virtual deck is a Stream Deck in this browser: it shows a layer and its keys fire flows.
+        No surfaces yet. A virtual deck is a Stream Deck in this browser: it shows a page and its keys fire flows.
       </p>
       <table
         v-else
@@ -204,16 +204,16 @@ async function createLayer() {
     </section>
 
     <section class="panel">
-      <h2>Layers</h2>
+      <h2>Pages</h2>
       <p
-        v-if="surfaces.loaded && surfaces.layers.length === 0"
+        v-if="surfaces.loaded && surfaces.shown.length === 0"
         class="muted"
       >
-        No layers yet. A layer binds a set of controls to show state; any surface that has those controls can show it.
+        No pages yet. A page binds a set of controls to show state; any surface that has those controls can show it.
       </p>
       <table
-        v-else-if="surfaces.layers.length > 0"
-        class="layers"
+        v-else-if="surfaces.shown.length > 0"
+        class="pages"
       >
         <thead>
           <tr>
@@ -223,12 +223,12 @@ async function createLayer() {
         </thead>
         <tbody>
           <tr
-            v-for="l in surfaces.layers"
+            v-for="l in surfaces.shown"
             :key="l.id"
-            :data-layer="l.slug"
+            :data-component="l.slug"
           >
             <td>
-              <a :href="hrefOf({ tab: 'surfaces', layer: l.id })">{{ l.name }}</a>
+              <a :href="hrefOf({ tab: 'surfaces', component: l.id })">{{ l.name }}</a>
             </td>
             <td class="muted">
               {{ l.controls.length }}
@@ -238,12 +238,12 @@ async function createLayer() {
       </table>
       <form
         class="row create"
-        @submit.prevent="createLayer"
+        @submit.prevent="createPage"
       >
         <input
-          v-model="layerName"
+          v-model="pageName"
           placeholder="Cameras"
-          aria-label="New layer name"
+          aria-label="New page name"
           autocomplete="off"
           required
         >
@@ -270,15 +270,15 @@ async function createLayer() {
         </label>
         <button
           type="submit"
-          :disabled="layerName.trim() === ''"
+          :disabled="pageName.trim() === ''"
         >
-          New layer
+          New page
         </button>
         <span
-          v-if="layerError"
+          v-if="pageError"
           class="error"
           role="alert"
-        >{{ layerError }}</span>
+        >{{ pageError }}</span>
       </form>
     </section>
   </template>

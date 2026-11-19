@@ -1,23 +1,9 @@
 // The HTTP API, as listed in crates/covalence-server/src/lib.rs.
 
-import type { ControlBinding, Preview, SavedBinding } from "./bindings/model";
+import type { ControlBinding, Preview } from "./bindings/model";
 import type { AnyFlow, Evaluated, FireResult, Flow, Problem, RunInfo, Saved } from "./flows/model";
 import type { HostStatus, JournalEntry } from "./live/protocol";
-import {
-  bindingProblems,
-  bindingRuntime,
-  bindingsOf,
-  componentOf,
-  layerOf,
-  layerProblems,
-  layerRuntime,
-  newBindingId,
-  stored,
-  type Component,
-  type ComponentProblem,
-  type SavedComponent,
-} from "./surfaces/component";
-import type { ControlDef, Layer, SavedLayer, SavedSurface, Surface } from "./surfaces/model";
+import type { Component, ComponentProblem, ControlDef, SavedComponent, SavedSurface, Surface } from "./surfaces/model";
 import type { CellProblem, SavedVariable, Variable } from "./variables/model";
 
 /** A JSON Schema, as plugin manifests write them. Only what the forms read is typed. */
@@ -258,26 +244,6 @@ export const api = {
       : call<SavedComponent>("PUT", `/components/${encodeURIComponent(c.id)}`, c),
   deleteComponent: (id: string) => call<null>("DELETE", `/components/${encodeURIComponent(id)}`),
   componentProblems: () => call<ComponentProblem[]>("GET", "/components/problems"),
-  // The editors' layers and bindings, over components (see surfaces/component).
-  /** Every shown component, as a layer. */
-  layers: async () => (await api.components()).filter((c) => c.show !== undefined).map(layerOf),
-  createLayer: async (layer: Layer): Promise<SavedLayer> => saveLayer(componentOf(layer, [])),
-  /** Puts the layer's component back with the bindings it has now. */
-  updateLayer: async (layer: Layer): Promise<SavedLayer> =>
-    saveLayer(componentOf(layer, (await api.component(layer.id)).bindings ?? [])),
-  deleteLayer: (id: string) => api.deleteComponent(id),
-  bindings: async (layer: string) => bindingsOf(await api.component(layer)),
-  createBinding: (binding: ControlBinding) => saveBinding(binding),
-  updateBinding: (binding: ControlBinding) => saveBinding(binding),
-  deleteBinding: async (binding: ControlBinding) => {
-    const c = await api.component(binding.layer);
-    await api.saveComponent({ ...c, bindings: (c.bindings ?? []).filter((b) => b.id !== binding.id) });
-  },
-  /** Each failing binding property's last error, of one component's bindings. */
-  bindingProblems: async (layer: string) =>
-    bindingRuntime((await api.componentProblems()).filter((p) => p.component === layer)),
-  /** Each `show` field that failed when last evaluated (surfaces spec §5.2). */
-  layerProblems: async () => layerRuntime(await api.componentProblems()),
   variables: () => call<Variable[]>("GET", "/variables"),
   createVariable: (v: Variable) => call<SavedVariable>("POST", "/variables", v),
   updateVariable: (v: Variable) => call<SavedVariable>("PUT", `/variables/${encodeURIComponent(v.id)}`, v),
@@ -285,46 +251,11 @@ export const api = {
   /** Each failing cell's problem: variables' and helpers' (dataflow §5). */
   cellProblems: () => call<CellProblem[]>("GET", "/cells/problems"),
   previewBinding: (binding: ControlBinding, size?: number) =>
-    call<Preview>(
-      "POST",
-      "/components/preview",
-      size === undefined ? { binding: stored(binding) } : { binding: stored(binding), size },
-    ),
+    call<Preview>("POST", "/components/preview", size === undefined ? { binding } : { binding, size }),
 };
 
-/** Saves a layer's component; a 422's problems are the layer's. */
-async function saveLayer(c: Component): Promise<SavedLayer> {
-  try {
-    const saved = await api.saveComponent(c);
-    return { layer: layerOf(saved.component), warnings: layerProblems(saved.warnings) };
-  } catch (e) {
-    throw relative(e, layerProblems);
-  }
-}
-
-/**
- * Adds a binding to its component, or replaces the one with its ID, and puts
- * the component back. One with no ID gets one. A 422's problems are the
- * binding's, relative to it.
- */
-async function saveBinding(binding: ControlBinding): Promise<SavedBinding> {
-  const c = await api.component(binding.layer);
-  const bindings = [...(c.bindings ?? [])];
-  const id = binding.id === "" ? newBindingId(c) : binding.id;
-  const at = bindings.findIndex((b) => b.id === id);
-  const index = at === -1 ? bindings.length : at;
-  bindings[index] = stored({ ...binding, id });
-  try {
-    const saved = await api.saveComponent({ ...c, bindings });
-    const out = bindingsOf(saved.component).find((b) => b.id === id)!;
-    return { binding: out, warnings: bindingProblems(saved.warnings, index) };
-  } catch (e) {
-    throw relative(e, (problems) => bindingProblems(problems, index));
-  }
-}
-
 /** A 422 with its problems mapped; anything else as it is. */
-function relative(e: unknown, map: (problems: Problem[]) => Problem[]): unknown {
+export function relative(e: unknown, map: (problems: Problem[]) => Problem[]): unknown {
   if (!(e instanceof ApiError) || e.problems === null) return e;
   const { errors, warnings } = e.problems;
   return new ApiError(e.status, e.message, { errors: map(errors), warnings: map(warnings) });

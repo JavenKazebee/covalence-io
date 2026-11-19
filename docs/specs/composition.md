@@ -15,7 +15,7 @@ Users build bigger things out of smaller ones, and reuse them by giving them par
 
 **Instances take parameters, not overrides.** An instance can't change, add to or remove anything inside its template. Where copies may differ, the template says so with a param, which can hold a whole component or flow (§1.2). If one copy has to differ anywhere else, "Detach" turns it into a plain entity with no link back. That keeps "what does this do?" answerable from one place.
 
-**Markers.** Everything here is **(M9)** ([M9](../milestones/m9-composition.md)) unless marked **(Later)**. Built so far, for flows (§9): params as cells and in scope (§1), flow params (§1.2), `forEach` (§4), the instance chain, its filters, validation and Detach (§5), and batches. Composites and components as templates, owned flows (§2), nesting (§3) and component params aren't yet. Components replace the `layer` and `control_binding` entities that M5 and M8 built (§7.4): the `component` entity, its embedded bindings and `show`, and the migration of stored projects are built. A component's children (§8) aren't yet, and the UI still edits a shown component as a layer and its bindings one by one.
+**Markers.** Everything here is **(M9)** ([M9](../milestones/m9-composition.md)) unless marked **(Later)**. Built so far, for flows (§9): params as cells and in scope (§1), flow params (§1.2), `forEach` (§4), the instance chain, its filters, validation and Detach (§5), and batches. Composites and components as templates, owned flows (§2), nesting (§3) and component params aren't yet. Components replace the `layer` and `control_binding` entities that M5 and M8 built (§7.4): the `component` entity, its embedded bindings and `show` are built. A component's children (§8) aren't yet. The UI edits a component's `show` and bindings, saving a binding by putting its component back.
 
 ---
 
@@ -366,7 +366,7 @@ interface Show {                      // surfaces §5
 
 ### 7.4 What components replace
 
-Components replace the `layer` and `control_binding` entities that M5 and M8 built, and the `placement`, part, `control_group` and layer template that M9 planned. M9 migrates stored projects when it loads them:
+Components replace the `layer` and `control_binding` entities that M5 and M8 built, and the `placement`, part, `control_group` and layer template that M9 planned. Stored projects aren't migrated ([§11.8](#118-one-component-for-keys-strips-and-pages)):
 
 | Was | Now |
 |---|---|
@@ -383,9 +383,6 @@ Components replace the `layer` and `control_binding` entities that M5 and M8 bui
 | `{layer, controls}`, `{slot}`, `{group}` event sources; `trigger.layer` | `{component, controls}`; `trigger.component` |
 | `navigate {layer}`, `POST /surfaces/{id}/current {layer}` | `{component}` |
 | `/layers`, `/control-bindings` | `/components` (surfaces §9) |
-
-- **Refs, event sources and `navigate` params are rewritten** by shape. Expressions that read the `layer` root, `trigger.layer` or a resolution result are rewritten where they name it by a dotted name, as the `resolutionCycle` check reads them (surfaces §5.2); a name built at run time isn't found, and each expression rewritten is logged as a warning so it can be checked.
-- **The migration runs when the server starts,** before any entity is loaded, and writes every rewritten entity in one transaction, so a project is migrated as a whole or not at all. It's idempotent, and old journal entries are read with `layer` as `component`.
 
 ---
 
@@ -580,11 +577,12 @@ Why composition works this way, and what was rejected. Keep these notes when the
 
 ### 11.8 One component for keys, strips and pages
 - **Decided:** a component is whatever is on a set of controls, at any size, and contains other components as children (§7, §8). It replaces layers, control bindings as entities, placements, parts, control groups and layer templates (§7.4). **Containment recurses; activation doesn't.** Only components with `show` take part in resolution, by the flat rule of surfaces §5.2 (`when`, level, rank, recency); a child is on wherever its container is, and has no `when`. Bindings are embedded in their component, each keeping an `id`. A child with `forEach` spreads a list over its container's controls. Composites stay their own kind. The `layer` state root becomes `component`.
-- **Why:** putting something on keys took seven nouns, each with its own fields, rules and editor: a binding for one key, a component for a reusable key, a placement to put it on a layer, a part to put it in another component, a layer for a page, a layer template to reuse a page, and a control group to fill keys from a list. They're one idea at different sizes. With one, users learn "a component covers controls, can contain components, takes params, and can repeat", and pages, shift layers and popovers are presets of when it's shown. Only layers and control bindings were built, so the change costs one migration.
+- **Why:** putting something on keys took seven nouns, each with its own fields, rules and editor: a binding for one key, a component for a reusable key, a placement to put it on a layer, a part to put it in another component, a layer for a page, a layer template to reuse a page, and a control group to fill keys from a list. They're one idea at different sizes. With one, users learn "a component covers controls, can contain components, takes params, and can repeat", and pages, shift layers and popovers are presets of when it's shown. Only layers and control bindings were built, so little had to be rewritten.
 - **Rejected:**
   - *Keeping the seven:* every improvement (a new capability check, a scroll mode, `why` through nesting) built for each, and a key editor that changes shape with what the key happens to be.
   - *Activation by position in the tree* (a child `when`, or switch nodes as in SKAARHOJ Reactor): surfaces §11.3 rejected it, and the reasons hold. Moving a branch in the editor would change the show, and "the last mode turned on wins" or a strip under every page don't fit a tree. The tree preset (surfaces §5.3) stays a way to write `when`, not a structure resolution walks.
   - *Inline component bodies in children:* a second way to write a key beside a binding. A repeated child names a component; the editor makes one from a key in one step.
   - *Bindings and children as their own entities pointing at their container,* as `control_binding` and `placement` were: two shapes for the same thing, a plugin's component and a project's page stored differently, and one key's meaning spread across rows.
   - *Composites as components with no controls:* a composite is a device you build, targeted by actions and constraints; a component is what's on keys. Merging them would make every component a possible target.
-  - *Keeping the `layer` root and naming:* two names for one thing in every expression, path and API, for the sake of a migration that's needed anyway.
+  - *Keeping the `layer` root and naming:* two names for one thing in every expression, path and API.
+  - *Migrating projects saved with layers:* none had been saved outside development, so the code would only ever have run on test data. A project saved before M9 doesn't load.

@@ -47,14 +47,14 @@ fn summary(problems: &[Problem]) -> Json {
 }
 
 fn check(json: &Json) -> Json {
-    let mut layer = common::deck_layer(LAYER, "deck", 5, 3);
-    layer.controls[13].outputs.clear();
-    let layers = [(LAYER.to_owned(), layer)].into();
+    let mut component = common::deck_page(LAYER, "deck", 5, 3);
+    component.controls[13].outputs.clear();
+    let components = [(LAYER.to_owned(), component)].into();
     let conns = [VH.to_owned()].into();
     let taken = [(LAYER.to_owned(), "k14".to_owned())].into();
     let evaluator = QuickJs::default();
     let ctx = Context {
-        layers: &layers,
+        components: &components,
         conns: &conns,
         taken: &taken,
         evaluator: &evaluator,
@@ -64,7 +64,7 @@ fn check(json: &Json) -> Json {
         Err(errors) => summary(&errors),
         Ok(b) => {
             let placed = ControlBinding {
-                layer: LAYER.to_owned(),
+                component: LAYER.to_owned(),
                 ..b
             };
             summary(&binding::validate(&placed, &ctx).errors)

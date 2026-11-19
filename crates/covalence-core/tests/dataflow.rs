@@ -1,5 +1,7 @@
 //! Cells and the graph (dataflow spec §5).
 
+mod common;
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -794,7 +796,7 @@ fn control_event(shared: &Shared, control: &str, name: &str, payload: Option<Jso
 }
 
 fn helper_cells(json: Json) -> Vec<CellDef> {
-    let b = covalence_core::binding::ControlBinding::parse(&json).unwrap();
+    let b = common::placed(&json).unwrap();
     b.helper_cells("cams")
 }
 
@@ -808,7 +810,7 @@ async fn an_encoder_follows_the_volume_and_sends_only_its_own_turns() {
     let volume = path("c1", &["volume"]);
     set(&shared, &volume, Value::from(50));
     let cells = helper_cells(json!({
-        "id": "b1", "layer": LAYER, "control": "e1",
+        "id": "b1", "component": LAYER, "control": "e1",
         "helpers": { "vol": {
             "use": "position", "max": 100,
             "follow": { "ref": { "conn": "c1", "path": ["volume"] } },
@@ -858,7 +860,7 @@ async fn a_select_helper_pages_through_a_list() {
     let shared = shared();
     let df = Dataflow::start(&shared);
     let cells = helper_cells(json!({
-        "id": "b2", "layer": LAYER, "control": "e2",
+        "id": "b2", "component": LAYER, "control": "e2",
         "helpers": { "page": { "use": "select", "items": ["cams", "audio", "lights"],
                                "to": { "set": { "root": "vars", "path": ["page"] } } } }
     }));

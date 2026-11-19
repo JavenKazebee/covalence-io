@@ -11,7 +11,7 @@
 //! | [`Paths`] | a [`Ref`] | `match` | a match against a path, with captures |
 //!
 //! Controls and targets resolve within a universe the caller gives (a
-//! surface's or a layer's controls, the project's connections), so `not`
+//! surface's or a component's controls, the project's connections), so `not`
 //! means "the rest of it". Paths have no universe: a path selector is a
 //! test applied to one path at a time, and `not` only narrows inside `all`.
 //!
@@ -384,7 +384,7 @@ impl Domain for Controls {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ControlView {
     pub id: String,
-    /// A layer's control may have no position; regions and neighbours skip it.
+    /// A component's control may have no position; regions and neighbours skip it.
     pub at: Option<Placement>,
     pub inputs: Vec<InputCapKind>,
     pub outputs: Vec<OutputCapKind>,
@@ -607,7 +607,7 @@ impl Selector<Targets> {
 // ---------------------------------------------------------------------------
 // Entities
 
-/// Project entities of one type, by ID: a layer's `on` picks surfaces
+/// Project entities of one type, by ID: a component's `on` picks surfaces
 /// (surfaces spec §1). There are no extra forms yet.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Entities;

@@ -23,43 +23,38 @@ import {
   presetWhen,
   shiftKey,
   whenExpr,
-  type Layer,
+  bindingRuntime,
+  type Component,
   type Level,
   type Preset,
+  type Show,
 } from "../surfaces/model";
 import BindingEditor from "./bindings/BindingEditor.vue";
 import SourceInput from "./SourceInput.vue";
 
 /**
- * A layer: its controls where they are on the surface, keys drawn by the core
- * from live state, and the bindings of the control that's selected. The
- * layer's name is below.
+ * A component (composition spec §7): its controls where they are on the
+ * surface, keys drawn by the core from live state, and the bindings of the
+ * control that's selected. Its name and `show` are below.
  */
 const props = defineProps<{ id: string; control?: string }>();
 
 const surfaces = useSurfacesStore();
 const flows = useFlowsStore();
 const catalog = useCatalogStore();
-const layer = computed(() => surfaces.layer(props.id));
+const component = computed(() => surfaces.component(props.id));
 
-// Replaced whole on each load; shallow, as their sources nest deeply.
-const bindings = shallowRef<ControlBinding[]>([]);
+const bindings = computed<ControlBinding[]>(() => component.value?.bindings ?? []);
 const runtime = ref<RuntimeProblem[]>([]);
 const loadError = ref<string | null>(null);
-/**
- * The layer whose bindings have loaded. The binding editor starts its draft
- * from the stored binding when it mounts, so it waits for them.
- */
-const loadedFor = ref<string | null>(null);
 
+/** Its bindings' runtime problems (bindings spec §3). Its bindings come with it. */
 async function load() {
   const id = props.id;
   try {
-    const [b, r] = await Promise.all([api.bindings(id), api.bindingProblems(id)]);
+    const problems = bindingRuntime(await api.componentProblems(), id);
     if (id !== props.id) return;
-    bindings.value = b;
-    runtime.value = r;
-    loadedFor.value = id;
+    runtime.value = problems;
     loadError.value = null;
   } catch (e) {
     loadError.value = e instanceof Error ? e.message : String(e);
@@ -73,7 +68,7 @@ onMounted(() => void Promise.all([flows.refresh(), catalog.refresh()]));
 // Evaluation errors come and go with state; the editor checks now and then.
 const problemTimer = setInterval(async () => {
   try {
-    runtime.value = await api.bindingProblems(props.id);
+    runtime.value = bindingRuntime(await api.componentProblems(), props.id);
   } catch {
     // Kept as they were; the next try may work.
   }
@@ -82,16 +77,16 @@ onBeforeUnmount(() => clearInterval(problemTimer));
 
 const byControl = computed(() => new Map(bindings.value.map((b) => [b.control, b])));
 const { results } = usePreviews(() => bindings.value);
-const grid = computed(() => gridOf(layer.value?.controls ?? []));
+const grid = computed(() => gridOf(component.value?.controls ?? []));
 const controls = computed(() => grid.value.cells.map((c) => c.control.id));
 /** Whether a control shows an image, which is all the key editor's bindings set. */
 const hasImage = (control: string) =>
-  layer.value?.controls.find((c) => c.id === control)?.outputs?.includes("image") ?? false;
+  component.value?.controls.find((c) => c.id === control)?.outputs?.includes("image") ?? false;
 const failing = (control: string) => {
   const id = byControl.value.get(control)?.id;
   return id !== undefined && runtime.value.some((p) => p.binding === id);
 };
-/** Controls a flow's event trigger names on this layer, for the grid's corner mark. */
+/** Controls a flow's event trigger names on this component, for the grid's corner mark. */
 const triggered = computed(() => {
   const out = new Set<string>();
   for (const f of flows.flows) {
@@ -101,7 +96,7 @@ const triggered = computed(() => {
 });
 
 function select(control: string) {
-  navigate({ tab: "surfaces", layer: props.id, control });
+  navigate({ tab: "surfaces", component: props.id, control });
 }
 
 // Arrow keys move the selection to the nearest control that way.
@@ -131,29 +126,36 @@ const live = useLiveState("surface");
 const shownOn = computed(() =>
   surfaces.surfaces.filter((s) => {
     const leaf = live.leaves.value.find((l) => l.path === `surface.${s.slug}.shown`);
-    return layer.value !== undefined && Array.isArray(leaf?.value) && leaf.value.includes(layer.value.slug);
+    return component.value !== undefined && Array.isArray(leaf?.value) && leaf.value.includes(component.value.slug);
   }),
 );
-/** Which layers could control the selected control, highest first. */
+/** Which shown components could control the selected control, highest first. */
 const candidates = computed(() =>
-  props.control === undefined ? null : candidatesText(props.control, surfaces.layers),
+  props.control === undefined ? null : candidatesText(props.control, surfaces.components),
 );
 
 // ---- Settings ----
 
 // Shallow, as its sources nest deeply: changed by replacing it (`patch`).
-const draft = shallowRef<Layer | null>(null);
+const draft = shallowRef<Component | null>(null);
 
-function patch(fields: Partial<Layer>) {
+function patch(fields: Partial<Component>) {
   if (draft.value !== null) draft.value = { ...draft.value, ...fields };
+}
+/** Changes `show`'s fields; one set to `undefined` is left out. */
+function patchShow(fields: Partial<Show>) {
+  if (draft.value === null) return;
+  const show: Record<string, unknown> = { ...draft.value.show, ...fields };
+  for (const k of Object.keys(show)) if (show[k] === undefined) delete show[k];
+  draft.value = { ...draft.value, show: show as Show };
 }
 const saveError = ref<string | null>(null);
 const savedNote = ref<string | null>(null);
 
 watch(
-  [() => props.id, () => layer.value !== undefined],
+  [() => props.id, () => component.value !== undefined],
   () => {
-    draft.value = layer.value === undefined ? null : { ...layer.value };
+    draft.value = component.value === undefined ? null : { ...component.value };
     saveError.value = null;
     savedNote.value = null;
   },
@@ -163,60 +165,60 @@ watch(
 // ---- When, level and rank (surfaces spec §5.2, §5.3) ----
 
 const aliases = useAliases();
-const preset = computed(() => presetOf(draft.value?.when));
+const preset = computed(() => presetOf(draft.value?.show?.when));
 const presets = Object.keys(presetNames) as Preset[];
 const group = computed({
   get: () => {
-    const w = draft.value?.when;
+    const w = draft.value?.show?.when;
     return w !== undefined && "nav" in w ? w.nav : MAIN_GROUP;
   },
   set: (nav: string) => {
-    patch({ when: nav === MAIN_GROUP ? undefined : { nav } });
+    patchShow({ when: nav === MAIN_GROUP ? undefined : { nav } });
   },
 });
 const shift = computed({
-  get: () => shiftKey(draft.value?.when) ?? "",
+  get: () => shiftKey(draft.value?.show?.when) ?? "",
   set: (key: string) => {
-    patch({ when: presetWhen("shift", key.trim() || "k0") });
+    patchShow({ when: presetWhen("shift", key.trim() || "k0") });
   },
 });
 const condition = computed<Source>({
   get: () => {
-    const w = draft.value?.when;
+    const w = draft.value?.show?.when;
     return w !== undefined && "while" in w ? w.while : true;
   },
   set: (source) => {
-    patch({ when: { while: source } });
+    patchShow({ when: { while: source } });
   },
 });
 const compiled = computed(() =>
-  draft.value === null ? null : whenExpr(draft.value.when, draft.value.slug, aliases.value),
+  draft.value === null ? null : whenExpr(draft.value.show?.when, draft.value.slug, aliases.value),
 );
 const rank = computed<number | null>({
-  get: () => literalRank(draft.value?.rank),
+  get: () => literalRank(draft.value?.show?.rank),
   set: (n) => {
-    patch({ rank: n === null || n === 0 ? undefined : Math.max(0, Math.min(99, n)) });
+    patchShow({ rank: n === null || n === 0 ? undefined : Math.max(0, Math.min(99, n)) });
   },
 });
 const cascade = computed<"replace" | "through">({
-  get: () => draft.value?.cascade ?? "replace",
-  set: (c) => patch({ cascade: c === "replace" ? undefined : c }),
+  get: () => draft.value?.show?.cascade ?? "replace",
+  set: (c) => patchShow({ cascade: c === "replace" ? undefined : c }),
 });
 const level = computed<Level>({
-  get: () => draft.value?.level ?? "normal",
+  get: () => draft.value?.show?.level ?? "normal",
   set: (l) => {
-    patch({ level: l === "normal" ? undefined : l });
+    patchShow({ level: l === "normal" ? undefined : l });
   },
 });
 
 function pickPreset(next: Preset) {
   const d = draft.value;
   if (d === null) return;
-  const when = next === "nav" ? undefined : presetWhen(next, shiftKey(d.when) ?? "k0");
+  const when = next === "nav" ? undefined : presetWhen(next, shiftKey(d.show?.when) ?? "k0");
   // A popover or a shift sits over the page, and an always-on strip under
   // it, unless a level was chosen.
-  const level = d.level ?? (next === "popover" || next === "shift" ? "over" : next === "always" ? "under" : undefined);
-  patch({ when, level });
+  const level = d.show?.level ?? (next === "popover" || next === "shift" ? "over" : next === "always" ? "under" : undefined);
+  patchShow({ when, level });
 }
 
 async function saveSettings() {
@@ -224,8 +226,13 @@ async function saveSettings() {
   saveError.value = null;
   savedNote.value = null;
   try {
-    const saved = await surfaces.saveLayer({ ...draft.value, name: draft.value.name.trim() });
-    draft.value = { ...saved.layer };
+    // With its bindings as they are now: they're saved one by one, above.
+    const saved = await surfaces.saveComponent({
+      ...draft.value,
+      name: draft.value.name.trim(),
+      bindings: component.value?.bindings,
+    });
+    draft.value = { ...saved.component };
     savedNote.value = saved.warnings.length > 0 ? saved.warnings.map((w) => w.message).join(" ") : "Saved.";
   } catch (e) {
     const found = e instanceof ApiError ? e.problems : null;
@@ -234,13 +241,13 @@ async function saveSettings() {
 }
 
 async function remove() {
-  const p = layer.value;
+  const p = component.value;
   if (p === undefined) return;
   const n = bindings.value.length;
   const also = n === 0 ? "" : ` Its ${n} ${n === 1 ? "binding is" : "bindings are"} deleted too.`;
-  if (!confirm(`Delete the layer "${p.name}"?${also}`)) return;
+  if (!confirm(`Delete "${p.name}"?${also}`)) return;
   try {
-    await surfaces.removeLayer(p.id);
+    await surfaces.removeComponent(p.id);
     navigate({ tab: "surfaces" });
   } catch (e) {
     saveError.value = e instanceof Error ? e.message : String(e);
@@ -250,18 +257,18 @@ async function remove() {
 
 <template>
   <p>
-    <a :href="hrefOf({ tab: 'surfaces' })">← Surfaces and layers</a>
+    <a :href="hrefOf({ tab: 'surfaces' })">← Surfaces and pages</a>
   </p>
   <p
-    v-if="layer === undefined || draft === null"
+    v-if="component === undefined || draft === null"
     class="muted panel"
   >
-    {{ surfaces.loaded ? "No such layer." : "Loading…" }}
+    {{ surfaces.loaded ? "No such component." : "Loading…" }}
   </p>
   <template v-else>
     <section class="panel">
       <div class="row title">
-        <h2>{{ layer.name }}</h2>
+        <h2>{{ component.name }}</h2>
         <span class="muted">
           <template v-if="shownOn.length > 0">
             Showing on
@@ -330,19 +337,13 @@ async function remove() {
             v-if="control !== undefined && controls.includes(control) && !hasImage(control)"
             class="muted"
           >
-            {{ control }} has no image output on this layer, so its look can't be bound. It can have helpers, and
+            {{ control }} has no image output here, so its look can't be bound. It can have helpers, and
             flows can trigger on it.
           </p>
-          <p
-            v-if="control !== undefined && controls.includes(control) && loadedFor !== layer.id"
-            class="muted"
-          >
-            Loading…
-          </p>
           <BindingEditor
-            v-else-if="control !== undefined && controls.includes(control)"
-            :key="`${layer.id}/${control}`"
-            :layer="layer"
+            v-if="control !== undefined && controls.includes(control)"
+            :key="`${component.id}/${control}`"
+            :component="component"
             :control="control"
             :stored="byControl.get(control)"
             :runtime="runtimeFor"
@@ -364,27 +365,27 @@ async function remove() {
       novalidate
       @submit.prevent="saveSettings"
     >
-      <h3>Layer</h3>
+      <h3>Settings</h3>
       <div class="row">
         <div class="field">
-          <label for="layer-name">Name</label>
+          <label for="component-name">Name</label>
           <input
-            id="layer-name"
+            id="component-name"
             :value="draft.name"
             autocomplete="off"
             @input="patch({ name: ($event.target as HTMLInputElement).value })"
           >
           <small class="hint">
-            {{ layer.controls.length }} {{ layer.controls.length === 1 ? "control" : "controls" }}, copied from a
+            {{ component.controls.length }} {{ component.controls.length === 1 ? "control" : "controls" }}, copied from a
             surface when it was made. A surface shows it if it has each of them.
           </small>
         </div>
       </div>
       <div class="row">
         <div class="field">
-          <label for="layer-when">Active</label>
+          <label for="component-when">Active</label>
           <select
-            id="layer-when"
+            id="component-when"
             :value="preset"
             @change="pickPreset(($event.target as HTMLSelectElement).value as Preset)"
           >
@@ -401,21 +402,21 @@ async function remove() {
           v-if="preset === 'nav'"
           class="field"
         >
-          <label for="layer-group">Group</label>
+          <label for="component-group">Group</label>
           <input
-            id="layer-group"
+            id="component-group"
             v-model.lazy="group"
             autocomplete="off"
           >
-          <small class="hint">Active while it's the group's current layer. Pages are in <code>main</code>.</small>
+          <small class="hint">Active while it's the group's current page. Pages are in <code>main</code>.</small>
         </div>
         <div
           v-else-if="preset === 'shift'"
           class="field"
         >
-          <label for="layer-shift">Held key</label>
+          <label for="component-shift">Held key</label>
           <input
-            id="layer-shift"
+            id="component-shift"
             v-model.lazy="shift"
             autocomplete="off"
           >
@@ -429,9 +430,9 @@ async function remove() {
             nothing.</small>
         </div>
         <div class="field">
-          <label for="layer-level">Level</label>
+          <label for="component-level">Level</label>
           <select
-            id="layer-level"
+            id="component-level"
             v-model="level"
           >
             <option
@@ -444,9 +445,9 @@ async function remove() {
           </select>
         </div>
         <div class="field">
-          <label for="layer-cascade">Covers</label>
+          <label for="component-cascade">Covers</label>
           <select
-            id="layer-cascade"
+            id="component-cascade"
             v-model="cascade"
           >
             <option value="replace">
@@ -458,15 +459,15 @@ async function remove() {
           </select>
           <small class="hint">{{
             cascade === "through"
-              ? "Keys keep the look of the layers below except what this layer binds, and pass presses down unless a key takes them."
-              : "Keys show only what this layer binds, and their presses are this layer's."
+              ? "Keys keep the look of what's below except what this binds, and pass presses down unless a key takes them."
+              : "Keys show only what this binds, and their presses are its own."
           }}</small>
         </div>
         <div class="field">
-          <label for="layer-rank">Rank</label>
+          <label for="component-rank">Rank</label>
           <input
             v-if="rank !== null"
-            id="layer-rank"
+            id="component-rank"
             type="number"
             min="0"
             max="99"

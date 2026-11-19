@@ -77,7 +77,7 @@ fn layout() -> VirtualLayout {
 }
 
 /// A page of all the deck's controls, as "New page" copies them.
-fn deck_layer(name: &str) -> Value {
+fn deck_page(name: &str) -> Value {
     let controls: Vec<Value> = virtual_controls(Some(&layout()))
         .iter()
         .map(|c| serde_json::to_value(c.to_control_spec()).unwrap())
@@ -194,8 +194,8 @@ async fn image_of(server: &Server, binding: Value) -> String {
     body["image"].as_str().unwrap().to_owned()
 }
 
-fn labelled(layer: &str, control: &str, text: &str) -> Value {
-    json!({ "layer": layer, "control": control, "props": { "label": text } })
+fn labelled(control: &str, text: &str) -> Value {
+    json!({ "control": control, "props": { "label": text } })
 }
 
 /// Entries of `kind` in the journal, oldest first.
@@ -256,9 +256,8 @@ async fn a_computed_variable_is_a_read_only_cell_that_why_passes_through() {
     assert_eq!(body["errors"][0]["code"], "readOnly", "{body}");
 
     // A binding reads it.
-    let layer = create(&server, "/components", "component", deck_layer("Cameras")).await;
     let tally = json!({
-        "layer": id(&layer), "control": "k0",
+        "control": "k0",
         "props": { "background": { "use": "rules",
             "rules": [{ "when": { "ref": { "root": "vars", "path": ["isLive"] } }, "value": "#e02020" }],
             "else": "#000000" } },
@@ -353,18 +352,18 @@ async fn an_encoder_and_a_motor_fader_keep_in_step_with_a_volume() {
     let server = Server::start_with(&[SHOW]);
     let addr = server.listen().await;
     let vh = show(&server, "vh").await;
-    let layer = create(&server, "/components", "component", deck_layer("Mix")).await;
-    let surface = deck(&server, id(&layer)).await;
+    let component = create(&server, "/components", "component", deck_page("Mix")).await;
+    let surface = deck(&server, id(&component)).await;
     let volume = json!({ "ref": { "conn": vh, "path": ["volume"] } });
     let to = json!([{ "action": { "target": { "conn": vh }, "action": "setVolume", "param": "level", "rateLimit": "50ms" } }]);
-    server.bind(id(&layer), json!({ "control": "e0",
+    server.bind(id(&component), json!({ "control": "e0",
             "helpers": { "vol": { "use": "position", "max": 1, "step": 0.0625, "follow": volume, "to": to } },
         }),
     )
     .await;
     server
         .bind(
-            id(&layer),
+            id(&component),
             json!({ "control": "f0",
                 "props": { "value": volume },
                 "helpers": { "level": { "use": "absolute", "follow": volume, "to": to } },
@@ -479,20 +478,20 @@ async fn an_encoder_and_a_motor_fader_keep_in_step_with_a_volume() {
     server.stop().await;
 }
 
-/// "A virtual encoder with a `select` helper over `core` surfaces' layers
+/// "A virtual encoder with a `select` helper over `core` surfaces' components
 /// and `to: {action: navigate}` pages a deck."
 #[tokio::test(flavor = "multi_thread")]
 async fn an_encoder_pages_a_deck_through_navigate() {
     let server = Server::start();
     let addr = server.listen().await;
-    let cams = create(&server, "/components", "component", deck_layer("Cameras")).await;
-    let audio = create(&server, "/components", "component", deck_layer("Audio")).await;
-    let lights = create(&server, "/components", "component", deck_layer("Lights")).await;
+    let cams = create(&server, "/components", "component", deck_page("Cameras")).await;
+    let audio = create(&server, "/components", "component", deck_page("Audio")).await;
+    let lights = create(&server, "/components", "component", deck_page("Lights")).await;
     let surface = deck(&server, id(&cams)).await;
     let pages = json!([id(&cams), id(&audio), id(&lights)]);
     // The same encoder binding on each page, so it keeps paging.
-    for layer in [&cams, &audio, &lights] {
-        server.bind(id(layer), json!({ "control": "e0",
+    for component in [&cams, &audio, &lights] {
+        server.bind(id(component), json!({ "control": "e0",
                 "helpers": { "page": { "use": "select", "items": pages, "scope": "surface",
                     "to": [{ "action": { "target": "core", "action": "navigate", "param": "component",
                                          "params": { "surface": id(&surface) } } }] } },
@@ -520,8 +519,8 @@ async fn an_encoder_pages_a_deck_through_navigate() {
 async fn a_shift_layer_takes_three_keys_while_held_and_a_latching_one_on_a_toggle() {
     let server = Server::start();
     let addr = server.listen().await;
-    let cams = create(&server, "/components", "component", deck_layer("Cameras")).await;
-    let three: Vec<Value> = deck_layer("")["controls"]
+    let cams = create(&server, "/components", "component", deck_page("Cameras")).await;
+    let three: Vec<Value> = deck_page("")["controls"]
         .as_array()
         .unwrap()
         .iter()
@@ -537,15 +536,15 @@ async fn a_shift_layer_takes_three_keys_while_held_and_a_latching_one_on_a_toggl
     )
     .await;
     let surface = deck(&server, id(&cams)).await;
-    for (layer, text) in [(&cams, "Cam"), (&shift, "Wide")] {
+    for (component, text) in [(&cams, "Cam"), (&shift, "Wide")] {
         for k in ["k2", "k3", "k4"] {
             server
-                .bind(id(layer), labelled(id(layer), k, &format!("{text} {k}")))
+                .bind(id(component), labelled(k, &format!("{text} {k}")))
                 .await;
         }
     }
-    let cam3 = image_of(&server, labelled(id(&cams), "k3", "Cam k3")).await;
-    let wide3 = image_of(&server, labelled(id(&shift), "k3", "Wide k3")).await;
+    let cam3 = image_of(&server, labelled("k3", "Cam k3")).await;
+    let wide3 = image_of(&server, labelled("k3", "Wide k3")).await;
     let mut deck = Deck::attach(&server, &addr, id(&surface)).await;
     deck.until("Cam k3", |d| d.images.get("k3") == Some(&cam3))
         .await;
@@ -616,23 +615,19 @@ async fn a_chain_of_three_cells_redraws_a_key_within_the_budget() {
         )
         .await;
     }
-    let layer = create(&server, "/components", "component", deck_layer("Cameras")).await;
-    let label = |layer: &str| {
-        json!({ "layer": layer, "control": "k0",
+    let component = create(&server, "/components", "component", deck_page("Cameras")).await;
+    let label = || {
+        json!({ "control": "k0",
                 "props": { "label": { "use": "format", "format": "auto", "input": { "ref": { "root": "vars", "path": ["c"] } } } } })
     };
-    server.bind(id(&layer), label(id(&layer))).await;
-    let surface = deck(&server, id(&layer)).await;
+    server.bind(id(&component), label()).await;
+    let surface = deck(&server, id(&component)).await;
     let mut deck = Deck::attach(&server, &addr, id(&surface)).await;
 
     let mut took = Vec::new();
     for input in 4..9 {
         // What the key will show: `c` is the program plus 2.
-        let want = image_of(
-            &server,
-            labelled(id(&layer), "k0", &(input + 2).to_string()),
-        )
-        .await;
+        let want = image_of(&server, labelled("k0", &(input + 2).to_string())).await;
         let cut = Instant::now();
         act(&server, "atem", "cut", json!({ "input": input })).await;
         deck.until("the redrawn key", |d| d.images.get("k0") == Some(&want))

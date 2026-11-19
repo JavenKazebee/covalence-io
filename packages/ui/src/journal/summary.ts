@@ -13,8 +13,8 @@ export interface SummaryContext {
   flowName?(flow: string): string;
   /** A surface's name from its ID. */
   surfaceName?(surface: string): string;
-  /** A layer's name from its ID. */
-  layerName?(layer: string): string;
+  /** A component's name from its ID. */
+  componentName?(component: string): string;
 }
 
 type Data = Record<string, unknown>;
@@ -84,7 +84,7 @@ function describeInputPatch(entry: JournalEntry, ctx: SummaryContext): string | 
 }
 
 /**
- * A patch from the dataflow (dataflow spec §5.1): layer resolution as
+ * A patch from the dataflow (dataflow spec §5.1): resolution as
  * `deck: k3 on shift; active shift, cams` (surfaces spec §5.2), a level sent
  * to a control, or a cell's new value, `cell vars.isLive = true`. `undefined`
  * for any other patch.
@@ -170,11 +170,11 @@ export function describe(entry: JournalEntry, ctx: SummaryContext): string {
     case "state.quality":
       return `${textPath(d.subtree as IdPath, ctx)} ${String(d.quality)}`;
     // Events by path (dataflow §3): a control's input names its surface,
-    // control and layer; anything else is `<path>:<name>`.
+    // control and component; anything else is `<path>:<name>`.
     case "event": {
       const payload = (d.payload ?? {}) as Data;
       if (d.control !== undefined) {
-        const layer = d.component === undefined ? "" : ` on ${ctx.layerName?.(String(d.component)) ?? String(d.component)}`;
+        const component = d.component === undefined ? "" : ` on ${ctx.componentName?.(String(d.component)) ?? String(d.component)}`;
         const delta =
           typeof payload.delta !== "number"
             ? ""
@@ -182,7 +182,7 @@ export function describe(entry: JournalEntry, ctx: SummaryContext): string {
               ? ` ${payload.delta > 0 ? "+" : ""}${payload.delta}`
               : ` ×${payload.delta}`;
         const value = payload.value === undefined ? "" : ` ${json(payload.value, 20)}`;
-        return `${surface(d.surface)} ${String(d.control)} ${String(d.event)}${delta}${value}${layer}`;
+        return `${surface(d.surface)} ${String(d.control)} ${String(d.event)}${delta}${value}${component}`;
       }
       const at = textPath(d.path as IdPath | undefined, ctx);
       return `${at}:${String(d.event)}${d.payload === undefined ? "" : ` ${json(d.payload)}`}`;

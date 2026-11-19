@@ -15,9 +15,9 @@ export interface Route {
   flow?: string;
   /** `#/surfaces/<id>`: the surface whose deck is open. */
   surface?: string;
-  /** `#/surfaces/layers/<id>`: the layer being edited. */
-  layer?: string;
-  /** `#/surfaces/layers/<id>/k3`: the control selected on it. */
+  /** `#/surfaces/components/<id>`: the component being edited. */
+  component?: string;
+  /** `#/surfaces/components/<id>/k3`: the control selected on it. */
   control?: string;
   /** `#/variables/<id>`: the variable being edited, or `new`. */
   variable?: string;
@@ -39,10 +39,10 @@ export function parseHash(hash: string): Route {
   if (tab === "flows" && rest !== "") return { tab, flow: rest };
   if (tab === "variables" && rest !== "") return { tab, variable: rest };
   if (tab === "surfaces" && rest !== "") {
-    // Surface IDs are ULIDs, so never `layers`.
-    const [first, layer, control] = rest.split("/");
-    if (first !== "layers") return { tab, surface: rest };
-    if (layer) return control ? { tab, layer, control } : { tab, layer };
+    // Surface IDs are ULIDs, so never `components`.
+    const [first, component, control] = rest.split("/");
+    if (first !== "components") return { tab, surface: rest };
+    if (component) return control ? { tab, component, control } : { tab, component };
   }
   return { tab };
 }
@@ -61,9 +61,9 @@ export function hrefOf(route: Route): string {
   if (route.tab === "journal" && route.seq !== undefined) return `#/journal/${route.seq}`;
   if (route.tab === "flows" && route.flow) return `#/flows/${encodeURIComponent(route.flow)}`;
   if (route.tab === "variables" && route.variable) return `#/variables/${encodeURIComponent(route.variable)}`;
-  if (route.tab === "surfaces" && route.layer) {
-    const layer = `#/surfaces/layers/${encodeURIComponent(route.layer)}`;
-    return route.control ? `${layer}/${encodeURIComponent(route.control)}` : layer;
+  if (route.tab === "surfaces" && route.component) {
+    const component = `#/surfaces/components/${encodeURIComponent(route.component)}`;
+    return route.control ? `${component}/${encodeURIComponent(route.control)}` : component;
   }
   if (route.tab === "surfaces" && route.surface) return `#/surfaces/${encodeURIComponent(route.surface)}`;
   return `#/${route.tab}`;
