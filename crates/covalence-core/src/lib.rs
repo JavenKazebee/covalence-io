@@ -13,6 +13,7 @@ pub mod gate;
 pub mod host;
 pub mod io;
 pub mod journal;
+pub mod param;
 pub mod schema;
 pub mod select;
 pub mod source;

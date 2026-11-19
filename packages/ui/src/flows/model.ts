@@ -47,6 +47,8 @@ export function eventSourceKind(from: EventSource): EventSourceKind {
 
 export type Trigger =
   | { kind: "api" }
+  /** A `call` step in another flow can start it (flow spec §8.3). */
+  | { kind: "call" }
   | { kind: "event"; from: EventSource; event: string | string[]; filter?: Expr }
   /** `when` is an expression's text, or any source; with `match`, it's optional. */
   | { kind: "state"; when?: Expr | Source; match?: string; edge: Edge };
@@ -129,7 +131,29 @@ export interface BranchStep extends StepCommon {
   else?: Step[];
 }
 
-export type Step = ActionStep | WaitStep | WaitUntilStep | SetStep | BranchStep;
+/** Starts a flow through its `call` trigger and, unless `wait` is false, takes its outputs. */
+export interface CallStep extends StepCommon {
+  kind: "call";
+  /** The flow's ID. */
+  flow: string;
+  /** Each a source, evaluated when the step starts. */
+  inputs?: Record<string, Source>;
+  wait?: boolean;
+}
+
+/** Ends the run, handing back outputs. */
+export interface StopStep extends StepCommon {
+  kind: "stop";
+  status?: "ok" | "failed";
+  outputs?: Record<string, Source>;
+  /** A failed run's message. */
+  error?: Expr;
+}
+
+export type Step = ActionStep | WaitStep | WaitUntilStep | SetStep | BranchStep | CallStep | StopStep;
+
+/** A declared input (composition §1): a state schema node with a default, and whether it must be given. */
+export type ParamDef = Omit<JsonSchema, "default" | "required"> & { default?: Source; required?: boolean };
 export type StepKind = Step["kind"];
 
 export interface Flow {
@@ -144,6 +168,10 @@ export interface Flow {
   conditions?: Expr[];
   concurrency: Concurrency;
   failover?: "abort";
+  /** Bound each time it starts (flow spec §8.1): `input.<name>`. */
+  inputs?: Record<string, ParamDef>;
+  /** What a `stop` step hands back to a caller. */
+  outputs?: Record<string, JsonSchema>;
   body: Step[];
   /** View-only metadata, stored as-is. */
   editor?: Record<string, unknown>;
@@ -260,6 +288,18 @@ export interface StepDraft {
   arms: ArmDraft[];
   /** A branch's `else`, or null without one. */
   otherwise: StepDraft[] | null;
+  /** A `call` step's flow, by ID. */
+  flow: string;
+  /** A `call` step's inputs, by name. */
+  inputs: Record<string, Source>;
+  /** A `call` step's `wait`, or null when left out (it waits). */
+  wait: boolean | null;
+  /** A `stop` step's status, or null when left out (`ok`). */
+  status: "ok" | "failed" | null;
+  /** A `stop` step's outputs, by name. */
+  outputs: Record<string, Source>;
+  /** A failed `stop` step's message; empty for none. */
+  error: Expr;
   /** Optional fields the stored step spelled out at their defaults, kept so a save changes nothing it shouldn't. */
   explicit: { enabled?: true; onError?: "fail" };
 }
@@ -278,6 +318,8 @@ export interface FlowDraft {
   triggers: Trigger[];
   conditions: Expr[];
   concurrency: Concurrency;
+  inputs: Record<string, ParamDef>;
+  outputs: Record<string, JsonSchema>;
   body: StepDraft[];
   editor?: Record<string, unknown>;
 }
@@ -315,6 +357,8 @@ export function newFlowDraft(): FlowDraft {
     triggers: [{ kind: "api" }],
     conditions: [],
     concurrency: "ignore",
+    inputs: {},
+    outputs: {},
     body: [],
   };
 }
@@ -342,6 +386,12 @@ export function newStepDraft(kind: StepKind, id: string): StepDraft {
     value: "",
     arms: kind === "branch" ? [newArmDraft()] : [],
     otherwise: null,
+    flow: "",
+    inputs: {},
+    wait: null,
+    status: null,
+    outputs: {},
+    error: "",
     explicit: {},
   };
 }
@@ -358,6 +408,8 @@ export interface StepContext {
   all: ReadonlySet<string>;
   /** The active run's position, if one is running. */
   position: readonly string[];
+  /** The flow's declared outputs, which a `stop` step hands back. */
+  outputs: Record<string, JsonSchema>;
 }
 
 /** Every step in a list and the branches inside it, in run order. */
@@ -422,6 +474,16 @@ function stepToDraft(step: Step, schemaOf: ParamsSchema): StepDraft {
       }));
       draft.otherwise = step.else === undefined ? null : step.else.map((s) => stepToDraft(s, schemaOf));
       break;
+    case "call":
+      draft.flow = step.flow;
+      draft.inputs = copyJson(step.inputs ?? {});
+      draft.wait = step.wait ?? null;
+      break;
+    case "stop":
+      draft.status = step.status ?? null;
+      draft.outputs = copyJson(step.outputs ?? {});
+      draft.error = step.error ?? "";
+      break;
     case "action": {
       if (formOf(step.target as Source) === "literal") {
         const target = literalOf(step.target as Source) as unknown as Target;
@@ -453,6 +515,8 @@ export function toDraft(flow: Flow, schemaOf: ParamsSchema): FlowDraft {
     triggers: copyJson(flow.triggers),
     conditions: [...(flow.conditions ?? [])],
     concurrency: flow.concurrency,
+    inputs: copyJson(flow.inputs ?? {}),
+    outputs: copyJson(flow.outputs ?? {}),
     editor: flow.editor,
     body: flow.body.map((step) => stepToDraft(step, schemaOf)),
   };
@@ -485,6 +549,19 @@ function stepFromDraft(d: StepDraft, schemaOf: ParamsSchema, errors: Map<number,
         arms: d.arms.map((arm) => ({ when: arm.when, steps: steps(arm.steps) })),
       };
       if (d.otherwise !== null) step.else = steps(d.otherwise);
+      return step;
+    }
+    case "call": {
+      const step: CallStep = { ...common, kind: "call", flow: d.flow };
+      if (Object.keys(d.inputs).length > 0) step.inputs = copyJson(d.inputs);
+      if (d.wait !== null) step.wait = d.wait;
+      return step;
+    }
+    case "stop": {
+      const step: StopStep = { ...common, kind: "stop" };
+      if (d.status !== null) step.status = d.status;
+      if (Object.keys(d.outputs).length > 0) step.outputs = copyJson(d.outputs);
+      if (d.status === "failed" && d.error.trim() !== "") step.error = d.error;
       return step;
     }
     case "action": {
@@ -537,6 +614,8 @@ export function fromDraft(draft: FlowDraft, schemaOf: ParamsSchema): DraftResult
     body,
   };
   if (draft.conditions.length > 0) flow.conditions = draft.conditions;
+  if (Object.keys(draft.inputs).length > 0) flow.inputs = copyJson(draft.inputs);
+  if (Object.keys(draft.outputs).length > 0) flow.outputs = copyJson(draft.outputs);
   if (draft.editor !== undefined) flow.editor = draft.editor;
   return { ok: true, flow };
 }
@@ -614,6 +693,8 @@ export function describeTrigger(
   switch (trigger.kind) {
     case "api":
       return "API / Run button";
+    case "call":
+      return "Called by another flow";
     case "event":
       return `${describeSource(trigger.from, alias, layerName)} ${eventNames(trigger.event).join(" or ")}${trigger.filter ? " (filtered)" : ""}`;
     case "state": {

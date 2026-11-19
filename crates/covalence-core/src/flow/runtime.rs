@@ -16,17 +16,19 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::time::Duration as StdDuration;
 
-use covalence_protocol::Value;
 use covalence_protocol::state::PathSegment;
+use covalence_protocol::{Object, Value};
 use serde::Serialize;
 use tokio::sync::{broadcast, watch};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
-use super::{Cond, Edge, EventSource, Flow, FlowId, OnError, SetTarget, Step, StepKind, Trigger};
+use super::{
+    Cond, Edge, EventSource, Flow, FlowId, OnError, SetTarget, Step, StepKind, StopStatus, Trigger,
+};
 use crate::core_conn;
 use crate::engine::{ActionRequest, Actions, CoreError};
-use crate::expr::{Evaluation, Evaluator, ExprError, Reads, Scope, truthy};
+use crate::expr::{Evaluation, Evaluator, ExprError, Reads, Scope, json_to_value, to_json, truthy};
 use crate::gate::Verdict;
 use crate::journal::{
     BlockReason, EventRecord, JournalError, JournalOp, NewEntry, Origin, Record, RunError,
@@ -79,6 +81,9 @@ pub struct RunInfo {
     pub position: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<RunError>,
+    /// What a `stop` step handed back (spec §2.3).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outputs: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -124,6 +129,9 @@ pub enum FireError {
     Disabled(FlowId),
     #[error("flow {0} has no api trigger")]
     NoApiTrigger(FlowId),
+    /// Inputs that don't fit the flow's `inputs` (spec §8.1).
+    #[error("{}", .0.message)]
+    BadInputs(RunError),
     #[error(transparent)]
     Journal(#[from] JournalError),
 }
@@ -205,6 +213,8 @@ struct Live {
     info: RunInfo,
     /// `trigger` in the run's expressions.
     trigger: Value,
+    /// `input` in the run's expressions, bound when it fired.
+    input: Object,
     cancel: watch::Sender<bool>,
     /// Becomes `true` once the run has journaled `run.finished`.
     done: watch::Receiver<bool>,
@@ -213,12 +223,13 @@ struct Live {
 }
 
 impl Live {
-    fn new(info: RunInfo, trigger: Value) -> Self {
+    fn new(info: RunInfo, trigger: Value, input: Object) -> Self {
         let (cancel, cancel_rx) = watch::channel(false);
         let (done_tx, done) = watch::channel(false);
         Live {
             info,
             trigger,
+            input,
             cancel,
             done,
             pending: Some((cancel_rx, done_tx)),
@@ -346,8 +357,14 @@ impl Runtime {
         Ok(())
     }
 
-    /// Fires a flow's `api` trigger (`POST /flows/{id}/run`).
-    pub fn fire_api(&self, id: &str, origin: Origin) -> Result<Fired, FireError> {
+    /// Fires a flow's `api` trigger (`POST /flows/{id}/run`), with `inputs`
+    /// bound to the flow's declared ones.
+    pub fn fire_api(
+        &self,
+        id: &str,
+        origin: Origin,
+        inputs: BTreeMap<String, serde_json::Value>,
+    ) -> Result<Fired, FireError> {
         let flow = self
             .inner
             .book()
@@ -363,6 +380,10 @@ impl Runtime {
             .iter()
             .position(|t| matches!(t, Trigger::Api {}))
             .ok_or_else(|| FireError::NoApiTrigger(id.to_owned()))?;
+        let input = self
+            .inner
+            .bind_inputs(&flow, inputs, true)
+            .map_err(FireError::BadInputs)?;
         let payload = Value::Map(vec![("args".into(), Value::Map(Vec::new()))]);
         let failed = self.inner.failed_condition(&flow, &payload);
         let mut book = self.inner.book();
@@ -374,6 +395,7 @@ impl Runtime {
             cause: None,
             origin,
             payload,
+            input,
             failed_condition: failed,
         };
         Ok(self.inner.fire(&mut book, id, fire)?)
@@ -395,26 +417,7 @@ impl Runtime {
     }
 
     pub fn cancel(&self, run: &str) -> Result<RunPhase, CancelError> {
-        let inner = &self.inner;
-        let mut book = inner.book();
-        match book.live.get(run).map(|l| l.info.status) {
-            Some(RunPhase::Queued) => {
-                let flow = book.live[run].info.flow.clone();
-                if let Some(slot) = book.flows.get_mut(&flow) {
-                    slot.queue.retain(|r| r != run);
-                }
-                inner.drop_queued(&mut book, run)?;
-                Ok(RunPhase::Cancelled)
-            }
-            Some(phase) => {
-                book.live[run].cancel.send_replace(true);
-                Ok(phase)
-            }
-            None => match book.recent.iter().find(|r| r.run == run) {
-                Some(info) => Err(CancelError::Finished(run.to_owned(), info.status)),
-                None => Err(CancelError::UnknownRun(run.to_owned())),
-            },
-        }
+        self.inner.cancel_run(run)
     }
 
     /// Runs newest first: running, then queued, then recently finished.
@@ -514,6 +517,7 @@ async fn match_events(
                 origin: origin.clone(),
                 failed_condition: inner.failed_condition(&flow, &payload),
                 payload,
+                input: inner.defaults(&flow),
             };
             let mut book = inner.book();
             if !book.flows.get(&flow.id).is_some_and(|s| s.flow.enabled) {
@@ -621,6 +625,7 @@ async fn watch_state(inner: Arc<Inner>, mut feed: TurnFeed) {
 
 /// What a run adds to an expression's scope.
 struct RunScope<'a> {
+    input: &'a Value,
     local: &'a BTreeMap<String, Value>,
     steps: &'a BTreeMap<String, Value>,
     cancel: &'a watch::Receiver<bool>,
@@ -634,6 +639,8 @@ struct Fire {
     origin: Origin,
     /// `trigger` in expressions.
     payload: Value,
+    /// `input` in expressions.
+    input: Object,
     /// The index of the first falsy condition, which blocks the run.
     failed_condition: Option<u32>,
 }
@@ -864,6 +871,7 @@ impl Inner {
         let mut scope = Scope::new(&self.shared.state, &aliases);
         scope.trigger = trigger;
         if let Some(run) = run {
+            scope.input = Some(run.input);
             scope.local = run.local;
             scope.steps = run.steps;
             scope.cancel = Some(run.cancel);
@@ -886,6 +894,7 @@ impl Inner {
         let mut scope = Scope::new(&self.shared.state, &aliases);
         scope.trigger = trigger;
         if let Some(run) = run {
+            scope.input = Some(run.input);
             scope.local = run.local;
             scope.steps = run.steps;
             scope.cancel = Some(run.cancel);
@@ -1143,6 +1152,7 @@ impl Inner {
                     origin: Origin::system(),
                     failed_condition: self.failed_condition(&flow, &payload),
                     payload,
+                    input: self.defaults(&flow),
                 };
                 let mut book = self.book();
                 if !book.flows.get(&flow_id).is_some_and(|s| s.flow.enabled) {
@@ -1206,6 +1216,7 @@ impl Inner {
                 origin: Origin::system(),
                 failed_condition: self.failed_condition(&flow, &payload),
                 payload,
+                input: self.defaults(&flow),
             };
             let mut book = self.book();
             if !book.flows.get(&flow_id).is_some_and(|s| s.flow.enabled) {
@@ -1241,6 +1252,7 @@ impl Inner {
             cause,
             origin,
             payload,
+            input,
             failed_condition,
         } = fire;
         use super::Concurrency::*;
@@ -1311,8 +1323,10 @@ impl Inner {
                 duration_ms: None,
                 position: None,
                 error: None,
+                outputs: None,
             },
             payload,
+            input,
         );
         book.live.insert(run.clone(), live);
         let slot = book.flows.get_mut(flow_id).expect("checked above");
@@ -1364,6 +1378,13 @@ impl Inner {
         let live = book.live.get_mut(run).expect("runs are started while live");
         let (cancel, done) = live.pending.take().expect("a run is started once");
         let trigger = live.trigger.clone();
+        let input = Value::Map(
+            live.input
+                .iter()
+                .map(|(k, v)| (Value::from(k.as_str()), v.clone()))
+                .collect(),
+        );
+        let inputs = live.input.clone();
         live.info.status = RunPhase::Running;
         let flow_id = live.info.flow.clone();
         let matched = live.info.matched;
@@ -1379,6 +1400,8 @@ impl Inner {
             matched,
             cancel,
             trigger,
+            input,
+            inputs,
             local: BTreeMap::new(),
             steps: BTreeMap::new(),
             started: 0,
@@ -1409,6 +1432,7 @@ impl Inner {
                     run: run.to_owned(),
                     status: RunStatus::Cancelled,
                     error: None,
+                    outputs: None,
                 }),
             )
             .cause(live.info.matched)
@@ -1500,6 +1524,118 @@ fn push_recent(book: &mut Book, info: RunInfo) {
     book.recent.push_back(info);
 }
 
+impl Inner {
+    fn cancel_run(&self, run: &str) -> Result<RunPhase, CancelError> {
+        let inner = self;
+        let mut book = inner.book();
+        match book.live.get(run).map(|l| l.info.status) {
+            Some(RunPhase::Queued) => {
+                let flow = book.live[run].info.flow.clone();
+                if let Some(slot) = book.flows.get_mut(&flow) {
+                    slot.queue.retain(|r| r != run);
+                }
+                inner.drop_queued(&mut book, run)?;
+                Ok(RunPhase::Cancelled)
+            }
+            Some(phase) => {
+                book.live[run].cancel.send_replace(true);
+                Ok(phase)
+            }
+            None => match book.recent.iter().find(|r| r.run == run) {
+                Some(info) => Err(CancelError::Finished(run.to_owned(), info.status)),
+                None => Err(CancelError::UnknownRun(run.to_owned())),
+            },
+        }
+    }
+
+    /// Binds a run's inputs (spec §8.1): each given value checked against its
+    /// `ParamDef`, and defaults for the rest. `strict` refuses unknown,
+    /// missing and mistyped inputs; otherwise they're left out.
+    fn bind_inputs(
+        &self,
+        flow: &Flow,
+        mut given: BTreeMap<String, serde_json::Value>,
+        strict: bool,
+    ) -> Result<Object, RunError> {
+        if strict && let Some(name) = given.keys().find(|k| !flow.inputs.contains_key(*k)) {
+            return Err(RunError::new(
+                "unknownInput",
+                format!("flow {} has no input {name:?}", flow.name),
+            ));
+        }
+        let mut out = Object::new();
+        for (name, def) in &flow.inputs {
+            let value = match (given.remove(name), &def.default) {
+                (Some(v), _) => Some(v),
+                (None, Some(default)) => match self.evaluate_source(default, None, None).value {
+                    Ok(v) => v.or_else(|| default.fallback().cloned()),
+                    Err(_) if !strict => default.fallback().cloned(),
+                    Err(e) => {
+                        return Err(RunError::new(
+                            "invalidInputs",
+                            format!("input {name:?}'s default failed: {}", e.message),
+                        ));
+                    }
+                },
+                (None, None) => None,
+            };
+            match value {
+                Some(v) => {
+                    let problems = schema::check(&def.schema(), &v);
+                    if problems.is_empty() {
+                        out.insert(name.clone(), json_to_value(&v));
+                    } else if strict {
+                        let why: Vec<String> = problems.into_iter().map(|m| m.message).collect();
+                        return Err(RunError::new(
+                            "invalidInputs",
+                            format!("input {name:?}: {}", why.join("; ")),
+                        ));
+                    }
+                }
+                None if strict && def.needs_value() => {
+                    return Err(RunError::new(
+                        "missingInput",
+                        format!("flow {} needs input {name:?}", flow.name),
+                    ));
+                }
+                None => {}
+            }
+        }
+        Ok(out)
+    }
+
+    /// The inputs a trigger that gives none binds: the defaults.
+    fn defaults(&self, flow: &Flow) -> Object {
+        self.bind_inputs(flow, BTreeMap::new(), false)
+            .unwrap_or_default()
+    }
+}
+
+/// Cancels a called run if the `call` step waiting for it goes away: the
+/// caller cancelled or timed out (spec §8.3).
+struct CancelOnDrop {
+    inner: Arc<Inner>,
+    run: Option<RunId>,
+}
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        if let Some(run) = self.run.take() {
+            let _ = self.inner.cancel_run(&run);
+        }
+    }
+}
+
+/// An object as a map value.
+fn object_value(object: Object) -> Value {
+    Value::Map(
+        object
+            .into_iter()
+            .map(|(k, v)| (Value::from(k.as_str()), v))
+            .collect(),
+    )
+}
+
 /// One run, on its own task.
 struct RunTask {
     inner: Arc<Inner>,
@@ -1509,6 +1645,9 @@ struct RunTask {
     cancel: watch::Receiver<bool>,
     /// `trigger` in expressions.
     trigger: Value,
+    /// `input` in expressions, and as `run.started` records it.
+    input: Value,
+    inputs: Object,
     /// `local` in expressions: set by `set` steps.
     local: BTreeMap<String, Value>,
     /// `steps.<id>` in expressions, for the steps that have finished.
@@ -1522,6 +1661,16 @@ enum End {
     Ok,
     Failed(RunError),
     Cancelled,
+    /// A `stop` step ended the run.
+    Stopped(Stopped),
+}
+
+/// How a `stop` step ended its run (spec §2.3).
+#[derive(Clone)]
+struct Stopped {
+    status: super::StopStatus,
+    outputs: Object,
+    error: Option<RunError>,
 }
 
 /// What a step that finished well leaves: its result, and for a `branch`
@@ -1530,6 +1679,8 @@ enum End {
 struct Done {
     result: Option<Value>,
     arm: Option<serde_json::Value>,
+    /// A `stop` step, or a block one ran in: the run ends here.
+    stop: Option<Stopped>,
 }
 
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -1551,9 +1702,12 @@ impl RunTask {
             return;
         };
         match outcome {
-            Ok((status, error, finished, duration_ms)) => {
+            Ok((status, error, outputs, finished, duration_ms)) => {
                 live.info.status = status.into();
                 live.info.error = error;
+                live.info.outputs = outputs
+                    .filter(|o| !o.is_empty())
+                    .map(|o| to_json(&object_value(o)));
                 live.info.finished = Some(finished);
                 live.info.duration_ms = duration_ms;
             }
@@ -1614,6 +1768,7 @@ impl RunTask {
 
     fn scope(&self) -> RunScope<'_> {
         RunScope {
+            input: &self.input,
             local: &self.local,
             steps: &self.steps,
             cancel: &self.cancel,
@@ -1667,9 +1822,19 @@ impl RunTask {
 
     /// Journals the run from `run.started` to `run.finished`. Returns how it
     /// ended, its error, the `run.finished` seq and its duration.
+    #[allow(clippy::type_complexity)]
     async fn execute(
         &mut self,
-    ) -> Result<(RunStatus, Option<RunError>, Seq, Option<u64>), JournalError> {
+    ) -> Result<
+        (
+            RunStatus,
+            Option<RunError>,
+            Option<Object>,
+            Seq,
+            Option<u64>,
+        ),
+        JournalError,
+    > {
         if self.cancelled() {
             // Cancelled before it started (restart, delete): no run.started.
             let finished = self.append(
@@ -1678,6 +1843,7 @@ impl RunTask {
                     run: self.run.clone(),
                     status: RunStatus::Cancelled,
                     error: None,
+                    outputs: None,
                 }),
                 self.matched,
             )?;
@@ -1689,7 +1855,7 @@ impl RunTask {
                 None,
                 finished,
             )?;
-            return Ok((RunStatus::Cancelled, None, finished, None));
+            return Ok((RunStatus::Cancelled, None, None, finished, None));
         }
 
         let started = self.append(
@@ -1698,7 +1864,7 @@ impl RunTask {
                 flow: self.flow.id.clone(),
                 run: self.run.clone(),
                 mode: self.flow.concurrency,
-                inputs: Default::default(),
+                inputs: self.inputs.clone(),
             }),
             self.matched,
         )?;
@@ -1725,10 +1891,22 @@ impl RunTask {
         }
 
         let flow = self.flow.clone();
-        let (mut status, run_error) = match self.run_list(&flow.body, &[]).await? {
-            End::Ok => (RunStatus::Ok, None),
-            End::Failed(e) => (RunStatus::Failed, Some(e)),
-            End::Cancelled => (RunStatus::Cancelled, None),
+        let (mut status, run_error, outputs) = match self.run_list(&flow.body, &[]).await? {
+            End::Ok => (RunStatus::Ok, None, None),
+            End::Failed(e) => (RunStatus::Failed, Some(e), None),
+            End::Cancelled => (RunStatus::Cancelled, None, None),
+            End::Stopped(Stopped {
+                status: super::StopStatus::Ok,
+                outputs,
+                ..
+            }) => (RunStatus::Ok, None, Some(outputs)),
+            End::Stopped(Stopped { outputs, error, .. }) => (
+                RunStatus::Failed,
+                Some(
+                    error.unwrap_or_else(|| RunError::new("stopped", "a stop step failed the run")),
+                ),
+                Some(outputs),
+            ),
         };
         // A cancel that lands during the last step still counts.
         if status == RunStatus::Ok && self.cancelled() {
@@ -1741,6 +1919,7 @@ impl RunTask {
                 run: self.run.clone(),
                 status,
                 error: run_error.clone(),
+                outputs: outputs.clone().filter(|o| !o.is_empty()),
             }),
             started,
         )?;
@@ -1753,7 +1932,7 @@ impl RunTask {
             finished,
         )?;
         let duration_ms = clock.elapsed().as_millis() as u64;
-        Ok((status, run_error, finished, Some(duration_ms)))
+        Ok((status, run_error, outputs, finished, Some(duration_ms)))
     }
 
     /// Runs a list of steps in order, journaling each. `prefix` is the
@@ -1811,8 +1990,11 @@ impl RunTask {
                             summary.push(("result".into(), result));
                         }
                         self.steps.insert(step.id.clone(), Value::Map(summary));
-                        let done = record(StepStatus::Done, done.arm, None);
-                        self.append(Some(&step.id), done, self.started)?;
+                        let entry = record(StepStatus::Done, done.arm, None);
+                        self.append(Some(&step.id), entry, self.started)?;
+                        if let Some(stopped) = done.stop {
+                            return Ok(End::Stopped(stopped));
+                        }
                     }
                     Err(error) => {
                         summary.insert(0, ("status".into(), "failed".into()));
@@ -1878,6 +2060,14 @@ impl RunTask {
                 StepKind::Branch { arms, otherwise } => {
                     self.branch(arms, otherwise.as_deref(), position).await
                 }
+                StepKind::Call { flow, inputs, wait } => Ok(self
+                    .call(id, flow, inputs, wait.unwrap_or(true), step_started)
+                    .await),
+                StepKind::Stop {
+                    status,
+                    outputs,
+                    error,
+                } => Ok(self.stop(status.unwrap_or_default(), outputs, error.as_deref())),
             }
         };
         // An action enforces its own timeout, so its request keeps running.
@@ -1980,7 +2170,10 @@ impl RunTask {
                     }),
                     e.message,
                 )),
-                (_, Some(Ok(result))) => Ok(Done { result, arm: None }),
+                (_, Some(Ok(result))) => Ok(Done {
+                    result,
+                    ..Done::default()
+                }),
                 (_, None) => Ok(Done::default()),
             },
         }
@@ -2124,7 +2317,7 @@ impl RunTask {
                 }
                 return Ok(Done {
                     result: Some(Value::Map(result)),
-                    arm: None,
+                    ..Done::default()
                 });
             }
             // Wait for a change it read, or a cancel.
@@ -2224,6 +2417,203 @@ impl RunTask {
     }
 
     /// Runs the first arm whose `when` is truthy, or `else` (spec §8.3).
+    /// A `call` step (spec §8.3): fires `flow`'s `call` trigger with the
+    /// inputs bound, caused by this step. With `wait` it waits for that run
+    /// and takes its outputs; a cancel or a timeout while it waits cancels it.
+    async fn call(
+        &mut self,
+        step: &str,
+        flow: &str,
+        inputs: &BTreeMap<String, Source<serde_json::Value>>,
+        wait: bool,
+        step_started: Seq,
+    ) -> Result<Done, RunError> {
+        let mut given = BTreeMap::new();
+        for (name, source) in inputs {
+            if let Some(v) = self.eval_source(source)? {
+                given.insert(name.clone(), v);
+            }
+        }
+        let no_flow = || RunError::new("unknownFlow", format!("no flow {flow}"));
+        let callee = self
+            .inner
+            .book()
+            .flows
+            .get(flow)
+            .map(|s| s.flow.clone())
+            .ok_or_else(no_flow)?;
+        if !callee.enabled {
+            return Err(RunError::new(
+                "disabled",
+                format!("flow {} is disabled", callee.name),
+            ));
+        }
+        let trigger = callee
+            .triggers
+            .iter()
+            .position(|t| matches!(t, Trigger::Call {}))
+            .ok_or_else(|| {
+                RunError::new(
+                    "notCallable",
+                    format!("flow {} has no call trigger", callee.name),
+                )
+            })?;
+        let input = self.inner.bind_inputs(&callee, given, true)?;
+        let payload = Value::Map(vec![(
+            "caller".into(),
+            Value::Map(vec![
+                ("flow".into(), self.flow.id.as_str().into()),
+                ("run".into(), self.run.as_str().into()),
+            ]),
+        )]);
+        let failed_condition = self.inner.failed_condition(&callee, &payload);
+        let fired = {
+            let mut book = self.inner.book();
+            if !book.flows.contains_key(flow) {
+                return Err(no_flow());
+            }
+            let fire = Fire {
+                trigger,
+                cause: Some(step_started),
+                origin: self.origin(Some(step)),
+                payload,
+                input,
+                failed_condition,
+            };
+            self.inner
+                .fire(&mut book, flow, fire)
+                .map_err(|e| RunError::new("internal", e.to_string()))?
+        };
+        let run = match fired.outcome {
+            FireOutcome::Started(run) | FireOutcome::Queued(run) => run,
+            FireOutcome::Blocked(reason) => {
+                let (code, why) = match reason {
+                    BlockReason::Loop => ("loop", "it's already in this chain of calls"),
+                    BlockReason::Ignore => ("busy", "it's running and ignores new triggers"),
+                    BlockReason::QueueFull => ("queueFull", "its queue is full"),
+                    BlockReason::Condition => ("condition", "one of its conditions is false"),
+                };
+                return Err(RunError::new(
+                    code,
+                    format!("flow {} didn't start: {why}", callee.name),
+                ));
+            }
+        };
+        if !wait {
+            return Ok(Done {
+                result: Some(Value::Map(vec![("run".into(), run.as_str().into())])),
+                ..Done::default()
+            });
+        }
+
+        let done = self.inner.book().live.get(&run).map(|l| l.done.clone());
+        let mut guard = CancelOnDrop {
+            inner: self.inner.clone(),
+            run: Some(run.clone()),
+        };
+        if let Some(mut done) = done {
+            let cancel = &mut self.cancel;
+            let interrupted = async {
+                if cancel.wait_for(|c| *c).await.is_err() {
+                    std::future::pending::<()>().await;
+                }
+            };
+            let finished = tokio::select! {
+                _ = done.wait_for(|d| *d) => true,
+                () = interrupted => false,
+            };
+            if !finished {
+                drop(guard);
+                let _ = done.wait_for(|d| *d).await;
+                return Err(cancelled_error());
+            }
+        }
+        guard.run = None;
+        let info = self
+            .inner
+            .book()
+            .recent
+            .iter()
+            .rev()
+            .find(|r| r.run == run)
+            .cloned()
+            .ok_or_else(|| RunError::new("internal", format!("run {run} finished out of sight")))?;
+        match info.status {
+            RunPhase::Ok => Ok(Done {
+                result: Some(json_to_value(
+                    &info.outputs.unwrap_or_else(|| serde_json::json!({})),
+                )),
+                ..Done::default()
+            }),
+            RunPhase::Failed => {
+                let e = info
+                    .error
+                    .unwrap_or_else(|| RunError::new("failed", "the called flow failed"));
+                Err(RunError::new(
+                    e.code,
+                    format!("flow {} failed: {}", callee.name, e.message),
+                ))
+            }
+            _ => Err(RunError::new(
+                "callCancelled",
+                format!("flow {} was cancelled", callee.name),
+            )),
+        }
+    }
+
+    /// A `stop` step (spec §2.3): its outputs, checked against the flow's
+    /// `outputs`, and how the run ends.
+    fn stop(
+        &mut self,
+        status: StopStatus,
+        outputs: &BTreeMap<String, Source<serde_json::Value>>,
+        error: Option<&str>,
+    ) -> Result<Done, RunError> {
+        let mut out = Object::new();
+        for (name, source) in outputs {
+            let Some(v) = self.eval_source(source)? else {
+                continue;
+            };
+            let Some(schema) = self.flow.outputs.get(name) else {
+                return Err(RunError::new(
+                    "unknownOutput",
+                    format!("the flow has no output {name:?}"),
+                ));
+            };
+            let problems = schema::check(&serde_json::Value::Object(schema.clone()), &v);
+            if !problems.is_empty() {
+                let why: Vec<String> = problems.into_iter().map(|m| m.message).collect();
+                return Err(RunError::new(
+                    "invalidOutputs",
+                    format!("output {name:?}: {}", why.join("; ")),
+                ));
+            }
+            out.insert(name.clone(), json_to_value(&v));
+        }
+        let error = match (status, error) {
+            (StopStatus::Ok, _) => None,
+            (StopStatus::Failed, None) => {
+                Some(RunError::new("stopped", "a stop step failed the run"))
+            }
+            (StopStatus::Failed, Some(message)) => {
+                let text = match self.eval(message)? {
+                    Some(Value::String(s)) => s.into_str().unwrap_or_default(),
+                    Some(other) => to_json(&other).to_string(),
+                    None => "a stop step failed the run".to_owned(),
+                };
+                Some(RunError::new("stopped", text))
+            }
+        };
+        Ok(Done {
+            stop: Some(Stopped {
+                status,
+                outputs: out,
+                error,
+            }),
+            ..Done::default()
+        })
+    }
+
     async fn branch(
         &mut self,
         arms: &[super::Arm],
@@ -2244,17 +2634,22 @@ impl RunTask {
         let chosen = chosen.or_else(|| otherwise.map(|steps| ("else".into(), steps)));
         let Some((arm, steps)) = chosen else {
             return Ok(Ok(Done {
-                result: None,
                 arm: Some(serde_json::Value::Null),
+                ..Done::default()
             }));
         };
         Ok(match self.run_list(steps, position).await? {
             End::Ok => Ok(Done {
-                result: None,
                 arm: Some(arm),
+                ..Done::default()
             }),
             End::Failed(e) => Err(e),
             End::Cancelled => Err(cancelled_error()),
+            End::Stopped(stopped) => Ok(Done {
+                arm: Some(arm),
+                stop: Some(stopped),
+                ..Done::default()
+            }),
         })
     }
 }

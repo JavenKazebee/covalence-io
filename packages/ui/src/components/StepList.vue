@@ -34,6 +34,8 @@ const kinds: { kind: StepKind; label: string }[] = [
   { kind: "waitUntil", label: "Wait until" },
   { kind: "set", label: "Set" },
   { kind: "branch", label: "Branch" },
+  { kind: "call", label: "Call a flow" },
+  { kind: "stop", label: "Stop" },
 ];
 
 function add(kind: StepKind) {

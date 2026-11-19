@@ -1,0 +1,39 @@
+{
+  "flow": {
+    "name": "Bad calls",
+    "slug": "badCalls",
+    "enabled": true,
+    "triggers": [
+      { "kind": "call" },
+      { "kind": "event", "from": { "path": "vars" }, "event": "changed" }
+    ],
+    "concurrency": "ignore",
+    "inputs": {
+      "camera": { "type": "integer", "required": true },
+      "speed": { "type": "number", "default": "fast" },
+      "Bad name": { "type": "string" }
+    },
+    "outputs": { "preset": { "type": "integer" } },
+    "body": [
+      { "id": "nowhere", "kind": "call", "flow": "01JC00000000000000000000ZZ" },
+      { "id": "closed", "kind": "call", "flow": "01JC00000000000000000000CB", "inputs": { "camera": 1 } },
+      { "id": "wrong", "kind": "call", "flow": "01JC00000000000000000000CA", "inputs": { "camera": 0, "zoom": 2 } },
+      { "id": "short", "kind": "call", "flow": "01JC00000000000000000000CA", "inputs": { "speed": 2 } },
+      { "id": "done", "kind": "stop", "outputs": { "preset": "three", "shot": 1 }, "error": "(" }
+    ]
+  },
+  "errors": [
+    { "path": ["inputs", "Bad name"], "code": "badId" },
+    { "path": ["inputs", "speed", "default"], "code": "badValue" },
+    { "path": ["triggers", 1], "code": "missingInput" },
+    { "path": ["body", 0, "flow"], "code": "unknownFlow" },
+    { "path": ["body", 1, "flow"], "code": "notCallable" },
+    { "path": ["body", 2, "inputs", "camera"], "code": "badValue" },
+    { "path": ["body", 2, "inputs", "zoom"], "code": "unknownInput" },
+    { "path": ["body", 3, "inputs"], "code": "missingInput" },
+    { "path": ["body", 4, "outputs", "preset"], "code": "badValue" },
+    { "path": ["body", 4, "outputs", "shot"], "code": "unknownOutput" },
+    { "path": ["body", 4, "error"], "code": "exprSyntax" }
+  ],
+  "warnings": []
+}

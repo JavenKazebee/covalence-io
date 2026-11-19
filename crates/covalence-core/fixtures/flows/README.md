@@ -19,4 +19,11 @@ The layer they refer to:
 |---|---|
 | `01JBZ7P0D3F5G7H9J1K3L5M7PA` | `k0` to `k14`, each `momentary` with an `image` output, as the virtual deck has |
 
+The flows they call:
+
+| ID | Name | Triggers | Inputs | Outputs |
+|---|---|---|---|---|
+| `01JC00000000000000000000CA` | Recall | `call` | `camera` (integer ≥ 1, required), `speed` (number, default 1) | `preset` (integer) |
+| `01JC00000000000000000000CB` | The same, with only an `api` trigger | `api` | as above | as above |
+
 The slug `taken` belongs to another flow.

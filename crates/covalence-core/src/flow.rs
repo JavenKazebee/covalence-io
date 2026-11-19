@@ -12,6 +12,7 @@ use std::time::Duration as StdDuration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::param::ParamDef;
 use crate::select::{Controls, Paths, Selector, Targets};
 use crate::source::Source;
 use crate::state::ConnId;
@@ -54,6 +55,13 @@ pub struct Flow {
     pub concurrency: Concurrency,
     #[serde(default)]
     pub failover: Failover,
+    /// Bound each time the flow starts: by a `call` step, the API, or
+    /// defaults (spec §8.1). `input.<name>` in expressions.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub inputs: BTreeMap<String, ParamDef>,
+    /// What a `stop` step hands back to a caller: a state schema node each.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub outputs: BTreeMap<String, serde_json::Map<String, serde_json::Value>>,
     #[serde(default)]
     pub body: Vec<Step>,
     /// View-only metadata (spec §6). Stored as-is; the runtime never reads it.
@@ -85,6 +93,8 @@ pub enum Failover {
 pub enum Trigger {
     /// `POST /flows/{id}/run`.
     Api {},
+    /// A `call` step in another flow (spec §2.1): any flow may call one that has this.
+    Call {},
     /// Events named `event` from the nodes `from` picks (dataflow §3.1).
     Event {
         from: EventSource,
@@ -271,6 +281,30 @@ pub enum StepKind {
         arms: Vec<Arm>,
         otherwise: Option<Vec<Step>>,
     },
+    /// Starts another flow through its `call` trigger, and with `wait`
+    /// (the default) waits for it and takes its outputs (spec §8.3).
+    Call {
+        flow: FlowId,
+        /// Each a source, evaluated once when the step starts.
+        inputs: BTreeMap<String, Source<serde_json::Value>>,
+        wait: Option<bool>,
+    },
+    /// Ends the run, `ok` unless `status` says otherwise, with outputs for a caller.
+    Stop {
+        status: Option<StopStatus>,
+        outputs: BTreeMap<String, Source<serde_json::Value>>,
+        /// A failed run's message.
+        error: Option<Expr>,
+    },
+}
+
+/// How a `stop` step ends its run.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StopStatus {
+    #[default]
+    Ok,
+    Failed,
 }
 
 impl StepKind {
@@ -381,6 +415,39 @@ enum WireStep {
         #[serde(default, rename = "else", skip_serializing_if = "Option::is_none")]
         otherwise: Option<Vec<Step>>,
     },
+    Call {
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        enabled: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout: Option<Duration>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        on_error: Option<OnError>,
+        flow: FlowId,
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        inputs: BTreeMap<String, Source<serde_json::Value>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        wait: Option<bool>,
+    },
+    Stop {
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        enabled: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout: Option<Duration>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        on_error: Option<OnError>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<StopStatus>,
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        outputs: BTreeMap<String, Source<serde_json::Value>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<Expr>,
+    },
 }
 
 /// Moves a wire step's common fields into a [`Step`] around `kind`, or back.
@@ -425,6 +492,8 @@ wire_variants! {
     WaitUntil { until },
     Set { path, value },
     Branch { arms, otherwise },
+    Call { flow, inputs, wait },
+    Stop { status, outputs, error },
 }
 
 impl Serialize for Step {

@@ -16,7 +16,7 @@ import {
   type StepDraft,
 } from "../flows/model";
 import { fieldsOf, initialValues } from "../forms/schema";
-import type { Json } from "../sources/model";
+import { newSource, type Expect, type Json } from "../sources/model";
 import { useCatalogStore } from "../stores/catalog";
 import { useFlowsStore } from "../stores/flows";
 import { useSurfacesStore } from "../stores/surfaces";
@@ -62,6 +62,8 @@ const kindLabel: Record<StepDraft["kind"], string> = {
   waitUntil: "wait until",
   set: "set",
   branch: "branch",
+  call: "call",
+  stop: "stop",
 };
 
 /** Steps an expression here can read, as `steps.<id>`. */
@@ -183,6 +185,48 @@ function coreDefaults(action: string): Record<string, Json> {
     default:
       return {};
   }
+}
+
+// ---- call: a flow with a `call` trigger, and its inputs ----
+
+/** Flows a `call` step can start (flow spec §8.3). */
+const callable = computed(() => flows.flows.filter((f) => f.triggers.some((t) => t.kind === "call")));
+const callee = computed(() => flows.flows.find((f) => f.id === step.value.flow) ?? null);
+/** The callee's inputs, and any the step gives that it doesn't declare, so they can be removed. */
+const calleeInputs = computed(() => {
+  const declared = Object.entries(callee.value?.inputs ?? {}).map(([name, def]) => ({ name, def, known: true }));
+  const extra = Object.keys(step.value.inputs)
+    .filter((name) => !declared.some((d) => d.name === name))
+    .map((name) => ({ name, def: undefined, known: false }));
+  return [...declared, ...extra];
+});
+const expectOf = (type: string | undefined): Expect =>
+  type === "boolean" ? "boolean" : type === "number" || type === "integer" ? "number" : type === "string" ? "text" : "any";
+
+function pickCallee(id: string) {
+  step.value.flow = id;
+  step.value.inputs = {};
+}
+
+function setGiven(name: string, on: boolean) {
+  if (!on) {
+    delete step.value.inputs[name];
+    return;
+  }
+  const def = callee.value?.inputs?.[name];
+  step.value.inputs[name] = newSource("literal", expectOf(def?.type));
+}
+
+// ---- stop: the flow's outputs ----
+
+const outputNames = computed(() => Object.keys(props.ctx.outputs));
+
+function setOutput(name: string, on: boolean) {
+  if (!on) {
+    delete step.value.outputs[name];
+    return;
+  }
+  step.value.outputs[name] = newSource("literal", expectOf(props.ctx.outputs[name]?.type));
 }
 
 /** The controls the target surface's layers list, to pick from. */
@@ -615,6 +659,150 @@ function toggleElse() {
           :all="ctx.all"
         />
       </div>
+    </div>
+
+    <div
+      v-else-if="step.kind === 'call'"
+      class="call"
+    >
+      <div class="row">
+        <div class="field">
+          <label :for="`${prefix}-flow`">Flow</label>
+          <select
+            :id="`${prefix}-flow`"
+            :value="step.flow"
+            @change="pickCallee(($event.target as HTMLSelectElement).value)"
+          >
+            <option
+              v-if="!callable.some((f) => f.id === step.flow)"
+              :value="step.flow"
+            >
+              {{ callee?.name ?? (step.flow || "Pick a flow") }}
+            </option>
+            <option
+              v-for="f in callable"
+              :key="f.id"
+              :value="f.id"
+            >
+              {{ f.name }}
+            </option>
+          </select>
+          <small class="hint">Flows with a call trigger.</small>
+        </div>
+        <label class="check"><input
+          type="checkbox"
+          :checked="step.wait !== false"
+          @change="step.wait = ($event.target as HTMLInputElement).checked ? null : false"
+        > Wait for it, and take its outputs</label>
+      </div>
+      <div
+        v-for="input in calleeInputs"
+        :key="input.name"
+        class="field wide"
+      >
+        <label class="check">
+          <input
+            type="checkbox"
+            :checked="input.name in step.inputs"
+            :disabled="input.def?.required === true && input.def?.default === undefined && input.name in step.inputs"
+            @change="setGiven(input.name, ($event.target as HTMLInputElement).checked)"
+          >
+          <code>{{ input.name }}</code>
+          <span
+            v-if="!input.known"
+            class="error"
+          >not an input of this flow</span>
+          <span
+            v-else-if="input.def?.required === true && input.def?.default === undefined"
+            class="muted"
+          >required</span>
+          <span
+            v-else-if="input.def?.default !== undefined"
+            class="muted"
+          >has a default</span>
+        </label>
+        <SourceInput
+          v-if="input.name in step.inputs"
+          v-model="step.inputs[input.name]!"
+          :label="`Input ${input.name}`"
+          :expect="expectOf(input.def?.type)"
+          :problems="at('inputs', input.name)"
+          :known="known"
+          :all="ctx.all"
+        />
+      </div>
+      <small
+        v-for="(p, j) in [...at('flow'), ...at('inputs').filter((p) => p.path.length === path.length + 1)]"
+        :key="j"
+        :class="p.warning ? 'warn' : 'error'"
+      >{{ p.message }}</small>
+      <small class="hint">Its result is <code>steps.{{ step.id }}.result</code>: the flow's outputs, or <code>{run}</code> if it doesn't wait.</small>
+    </div>
+
+    <div
+      v-else-if="step.kind === 'stop'"
+      class="stop"
+    >
+      <div class="field">
+        <label :for="`${prefix}-status`">End the run as</label>
+        <select
+          :id="`${prefix}-status`"
+          :value="step.status ?? 'ok'"
+          @change="step.status = ($event.target as HTMLSelectElement).value === 'failed' ? 'failed' : null"
+        >
+          <option value="ok">
+            Done
+          </option>
+          <option value="failed">
+            Failed
+          </option>
+        </select>
+      </div>
+      <div
+        v-if="step.status === 'failed'"
+        class="field wide"
+      >
+        <label>Message</label>
+        <ExprInput
+          v-model="step.error"
+          label="Message"
+          placeholder="'camera offline'"
+          :problems="at('error')"
+          :known="known"
+          :all="ctx.all"
+        />
+      </div>
+      <div
+        v-for="name in [...new Set([...outputNames, ...Object.keys(step.outputs)])]"
+        :key="name"
+        class="field wide"
+      >
+        <label class="check">
+          <input
+            type="checkbox"
+            :checked="name in step.outputs"
+            @change="setOutput(name, ($event.target as HTMLInputElement).checked)"
+          >
+          Output <code>{{ name }}</code>
+          <span
+            v-if="!(name in ctx.outputs)"
+            class="error"
+          >not one of the flow's outputs</span>
+        </label>
+        <SourceInput
+          v-if="name in step.outputs"
+          v-model="step.outputs[name]!"
+          :label="`Output ${name}`"
+          :expect="expectOf(ctx.outputs[name]?.type)"
+          :problems="at('outputs', name)"
+          :known="known"
+          :all="ctx.all"
+        />
+      </div>
+      <small
+        v-if="outputNames.length === 0 && Object.keys(step.outputs).length === 0"
+        class="hint"
+      >Declare outputs under Inputs and outputs to hand values back to a caller.</small>
     </div>
 
     <div

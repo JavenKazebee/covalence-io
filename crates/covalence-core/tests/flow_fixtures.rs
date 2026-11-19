@@ -16,6 +16,28 @@ const VH: &str = "01JBZ7P0D3F5G7H9J1K3L5M7N9";
 const VH2: &str = "01JBZ7P0D3F5G7H9J1K3L5M7NA";
 const UNLOADED: &str = "01JBZ7P0D3F5G7H9J1K3L5M7NB";
 const DECK_LAYER: &str = "01JBZ7P0D3F5G7H9J1K3L5M7PA";
+const RECALL: &str = "01JC00000000000000000000CA";
+const NOT_CALLABLE: &str = "01JC00000000000000000000CB";
+
+/// A flow the fixtures call: a `call` trigger, a required `camera` and a
+/// `speed` with a default, and a `preset` output.
+fn recall_flow() -> Flow {
+    Flow::parse(&json!({
+        "id": RECALL,
+        "name": "Recall",
+        "slug": "recall",
+        "enabled": true,
+        "triggers": [{ "kind": "call" }],
+        "concurrency": "parallel",
+        "inputs": {
+            "camera": { "type": "integer", "minimum": 1, "required": true },
+            "speed": { "type": "number", "default": 1 },
+        },
+        "outputs": { "preset": { "type": "integer" } },
+        "body": [],
+    }))
+    .unwrap()
+}
 
 /// The parts of the Videohub manifest that flows use.
 fn videohub() -> Manifest {
@@ -92,6 +114,13 @@ fn check(json: &Value) -> (Value, Value) {
     )]
     .into();
     let evaluator = QuickJs::default();
+    let mut not_callable = recall_flow();
+    not_callable.triggers = vec![flow::Trigger::Api {}];
+    let flows: BTreeMap<String, Flow> = [
+        (RECALL.to_owned(), recall_flow()),
+        (NOT_CALLABLE.to_owned(), not_callable),
+    ]
+    .into();
     // `lastPick` is writable and `isLive` computed (dataflow §6).
     let variables: BTreeMap<String, bool> =
         [("lastPick".to_owned(), false), ("isLive".to_owned(), true)].into();
@@ -100,7 +129,7 @@ fn check(json: &Value) -> (Value, Value) {
         taken_slugs: &taken,
         layers: &layers,
         surfaces: &BTreeSet::new(),
-        flows: &BTreeSet::new(),
+        flows: &flows,
         evaluator: &evaluator,
         variables: &variables,
     };
@@ -165,7 +194,7 @@ fn problems_say_what_is_wrong() {
             taken_slugs: &BTreeSet::new(),
             layers: &BTreeMap::new(),
             surfaces: &BTreeSet::new(),
-            flows: &BTreeSet::new(),
+            flows: &BTreeMap::new(),
             evaluator: &QuickJs::default(),
             variables: &BTreeMap::new(),
         },

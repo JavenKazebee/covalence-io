@@ -279,12 +279,13 @@ This section is what the core accepts today.
 | `name` | Required, non-empty |
 | `slug` | Optional on create: derived from `name` (camelCase, ASCII, deduplicated with a number). Must match `[a-z][A-Za-z0-9_]*` and be unique |
 | `enabled` | Required |
-| `triggers` | `api`, `event`, **(M4)** `state` and **(M5)** `gesture`, **(Now)** `control` (§8.2), which **(M6)** folds into `event`. May be empty, with a warning: the flow can't start |
+| `triggers` | `api`, `call`, `event`, **(M4)** `state` and **(M5)** `gesture`, **(Now)** `control` (§8.2), which **(M6)** folds into `event`. May be empty, with a warning: the flow can't start |
 | `conditions` | **(M4)** Optional list of expressions. All must be truthy when a trigger matches, or no run starts (§8.2) |
-| `inputs`, `outputs` | Must be absent |
+| `inputs` | Optional. `{[name]: ParamDef}`: a state schema node (`type`, `minimum` …, checked as action params are) with `default?` (a source, evaluated when the run is fired) and `required?`. Names are identifiers. Steps read the bound values as `input.<name>` (§3) |
+| `outputs` | Optional. `{[name]: StateSchemaNode}`: what a `stop` step may hand back |
 | `concurrency` | Required. All four modes |
 | `failover` | Optional; only `abort` (the default) |
-| `body` | `action`, `wait` and **(M4)** `waitUntil`, `set` and `branch` steps (§8.3). `branch` is the only block |
+| `body` | `action`, `wait`, `call`, `stop` and **(M4)** `waitUntil`, `set` and `branch` steps (§8.3). `branch` is the only block |
 | `editor` | Stored as-is, never read by the runtime |
 
 ### 8.2 Triggers
@@ -297,6 +298,8 @@ This section is what the core accepts today.
 | `gesture` **(M5)** | `control: {page, control}`, `gesture: press \| release \| double \| long \| hold` | `{surface, page, control, gesture, delta?}`, with IDs | Matches on any surface showing the page. `turn` isn't supported yet. Gestures and their timing are in the [surfaces spec §4.2](surfaces.md). `trigger.matched` has `cause` → the `input.gesture` entry |
 | `control` **(Now)** | `control: {layer, control}`, `event: press \| release \| double \| long \| hold \| turn \| change \| touch \| untouch` | `{surface, layer, control, event, delta?, value?}`, with IDs | Replaces `gesture`. Matches the control on any surface where the layer controlled it. `trigger.matched` has `cause` → the `input.event` entry ([surfaces spec §7](surfaces.md)). **(M6)** Replaced by `event` with `from: {layer, controls}`; stored flows are migrated |
 
+- `call` triggers have no fields: a flow with one can be started by a `call` step in any flow (§8.3). `trigger` is `{caller: {flow, run}}`.
+- **Inputs are bound when a trigger fires.** `call` and `api` give them: each given value is checked against its `ParamDef`, the rest take their defaults, and a required input without a default that isn't given refuses the start (`missingInput`). Every other trigger binds only the defaults, so a flow with a required input that has no default can't have `event` or `state` triggers (§8.4). Conditions and filters don't see `input`.
 - `trigger.matched` names the trigger by its index in `triggers`.
 - **(M4) Matching order.** When a trigger fires:
   1. Its `filter` is evaluated, if it has one. A falsy result journals nothing, because filters run on every event.
@@ -330,6 +333,8 @@ Common fields: `id`, `kind`, `name?`, `enabled?`, `timeout?`, `onError?`. `retry
 | `waitUntil` **(M4)** | `until: Expr`, `timeout?` | `{value}` | Evaluated when the step starts, and done straight away if truthy (level, not edge). Otherwise re-evaluated whenever its read set changes, until truthy. `timeout` fails it with `timeout` |
 | `set` **(M4)** | `path: "local.<name>" \| "vars.<name>"`, `value: Expr` | none | `<name>` is one segment, `[A-Za-z_][A-Za-z0-9_]*`. See below |
 | `branch` **(M4)** | `arms: {when: Expr, steps: Step[]}[]`, `else?: Step[]` | `{status}` | See below |
+| `call` | `flow` (an ID), `inputs?: {[name]: Source}`, `wait?: boolean` (default `true`) | The callee's outputs (`{}` if it hands back none), or `{run}` without `wait` | See below |
+| `stop` | `status?: "ok" \| "failed"` (default `ok`), `outputs?: {[name]: Source}`, `error?: Expr` | none: the run ends | See below |
 
 - **Durations** match `^(\d+h)?(\d+m)?(\d+s)?(\d+ms)?$`, are not empty, and are greater than zero: `500ms`, `2s`, `1m30s`. A literal `wait` must be greater than zero. An expression may give zero, which doesn't wait.
 - **An action step** fails if the action returns an error (with that error), if the output gate suppresses it (code `suppressed`, with the reason), or if its connection isn't running (code `unavailable`). Its `result` is the action's result.
@@ -347,6 +352,11 @@ Common fields: `id`, `kind`, `name?`, `enabled?`, `timeout?`, `onError?`. `retry
   - **Failures.** A `when` that fails fails the branch. An error from a step in the chosen arm moves up to the branch, where the branch's own `onError` applies.
   - **Timeout.** A branch's `timeout` covers the whole block.
   - **Nesting.** A branch may be nested inside another branch. It needs at least one arm.
+- **`call`.**
+  - **Starting it.** The inputs are evaluated when the step starts, then the callee's `call` trigger fires with `cause` → the step's `run.step started`, so `why` on anything the callee does walks back through the caller. The callee's own concurrency applies: `queue` waits its turn, `restart` cancels its active run, and `ignore` while it's busy fails the step with `busy`. Other failures before it starts: `unknownFlow`, `disabled`, `notCallable` (no `call` trigger), `unknownInput`, `missingInput`, `invalidInputs`, `queueFull`, `condition`, and `loop` when the callee is already in the chain of calls (§8.6), which is what stops a flow calling itself.
+  - **Waiting.** With `wait`, the step ends when the callee's run does. `ok` gives its outputs as the result; `failed` fails the step with the callee's error code and the message `flow <name> failed: <message>`; a callee cancelled by someone else fails it with `callCancelled`. Cancelling the caller, or the step's `timeout`, cancels the callee and waits for it to end.
+  - **Without `wait`** the step is done as soon as the run is started or queued, and the two runs are independent.
+- **`stop`** ends the run once it's journaled `done`, from any depth: a `stop` in a branch ends the branch and the run. Each output is evaluated and checked against the flow's `outputs` (`unknownOutput`, `invalidOutputs` fail the step instead). `status: "failed"` fails the run with code `stopped` and `error`'s value as the message. The outputs are recorded on `run.finished` and the run (§9), and a caller takes them as its step's result.
 - **A `timeout`** fails the step with code `timeout`. A late `action.result` is still journaled but no longer affects the run.
 - **`enabled: false`** journals the step as `skipped`. A skipped `branch` skips its arms without journaling them.
 
@@ -363,6 +373,7 @@ Errors block the save; warnings don't. There are no drafts yet.
   - literal parameters that fail the action's schema
   - a bad literal duration
   - **(M4)** an expression that doesn't compile, a malformed `set` path, a `branch` with no arms
+  - a `call` step on a flow that doesn't exist (`unknownFlow`) or has no `call` trigger (`notCallable`), an input the callee doesn't declare (`unknownInput`), or a required input with no default left out (`missingInput`); an `event` or `state` trigger on a flow with such an input (`missingInput`); a `stop` output the flow doesn't declare (`unknownOutput`); an input or output name that isn't an identifier (`badId`); a literal input, default or output that fails its schema (`badValue`)
   - **(M5)** a `gesture` trigger on a page that doesn't exist (`unknownPage`), or a control outside its layout (`unknownControl`). **(Now)** The same for a `control` trigger, with `unknownLayer`, `unknownControl` for a control the layer doesn't list, and `unsupported` for an event its control's inputs can't give
 - **Warnings:**
   - no triggers
@@ -394,13 +405,14 @@ Errors block the save; warnings don't. There are no drafts yet.
   | Entry | `cause` → |
   |---|---|
   | `trigger.matched` | the `event` entry (origin is the core); **(M4)** for a `state` trigger, the `state.patch` entry (§8.2); none for `api` (origin is the user) |
+  | `trigger.matched` | for a `call` trigger, the caller's `run.step started` |
   | `run.started` | `trigger.matched` |
   | `run.step` | `run.started` |
   | `action.requested` | that step's `run.step started` |
   | `state.patch` **(M4)** | from a `set` step, that step's `run.step started` |
   | `run.finished` | `run.started` (or `trigger.matched` for a queued run that never started) |
 
-- `run.started` data is `{flow, run, mode, inputs}`, with `mode` the flow's concurrency mode and `inputs` `{}`.
+- `run.started` data is `{flow, run, mode, inputs}`, with `mode` the flow's concurrency mode and `inputs` the bound inputs. `run.finished` has `outputs` when a `stop` step handed some back.
 - **`run.step` `detail`** is `{position, arm?, error?}`.
   - `position` is the path of step IDs from the body down to the step: `[route1]` at the top level, and **(M4)** `[branch1, route2]` inside an arm.
   - **(M4)** A `branch`'s `done` entry carries `arm`: the index of the chosen arm, `"else"`, or `null` when nothing ran.
@@ -489,7 +501,7 @@ JSON throughout. Validation failures are `422 {errors, warnings}` (§8.4). Succe
 | `GET /flows/{id}` | | `Flow`, or `404` |
 | `PUT /flows/{id}` | a whole `Flow` | `200 {flow, warnings}`. Replaces it; active runs keep their copy |
 | `DELETE /flows/{id}` | | `204`. Cancels its runs and deletes `flow.<slug>` |
-| `POST /flows/{id}/run` | `{}` | `200 {matched, status: started \| queued \| blocked, run?, reason?}`. `409` if the flow is disabled or has no `api` trigger |
+| `POST /flows/{id}/run` | `{inputs?}`, or no body | `200 {matched, status: started \| queued \| blocked, run?, reason?}`. `409` if the flow is disabled or has no `api` trigger. `422 {error}` if the inputs don't fit the flow's (§8.2) |
 | `GET /runs?flow=<id>` | | `Run[]`, newest first: active, queued, then recent (§8.5) |
 | `GET /runs/{run}` | | `Run`, or `404` once it has aged out |
 | `POST /runs/{run}/cancel` | | `202 {run, status}`. `409` if it has already finished |
@@ -507,6 +519,7 @@ interface Run {
   durationMs?: number;
   position?: string[];          // while running
   error?: { code: string; message: string };
+  outputs?: { [name: string]: Value };   // what a `stop` step handed back
 }
 ```
 
@@ -572,3 +585,12 @@ Why flows and expressions are the way they are, and what was rejected. Keep thes
   - *No sandbox for scripts, since editors are trusted:* direct I/O bypasses the gate, so a standby would send commands twice, replay would touch devices, and a `while (true)` would freeze the core mid-show.
   - *Running scripts in the Deno host:* IPC, a crash domain shared with plugins, and harder failover.
   - *Other languages:* CEL is safe but unfamiliar, with strict number types (the fallback if JS proves too costly). Luau was strongest (speed, sandboxing, familiar from lighting consoles), but it's a second language next to TS plugins, fits JSON-shaped state badly (1-based arrays, `nil` holes) and has weaker browser tooling. Rhai, Rune, Lua, Starlark, JSONata or a custom syntax had the same problem or worse. A custom JS-subset evaluator would drift from real JS.
+
+### 11.3 Inputs, outputs and calls
+- **Decided:** a flow declares `inputs` as `ParamDef`s (the shape templates use for `params`, composition §2.1) and `outputs` as schema nodes. A flow with a `call` trigger can be started by a `call` step, which waits for its outputs unless `wait: false`, and a `stop` step hands them back. Inputs are bound and checked when the trigger fires, so a bad call fails the caller's step before the callee starts. Only `call` and `api` give inputs; other triggers bind defaults, so a required input with no default rules them out on save. The callee keeps its own concurrency, a waiting caller's cancel or timeout cancels the callee, and the loop guard (§8.6) stops recursion.
+- **Why:** composite actions and owned flows (composition §6.2) need a flow that takes values and returns some, run per call with its own journal identity. Checking at the call keeps the failure where the mistake is. Running the callee under its own concurrency means a "recall camera" flow set to `queue` stays serialised however many callers it has. A waited call is part of the caller, so it goes when the caller goes.
+- **Rejected:**
+  - *Callers passing anything, checked by the callee's steps:* a typo in an input name would only show up as `undefined` somewhere inside the callee.
+  - *Any flow callable, with no `call` trigger:* there'd be no way to see, or stop, which flows are meant to be called.
+  - *Calls inlined into the caller's run:* the callee's concurrency and `flow.<slug>` status would mean nothing, and a flow run from a key and from a call would journal differently.
+  - *A depth limit for recursion:* the loop guard already blocks a flow from re-entering its own chain, and there's no use for a flow calling itself.

@@ -61,6 +61,17 @@ pub enum Code {
     ResolutionCycle,
     /// A layer's `on` naming a surface that doesn't exist.
     UnknownSurface,
+    /// A `call` step on a flow that doesn't exist.
+    UnknownFlow,
+    /// A `call` step on a flow with no `call` trigger.
+    NotCallable,
+    /// An input the called flow doesn't declare.
+    UnknownInput,
+    /// A required input with no default that nothing gives: a `call` step
+    /// that leaves it out, or a trigger that can't give it.
+    MissingInput,
+    /// A `stop` output the flow doesn't declare.
+    UnknownOutput,
     // Warnings.
     NoTriggers,
     /// An event trigger on a connection the flow also acts on (spec §8.6).
@@ -121,8 +132,9 @@ pub struct Context<'a> {
     pub layers: &'a BTreeMap<LayerId, Layer>,
     /// Every surface's ID.
     pub surfaces: &'a BTreeSet<String>,
-    /// Every flow's ID, this one's included.
-    pub flows: &'a BTreeSet<String>,
+    /// Every flow by ID, this one included as it's being saved: `call`
+    /// steps are checked against the called flow's triggers and inputs.
+    pub flows: &'a BTreeMap<String, Flow>,
     /// Compiles expressions.
     pub evaluator: &'a dyn Evaluator,
     /// Declared variables by slug, and whether each is computed.
@@ -190,9 +202,9 @@ impl Flow {
     }
 }
 
-const LATER_TRIGGERS: &[&str] = &["schedule", "call", "osc"];
+const LATER_TRIGGERS: &[&str] = &["schedule", "osc"];
 const LATER_STEPS: &[&str] = &[
-    "call", "script", "log", "stop", "break", "continue", "group", "loop", "parallel",
+    "script", "log", "break", "continue", "group", "loop", "parallel",
 ];
 
 /// Spec features that a later milestone adds, so the message can say "not
@@ -209,11 +221,6 @@ fn find_unsupported(json: &Value) -> Vec<Problem> {
             format!("{what} aren't supported yet"),
         ))
     };
-    for (field, what) in [("inputs", "flow inputs"), ("outputs", "flow outputs")] {
-        if flow.contains_key(field) {
-            not_yet(path![key(field)], what);
-        }
-    }
     if let Some(policy @ ("resume" | "restart")) = flow.get("failover").and_then(Value::as_str) {
         not_yet(
             path![key("failover")],
@@ -319,6 +326,7 @@ pub fn validate(flow: &Flow, ctx: &Context) -> Report {
         report: Report::default(),
         seen: BTreeSet::new(),
         acted_on: BTreeSet::new(),
+        outputs: &flow.outputs,
     };
 
     if flow.name.trim().is_empty() {
@@ -344,7 +352,7 @@ pub fn validate(flow: &Flow, ctx: &Context) -> Report {
     for (i, trigger) in flow.triggers.iter().enumerate() {
         let at = |k: &str| path![key("triggers"), index(i), key(k)];
         match trigger {
-            Trigger::Api {} => {}
+            Trigger::Api {} | Trigger::Call {} => {}
             Trigger::Event {
                 from,
                 event: names,
@@ -382,6 +390,52 @@ pub fn validate(flow: &Flow, ctx: &Context) -> Report {
         v.expr(path![key("conditions"), index(i)], condition);
     }
 
+    // Inputs and outputs (spec §8.1).
+    for (name, def) in &flow.inputs {
+        let at = path![key("inputs"), key(name)];
+        if !is_identifier(name) {
+            v.error(
+                at.clone(),
+                Code::BadId,
+                format!("input {name:?} isn't a name"),
+            );
+        }
+        if let Some(default) = &def.default {
+            let at = join(&at, &[key("default")]);
+            v.source(at.clone(), default);
+            v.fits(at, default, &def.schema());
+        }
+    }
+    for name in flow.outputs.keys() {
+        if !is_identifier(name) {
+            v.error(
+                path![key("outputs"), key(name)],
+                Code::BadId,
+                format!("output {name:?} isn't a name"),
+            );
+        }
+    }
+    // Only `call` and `api` give inputs; any other trigger leaves them to defaults.
+    let unfilled: Vec<&String> = flow
+        .inputs
+        .iter()
+        .filter(|(_, d)| d.needs_value())
+        .map(|(n, _)| n)
+        .collect();
+    if let Some(name) = unfilled.first() {
+        for (i, trigger) in flow.triggers.iter().enumerate() {
+            if matches!(trigger, Trigger::Event { .. } | Trigger::State { .. }) {
+                v.error(
+                    path![key("triggers"), index(i)],
+                    Code::MissingInput,
+                    format!(
+                        "input {name:?} is required and has no default, so only `call` and `api` triggers can start this flow"
+                    ),
+                );
+            }
+        }
+    }
+
     v.steps(&flow.body, &[key("body")]);
 
     let mut report = v.report;
@@ -417,6 +471,8 @@ struct Validation<'a> {
     seen: BTreeSet<String>,
     /// Connections the flow's action steps act on.
     acted_on: BTreeSet<ConnId>,
+    /// What a `stop` step may hand back.
+    outputs: &'a BTreeMap<String, serde_json::Map<String, Value>>,
 }
 
 impl<'a> Validation<'a> {
@@ -442,7 +498,7 @@ impl<'a> Validation<'a> {
             };
             let known = match item {
                 core_conn::Item::Surface => self.ctx.surfaces.contains(id.as_str()),
-                core_conn::Item::Flow => self.ctx.flows.contains(id.as_str()),
+                core_conn::Item::Flow => self.ctx.flows.contains_key(id.as_str()),
             };
             if !known {
                 self.error(
@@ -853,6 +909,76 @@ impl<'a> Validation<'a> {
                     self.steps(otherwise, &at("else"));
                 }
             }
+            StepKind::Call { flow, inputs, .. } => {
+                for (name, input) in inputs {
+                    self.source(join(here, &[key("inputs"), key(name)]), input);
+                }
+                let Some(callee) = self.ctx.flows.get(flow) else {
+                    self.error(at("flow"), Code::UnknownFlow, format!("no flow {flow:?}"));
+                    return;
+                };
+                if !callee
+                    .triggers
+                    .iter()
+                    .any(|t| matches!(t, Trigger::Call {}))
+                {
+                    self.error(
+                        at("flow"),
+                        Code::NotCallable,
+                        format!(
+                            "flow {:?} has no `call` trigger, so it can't be called",
+                            callee.name
+                        ),
+                    );
+                }
+                for (name, input) in inputs {
+                    let at = join(here, &[key("inputs"), key(name)]);
+                    match callee.inputs.get(name) {
+                        Some(def) => self.fits(at, input, &def.schema()),
+                        None => self.error(
+                            at,
+                            Code::UnknownInput,
+                            format!("flow {:?} has no input {name:?}", callee.name),
+                        ),
+                    }
+                }
+                for (name, def) in &callee.inputs {
+                    if def.needs_value() && !inputs.contains_key(name) {
+                        self.error(
+                            at("inputs"),
+                            Code::MissingInput,
+                            format!("flow {:?} needs input {name:?}", callee.name),
+                        );
+                    }
+                }
+            }
+            StepKind::Stop { outputs, error, .. } => {
+                for (name, output) in outputs {
+                    let at = join(here, &[key("outputs"), key(name)]);
+                    self.source(at.clone(), output);
+                    match self.outputs.get(name) {
+                        Some(schema) => self.fits(at, output, &Value::Object(schema.clone())),
+                        None => self.error(
+                            at,
+                            Code::UnknownOutput,
+                            format!("the flow has no output {name:?}"),
+                        ),
+                    }
+                }
+                if let Some(error) = error {
+                    self.expr(at("error"), error);
+                }
+            }
+        }
+    }
+
+    /// A literal value fits its schema. Sources are checked when they're evaluated.
+    fn fits(&mut self, at: Path, value: &Source<Value>, schema: &Value) {
+        let Some(literal) = value.literal() else {
+            return;
+        };
+        for mismatch in schema::check(schema, literal) {
+            self.error(join(&at, &mismatch.path), Code::BadValue, mismatch.message);
         }
     }
 }

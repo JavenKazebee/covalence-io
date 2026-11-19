@@ -69,7 +69,11 @@ async fn flows_survive_a_restart() {
     assert_eq!(app.delete::<Flow>(&follow.id).unwrap(), None);
     assert!(
         app.runtime()
-            .fire_api(&follow.id, covalence_core::journal::Origin::system())
+            .fire_api(
+                &follow.id,
+                covalence_core::journal::Origin::system(),
+                Default::default()
+            )
             .is_err()
     );
     app.shutdown().await;

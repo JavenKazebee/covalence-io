@@ -150,7 +150,10 @@ impl World {
     }
 
     fn fire(&self, flow: &str) -> FireOutcome {
-        self.runtime.fire_api(flow, user()).unwrap().outcome
+        self.runtime
+            .fire_api(flow, user(), Default::default())
+            .unwrap()
+            .outcome
     }
 
     fn start(&self, flow: &str) -> String {
@@ -648,9 +651,24 @@ async fn disabled_flows_and_flows_without_an_api_trigger_refuse_api_runs() {
         "id": "noApi", "name": "x", "slug": "noApi", "enabled": true,
         "concurrency": "parallel", "body": [],
     }));
-    assert!(world.runtime.fire_api("off", user()).is_err());
-    assert!(world.runtime.fire_api("noApi", user()).is_err());
-    assert!(world.runtime.fire_api("missing", user()).is_err());
+    assert!(
+        world
+            .runtime
+            .fire_api("off", user(), Default::default())
+            .is_err()
+    );
+    assert!(
+        world
+            .runtime
+            .fire_api("noApi", user(), Default::default())
+            .is_err()
+    );
+    assert!(
+        world
+            .runtime
+            .fire_api("missing", user(), Default::default())
+            .is_err()
+    );
     assert!(world.entries().is_empty(), "refusals aren't journaled");
 }
 
@@ -1545,5 +1563,243 @@ async fn a_state_trigger_reads_a_cell_in_the_turn_of_its_input() {
             }
         )),
         "{chain:#?}"
+    );
+}
+
+/// A flow other flows call (flow spec §8.3): a required `camera`, a `speed`
+/// that defaults to 1, and `preset` handed back by `stop`.
+fn recall_flow(concurrency: &str, body: serde_json::Value) -> serde_json::Value {
+    json!({
+        "id": "recall", "name": "Recall", "slug": "recall", "enabled": true,
+        "triggers": [{ "kind": "call" }, { "kind": "api" }],
+        "concurrency": concurrency,
+        "inputs": {
+            "camera": { "type": "integer", "minimum": 1, "required": true },
+            "speed": { "type": "number", "default": 1 },
+        },
+        "outputs": { "preset": { "type": "integer" } },
+        "body": body,
+    })
+}
+
+fn call(id: &str, inputs: serde_json::Value) -> serde_json::Value {
+    json!({ "id": id, "kind": "call", "flow": "recall", "inputs": inputs })
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_call_binds_inputs_and_takes_the_outputs_stop_hands_back() {
+    let world = World::new();
+    world.add(recall_flow(
+        "parallel",
+        json!([
+            wait("move", "1s"),
+            { "id": "done", "kind": "stop",
+              "outputs": { "preset": { "expr": "input.camera * 10 + input.speed" } } },
+            route("never", VH, 1, 1),
+        ]),
+    ));
+    world.add(api_flow(
+        "caller",
+        "parallel",
+        json!([
+            call("recall", json!({ "camera": { "expr": "1 + 1" } })),
+            set("got", "vars.got", "steps.recall.result"),
+        ]),
+    ));
+    let run = world.start("caller");
+    let info = world.finished(&run).await;
+    assert_eq!(info.status, RunPhase::Ok, "{info:?}");
+    // camera 2, speed's default 1; `stop` ended the callee before `never`.
+    assert_eq!(world.var("got"), Some(json!({ "preset": 21 })));
+    assert!(world.requested_params().is_empty());
+
+    // The callee's run records its inputs and outputs, and `why` on its
+    // `run.started` walks back through the caller's step.
+    let started =
+        world.last_of(|e| matches!(&e.record, Record::RunStarted(r) if r.flow == "recall"));
+    let Record::RunStarted(r) = &started.record else {
+        unreachable!()
+    };
+    assert_eq!(
+        covalence_core::expr::to_json(&Value::Map(
+            r.inputs
+                .iter()
+                .map(|(k, v)| (k.as_str().into(), v.clone()))
+                .collect()
+        )),
+        json!({ "camera": 2, "speed": 1 })
+    );
+    let why = world.why(started.seq);
+    assert_eq!(
+        why[..4],
+        ["run.started", "trigger.matched", "run.step", "run.started"],
+        "{why:?}"
+    );
+    let finished = world.last_of(|e| {
+        matches!(&e.record, Record::RunFinished(_)) && e.run.as_deref() == started.run.as_deref()
+    });
+    let Record::RunFinished(f) = &finished.record else {
+        unreachable!()
+    };
+    assert_eq!(f.outputs.as_ref().unwrap()["preset"], Value::from(21));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_call_that_does_not_wait_gets_the_run() {
+    let world = World::new();
+    world.add(recall_flow("parallel", json!([wait("move", "1h")])));
+    world.add(api_flow(
+        "caller",
+        "parallel",
+        json!([
+            { "id": "recall", "kind": "call", "flow": "recall", "inputs": { "camera": 1 }, "wait": false },
+            set("got", "vars.got", "steps.recall.result.run"),
+        ]),
+    ));
+    let run = world.start("caller");
+    assert_eq!(world.finished(&run).await.status, RunPhase::Ok);
+    let callee = world.var("got").unwrap();
+    let callee = callee.as_str().unwrap();
+    assert_eq!(world.runtime.run(callee).unwrap().status, RunPhase::Running);
+}
+
+#[tokio::test(start_paused = true)]
+async fn inputs_are_checked_before_the_callee_starts() {
+    let world = World::new();
+    world.add(recall_flow("parallel", json!([])));
+    for (inputs, code) in [
+        (json!({}), "missingInput"),
+        (json!({ "camera": 0 }), "invalidInputs"),
+        (json!({ "camera": 1, "zoom": 2 }), "unknownInput"),
+    ] {
+        world.add(api_flow(
+            "caller",
+            "parallel",
+            json!([call("recall", inputs.clone())]),
+        ));
+        let run = world.start("caller");
+        let e = world.finished(&run).await.error.unwrap();
+        assert_eq!(e.code, code, "{inputs}");
+    }
+    assert!(world.runtime.runs(Some("recall")).is_empty());
+
+    // The API binds them the same way.
+    let bad = world.runtime.fire_api(
+        "recall",
+        user(),
+        [("camera".to_owned(), json!("one"))].into(),
+    );
+    assert!(bad.is_err());
+    let ok = world
+        .runtime
+        .fire_api("recall", user(), [("camera".to_owned(), json!(3))].into());
+    assert!(matches!(ok.unwrap().outcome, FireOutcome::Started(_)));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_failed_callee_fails_the_call_with_its_code() {
+    let world = World::new();
+    world.add(recall_flow(
+        "parallel",
+        json!([{ "id": "no", "kind": "stop", "status": "failed", "error": "`camera ${input.camera} is offline`" }]),
+    ));
+    world.add(api_flow(
+        "caller",
+        "parallel",
+        json!([call("recall", json!({ "camera": 4 }))]),
+    ));
+    let run = world.start("caller");
+    let e = world.finished(&run).await.error.unwrap();
+    assert_eq!(e.code, "stopped");
+    assert_eq!(e.message, "flow Recall failed: camera 4 is offline");
+}
+
+#[tokio::test(start_paused = true)]
+async fn cancelling_or_timing_out_a_waiting_call_cancels_the_callee() {
+    let world = World::new();
+    world.add(recall_flow("parallel", json!([wait("move", "1h")])));
+    world.add(api_flow(
+        "caller",
+        "parallel",
+        json!([call("recall", json!({ "camera": 1 }))]),
+    ));
+    let run = world.start("caller");
+    world.settle().await;
+    let callee = world.runtime.runs(Some("recall"))[0].run.clone();
+    world.runtime.cancel(&run).unwrap();
+    assert_eq!(world.finished(&run).await.status, RunPhase::Cancelled);
+    assert_eq!(world.finished(&callee).await.status, RunPhase::Cancelled);
+
+    world.add(api_flow(
+        "caller",
+        "parallel",
+        json!([{ "id": "recall", "kind": "call", "flow": "recall", "inputs": { "camera": 1 }, "timeout": "1s" }]),
+    ));
+    let run = world.start("caller");
+    assert_eq!(world.finished(&run).await.error.unwrap().code, "timeout");
+    let callee = world.runtime.runs(Some("recall"))[0].clone();
+    assert_eq!(
+        world.finished(&callee.run).await.status,
+        RunPhase::Cancelled
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_flow_that_calls_itself_is_blocked_by_the_loop_guard() {
+    let world = World::new();
+    world.add(recall_flow(
+        "parallel",
+        json!([call("again", json!({ "camera": 1 }))]),
+    ));
+    let Ok(fired) =
+        world
+            .runtime
+            .fire_api("recall", user(), [("camera".to_owned(), json!(1))].into())
+    else {
+        panic!("recall starts");
+    };
+    let FireOutcome::Started(run) = fired.outcome else {
+        panic!("recall starts");
+    };
+    let e = world.finished(&run).await.error.unwrap();
+    assert_eq!(e.code, "loop");
+    assert_eq!(world.runtime.runs(Some("recall")).len(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_busy_callee_that_ignores_new_triggers_fails_the_call() {
+    let world = World::new();
+    world.add(recall_flow("ignore", json!([wait("move", "1h")])));
+    world.add(api_flow(
+        "caller",
+        "parallel",
+        json!([call("recall", json!({ "camera": 1 }))]),
+    ));
+    world.start("caller");
+    world.settle().await;
+    let run = world.start("caller");
+    assert_eq!(world.finished(&run).await.error.unwrap().code, "busy");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_stop_in_a_branch_ends_the_run() {
+    let world = World::new();
+    world.add(api_flow(
+        "early",
+        "parallel",
+        json!([
+            { "id": "pick", "kind": "branch", "arms": [{ "when": "true", "steps": [{ "id": "out", "kind": "stop" }] }] },
+            route("never", VH, 1, 1),
+        ]),
+    ));
+    let run = world.start("early");
+    let info = world.finished(&run).await;
+    assert_eq!(info.status, RunPhase::Ok);
+    assert_eq!(info.outputs, None);
+    assert!(world.requested_params().is_empty());
+    assert!(
+        world
+            .entries_of_run(&run)
+            .contains(&"run.step pick done".to_owned())
     );
 }

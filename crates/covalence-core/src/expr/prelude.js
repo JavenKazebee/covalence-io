@@ -125,7 +125,7 @@
     return p === undefined ? undefined : JSON.stringify(p);
   };
 
-  return function setup(read, keys, roots, trigger, local, steps) {
+  return function setup(read, keys, roots, trigger, input, local, steps) {
     // A read-only view of a state node. Children are cached, so the same path
     // gives the same object within one evaluation.
     const node = (id) => {
@@ -168,6 +168,7 @@
     };
 
     constant("trigger", trigger === undefined ? undefined : parse(trigger));
+    constant("input", input === undefined ? undefined : parse(input));
     constant("local", parse(local));
     constant("steps", parse(steps));
     // An alias that is already a global name (`Math`, `clamp`, `steps`) is

@@ -29,6 +29,7 @@ import { newSource } from "../sources/model";
 import EventSourceInput from "./EventSourceInput.vue";
 import ExprInput from "./ExprInput.vue";
 import SourceInput from "./SourceInput.vue";
+import FlowIoEditor from "./FlowIoEditor.vue";
 import FlowRuns from "./FlowRuns.vue";
 import StepList from "./StepList.vue";
 
@@ -95,7 +96,7 @@ const otherProblems = computed(() =>
 
 const ctx = computed<StepContext>(() => {
   const body = draft.value?.body ?? [];
-  return { body, all: new Set(allSteps(body).map((s) => s.id)), position: position.value };
+  return { body, all: new Set(allSteps(body).map((s) => s.id)), position: position.value, outputs: draft.value?.outputs ?? {} };
 });
 const noSteps: ReadonlySet<string> = new Set();
 
@@ -114,11 +115,12 @@ const concurrencyHelp: Record<Concurrency, string> = {
 // ---- Triggers ----
 
 const hasApi = computed(() => draft.value?.triggers.some((t) => t.kind === "api") ?? false);
+const hasCall = computed(() => draft.value?.triggers.some((t) => t.kind === "call") ?? false);
 
-function addTrigger(kind: "api" | "event" | "state") {
+function addTrigger(kind: "api" | "call" | "event" | "state") {
   if (draft.value === null) return;
-  if (kind === "api") {
-    draft.value.triggers.push({ kind: "api" });
+  if (kind === "api" || kind === "call") {
+    draft.value.triggers.push({ kind });
     return;
   }
   if (kind === "state") {
@@ -300,6 +302,9 @@ async function remove() {
           <template v-if="trigger.kind === 'api'">
             <span><strong>API</strong> <span class="muted">· the Run button and <code>POST /flows/{id}/run</code></span></span>
           </template>
+          <template v-else-if="trigger.kind === 'call'">
+            <span><strong>Call</strong> <span class="muted">· a <code>call</code> step in another flow</span></span>
+          </template>
           <template v-else-if="trigger.kind === 'state'">
             <strong>State</strong>
             <select
@@ -446,6 +451,14 @@ async function remove() {
         <button
           type="button"
           class="secondary"
+          :disabled="hasCall"
+          @click="addTrigger('call')"
+        >
+          Add call trigger
+        </button>
+        <button
+          type="button"
+          class="secondary"
           @click="addTrigger('event')"
         >
           Add event trigger
@@ -508,6 +521,15 @@ async function remove() {
       >
         Add condition
       </button>
+    </section>
+
+    <section class="panel">
+      <h3>Inputs and outputs</h3>
+      <FlowIoEditor
+        v-model:inputs="draft.inputs"
+        v-model:outputs="draft.outputs"
+        :problems="problems"
+      />
     </section>
 
     <section class="panel">

@@ -289,6 +289,7 @@ fn setup<'js>(
             keys,
             serde_json::Value::Object(roots).to_string(),
             scope.trigger.map(|v| to_json(v).to_string()),
+            scope.input.map(|v| to_json(v).to_string()),
             map_json(scope.local),
             map_json(scope.steps),
         ))

@@ -30,18 +30,35 @@ pub(crate) fn routes() -> Router<Arc<App>> {
         .route("/expressions/evaluate", post(evaluate))
 }
 
-async fn run(State(app): State<Arc<App>>, Path(id): Path<String>) -> ApiResult<Json<JsonValue>> {
+/// `POST /flows/{id}/run`'s body: the run's inputs (flow spec §9). An empty body is no inputs.
+#[derive(Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RunRequest {
+    #[serde(default)]
+    inputs: BTreeMap<String, JsonValue>,
+}
+
+async fn run(
+    State(app): State<Arc<App>>,
+    Path(id): Path<String>,
+    body: Option<Json<RunRequest>>,
+) -> ApiResult<Json<JsonValue>> {
     let origin = Origin::User {
         user: "api".into(),
         client: "http".into(),
     };
-    let fired = app.runtime().fire_api(&id, origin).map_err(|e| match e {
-        FireError::UnknownFlow(_) => entity::not_found::<Flow>(&id),
-        e @ (FireError::Disabled(_) | FireError::NoApiTrigger(_)) => {
-            ApiError::new(StatusCode::CONFLICT, e.to_string())
-        }
-        FireError::Journal(e) => ApiError::internal(e),
-    })?;
+    let inputs = body.map(|Json(b)| b.inputs).unwrap_or_default();
+    let fired = app
+        .runtime()
+        .fire_api(&id, origin, inputs)
+        .map_err(|e| match e {
+            FireError::UnknownFlow(_) => entity::not_found::<Flow>(&id),
+            e @ (FireError::Disabled(_) | FireError::NoApiTrigger(_)) => {
+                ApiError::new(StatusCode::CONFLICT, e.to_string())
+            }
+            FireError::BadInputs(e) => ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, e.message),
+            FireError::Journal(e) => ApiError::internal(e),
+        })?;
     let mut body = json!({ "matched": fired.matched });
     match fired.outcome {
         FireOutcome::Started(run) => {
@@ -188,8 +205,8 @@ impl EntityKind for Flow {
         }
         let layers = app.surfaces.layers();
         let surfaces: BTreeSet<String> = read(&app.surface_entities).keys().cloned().collect();
-        let mut flow_ids: BTreeSet<String> = flows.keys().cloned().collect();
-        flow_ids.insert(self.id.clone());
+        let mut by_id: BTreeMap<String, Flow> = flows.clone();
+        by_id.insert(self.id.clone(), self.clone());
         drop(flows);
         let variables: BTreeMap<String, bool> = read(&app.variables)
             .values()
@@ -202,7 +219,7 @@ impl EntityKind for Flow {
                 taken_slugs: &taken,
                 layers: &layers,
                 surfaces: &surfaces,
-                flows: &flow_ids,
+                flows: &by_id,
                 evaluator: app.evaluator.as_ref(),
                 variables: &variables,
             },

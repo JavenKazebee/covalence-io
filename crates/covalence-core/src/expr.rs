@@ -125,6 +125,8 @@ pub struct Scope<'a> {
     pub aliases: &'a BTreeMap<String, ConnId>,
     /// The trigger payload; `undefined` when absent.
     pub trigger: Option<&'a Value>,
+    /// A run's bound inputs (flow spec §3); `undefined` outside a run.
+    pub input: Option<&'a Value>,
     pub local: &'a BTreeMap<String, Value>,
     /// `steps.<id>` for the steps that have finished.
     pub steps: &'a BTreeMap<String, Value>,
@@ -143,6 +145,7 @@ impl<'a> Scope<'a> {
             state,
             aliases,
             trigger: None,
+            input: None,
             local: &EMPTY,
             steps: &EMPTY,
             cancel: None,

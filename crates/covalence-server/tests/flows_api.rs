@@ -322,12 +322,12 @@ async fn flow_requests_are_checked() {
                 "triggers": [{ "kind": "event", "from": { "target": vh }, "event": "routeChanged" }],
                 "concurrency": "parallel",
                 "conditions": ["vars.armed &&"],
-                "inputs": {},
+                "failover": "resume",
             }),
         )
         .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(body["errors"][0]["path"], json!(["inputs"]));
+    assert_eq!(body["errors"][0]["path"], json!(["failover"]));
     assert_eq!(body["errors"][0]["code"], "unsupported");
 
     // An expression that doesn't compile points into its source.
@@ -704,6 +704,95 @@ async fn a_step_routes_on_the_router_a_variable_holds() {
             .await
             .contains(&"action.requested".to_owned())
     );
+
+    server.stop().await;
+}
+
+/// Flow inputs and outputs over HTTP (flow spec §8.1, §8.3): `POST /flows/{id}/run`
+/// takes `{inputs}`, a `call` step routes through the callee, and the
+/// runs show what `stop` handed back.
+#[tokio::test(flavor = "multi_thread")]
+async fn inputs_calls_and_outputs_over_http() {
+    let server = Server::start();
+    let vh = videohub(&server, "vh").await;
+
+    let route_to = create(
+        &server,
+        json!({
+            "name": "Route to", "enabled": true, "concurrency": "queue",
+            "triggers": [{ "kind": "call" }, { "kind": "api" }],
+            "inputs": {
+                "output": { "type": "integer", "minimum": 1, "required": true },
+                "input": { "type": "integer", "minimum": 1, "default": 5 },
+            },
+            "outputs": { "routed": { "type": "string" } },
+            "body": [
+                {
+                    "id": "route1", "kind": "action", "target": { "conn": vh }, "action": "route",
+                    "params": { "output": { "expr": "input.output" }, "input": { "expr": "input.input" } },
+                },
+                { "id": "done", "kind": "stop", "outputs": { "routed": { "expr": "`${input.input} → ${input.output}`" } } },
+            ],
+        }),
+    )
+    .await;
+
+    // Straight from the API, with its inputs.
+    let (status, body) = server
+        .post(
+            &format!("/flows/{}/run", route_to["id"].as_str().unwrap()),
+            json!({ "inputs": { "output": 3 } }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let info = finished(&server, body["run"].as_str().unwrap()).await;
+    assert_eq!(info["status"], "ok", "{info}");
+    assert_eq!(info["outputs"], json!({ "routed": "5 → 3" }));
+    server
+        .eventually(WAIT, "vh output 3 on 5", || async {
+            (server.value("vh.outputs[3].source").await == Some(json!(5))).then_some(())
+        })
+        .await;
+
+    // Inputs that don't fit are refused before anything runs.
+    let (status, body) = server
+        .post(
+            &format!("/flows/{}/run", route_to["id"].as_str().unwrap()),
+            json!({ "inputs": { "output": 0 } }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+
+    // From another flow, which takes the outputs.
+    let caller = create(
+        &server,
+        json!({
+            "name": "Route two", "enabled": true, "concurrency": "ignore",
+            "triggers": [{ "kind": "api" }],
+            "body": [
+                { "id": "first", "kind": "call", "flow": route_to["id"], "inputs": { "output": 2, "input": 6 } },
+                { "id": "note", "kind": "set", "path": "vars.routed", "value": "steps.first.result.routed" },
+            ],
+        }),
+    )
+    .await;
+    let info = finished(&server, &start(&server, &caller).await).await;
+    assert_eq!(info["status"], "ok", "{info}");
+    assert_eq!(server.value("vars.routed").await, Some(json!("6 → 2")));
+
+    // A call is checked against the flow it calls when it's saved.
+    let (status, body) = server
+        .post(
+            "/flows",
+            json!({
+                "name": "Bad call", "enabled": true, "concurrency": "ignore",
+                "triggers": [{ "kind": "api" }],
+                "body": [{ "id": "first", "kind": "call", "flow": route_to["id"], "inputs": { "input": 1 } }],
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["errors"][0]["code"], "missingInput", "{body}");
 
     server.stop().await;
 }

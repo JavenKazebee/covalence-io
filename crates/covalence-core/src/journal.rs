@@ -400,6 +400,9 @@ pub struct RunFinishedRecord {
     pub status: RunStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<RunError>,
+    /// What a `stop` step handed back (flow spec §2.3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outputs: Option<Object>,
 }
 
 /// How a run ended. There's no `aborted` yet: runs aren't ended by failover

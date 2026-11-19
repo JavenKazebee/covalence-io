@@ -1,0 +1,32 @@
+{
+  "id": "01JC0000000000000000000006",
+  "name": "Recall on the next camera",
+  "slug": "recallNext",
+  "enabled": true,
+  "triggers": [{ "kind": "api" }, { "kind": "call" }],
+  "concurrency": "queue",
+  "failover": "abort",
+  "inputs": {
+    "from": { "type": "integer", "minimum": 1, "default": 1, "description": "The camera before" }
+  },
+  "outputs": {
+    "camera": { "type": "integer" },
+    "preset": { "type": "integer" }
+  },
+  "body": [
+    {
+      "id": "recall",
+      "kind": "call",
+      "flow": "01JC00000000000000000000CA",
+      "inputs": { "camera": { "expr": "input.from + 1" }, "speed": 0.5 }
+    },
+    {
+      "id": "done",
+      "kind": "stop",
+      "outputs": {
+        "camera": { "expr": "input.from + 1" },
+        "preset": { "expr": "steps.recall.result.preset" }
+      }
+    }
+  ]
+}

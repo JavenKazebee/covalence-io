@@ -38,7 +38,7 @@ Users build bigger things out of smaller ones, and reuse them by parameters, nev
 - [ ] Accept the composition design ([composition §11](../specs/composition.md#11-decisions)) and live edits ([state spec §7.6](../specs/state-and-event-log.md#76-editing-a-running-show-proposed-kept-state-settled-in-m8)): drop "proposed" from their headings.
 
 ### Phase 1: Flow inputs and outputs (Rust)
-- [ ] `inputs` (as `ParamDef`s) and `outputs` on flows, `stop` with outputs, and the `call` step with `wait`. Composite actions need them.
+- [x] `inputs` (as `ParamDef`s) and `outputs` on flows, `stop` with outputs, and the `call` step with `wait`. Composite actions need them. Flows with a `call` trigger can be called, `POST /flows/{id}/run` takes `{inputs}`, and the flow editor edits inputs, outputs, `call` and `stop` ([flows §8.3](../specs/flows.md#83-steps)).
 
 ### Phase 2: The template primitive (Rust)
 - [ ] `covalence_core::compose`: `ParamDef` (source defaults, `required`), `template` and `params` on an instance, binding in the placer's scope, homes (composition §1.1), abstract templates, `badInstance` checked across every instance at every depth.
