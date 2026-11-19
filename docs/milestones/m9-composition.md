@@ -1,6 +1,6 @@
 # Milestone 9: Composition
 
-- **Status:** In progress: the template primitive is built for flows; composites and components (which replace layers) are next
+- **Status:** In progress: the template primitive is built for flows, components replace layers, and components own flows; children, composites and component templates are next
 
 Users build bigger things out of smaller ones, and reuse them by parameters, never by copying ([composition §11.4](../specs/composition.md#114-composite-connections), [composition §11.1](../specs/composition.md#111-reuse-is-by-parameters-never-by-copying-or-overriding), [composition §11.2](../specs/composition.md#112-one-template-primitive-for-three-kinds)):
 - **One template primitive.** Composite connections, components and flows declare `params`, and instances bind them. Binding, scope, identity, validation and Detach are built once, for all three.
@@ -46,7 +46,8 @@ Users build bigger things out of smaller ones, and reuse them by parameters, nev
 ### Phase 2: The template primitive (Rust)
 - [x] `covalence_core::compose`: `ParamDef` (source defaults, `required`), `template` and `params` on an instance, binding in the placer's scope, homes (composition §1.1), abstract templates, `badInstance` checked across every instance at every depth. Params are cells at `<home>.params.<name>`. A template with instances can't be deleted.
 - [x] `params` in scope (dataflow §8) and `{scope}` refs (`params`, `self`, `item`), checked on save (`notInScope`, `unknownParam`).
-- [ ] Owned flows: `owner`, per-instance runs, `params` from the owner instance, and the owner's controls in triggers.
+- [x] Owned flows on components: `owner`, status under the component's home, `from: {controls}` with the component implied, and deleted with the component.
+- [ ] Owned flows per instance: one run per owner instance with its `params`, when components and composites are templates (Phases 3 and 4).
 - [ ] Nesting: instances inside a template's body, `recursiveTemplate`, `tooDeep`.
 - [x] Batches: `POST /batch`, validated as a whole and saved all or nothing.
 - [ ] Batches as one `batch` op in one turn, with base revisions, one timeline entry and one undo. Needs the project op log (state spec §2.3), which isn't built.

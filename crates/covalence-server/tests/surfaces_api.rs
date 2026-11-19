@@ -1093,7 +1093,7 @@ async fn flows_drive_the_deck_and_other_flows_through_core() {
 /// it shows the helper's component, moves with the surface's slug, and goes when
 /// the surface is deleted.
 #[tokio::test(flavor = "multi_thread")]
-async fn surface_scoped_helpers_live_on_the_surfaces_that_showed_their_layer() {
+async fn surface_scoped_helpers_live_on_the_surfaces_that_showed_their_component() {
     let server = Server::start();
     let cams = create(&server, "/components", "component", deck_page("Cams")).await;
     let deck = create(
@@ -1154,4 +1154,135 @@ async fn surface_scoped_helpers_live_on_the_surfaces_that_showed_their_layer() {
     );
     assert_eq!(server.value(&latched("desk")).await, None);
     server.stop().await;
+}
+
+/// A flow a component owns (composition spec §2) handles its keys with the
+/// component implied, keeps its status under the component, follows its
+/// slug, and is deleted with it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_component_owns_its_flows() {
+    let server = Server::start();
+    let addr = server.listen().await;
+    let cams = create(&server, "/components", "component", deck_page("Cameras")).await;
+    let deck = create(
+        &server,
+        "/surfaces",
+        "surface",
+        json!({ "name": "FOH deck", "model": "virtual.deck15", "startComponent": id(&cams) }),
+    )
+    .await;
+    let mut ws = connect(&addr, id(&deck)).await;
+    send(&mut ws, attach("fohDeck")).await;
+    server
+        .eventually(WAIT, "the deck to attach", || async {
+            (server.value("surface.fohDeck.current.main").await == Some(json!("cameras")))
+                .then_some(())
+        })
+        .await;
+
+    // `{controls}` without an owner names nothing.
+    let note = json!({
+        "name": "Note press", "enabled": true, "concurrency": "parallel",
+        "triggers": [{ "kind": "event", "from": { "controls": "k3" }, "event": "press" }],
+        "body": [{ "id": "note", "kind": "set", "path": "vars.pressed", "value": "trigger.control" }],
+    });
+    let (status, body) = server.post("/flows", note.clone()).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(codes(&body)[0].1, "notInScope");
+
+    let mut owned = note;
+    owned["owner"] = json!(id(&cams));
+    let flow = create(&server, "/flows", "flow", owned).await;
+    server
+        .eventually(WAIT, "its status under the component", || async {
+            server
+                .value("component.cameras.flows.notePress.running")
+                .await
+        })
+        .await;
+    assert_eq!(server.value("flow.notePress.running").await, None);
+
+    let press = create(
+        &server,
+        "/flows",
+        "flow",
+        json!({
+            "name": "Press k3", "enabled": true, "concurrency": "ignore",
+            "triggers": [{ "kind": "api" }],
+            "body": [
+                {
+                    "id": "down", "kind": "action", "target": { "conn": "core" },
+                    "action": "inject", "params": { "surface": id(&deck), "control": "k3", "input": "down" },
+                },
+                {
+                    "id": "up", "kind": "action", "target": { "conn": "core" },
+                    "action": "inject", "params": { "surface": id(&deck), "control": "k3", "input": "up" },
+                },
+            ],
+        }),
+    )
+    .await;
+    run_flow(&server, &press).await;
+    server
+        .eventually(WAIT, "the press to run the owned flow", || async {
+            (server.value("vars.pressed").await == Some(json!("k3"))).then_some(())
+        })
+        .await;
+
+    // Renaming the component moves the flow's home.
+    let mut renamed = cams.clone();
+    renamed["slug"] = json!("cams");
+    let (status, body) = server
+        .put(&format!("/components/{}", id(&cams)), renamed)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    server
+        .eventually(WAIT, "its new home", || async {
+            server.value("component.cams.flows.notePress.running").await
+        })
+        .await;
+    assert_eq!(
+        server
+            .value("component.cameras.flows.notePress.running")
+            .await,
+        None
+    );
+
+    // Deleting the component deletes the flow.
+    assert_eq!(
+        server.delete(&format!("/components/{}", id(&cams))).await,
+        StatusCode::NO_CONTENT
+    );
+    let (status, _) = server
+        .call(Method::GET, &format!("/flows/{}", id(&flow)), None)
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        server.value("component.cams.flows.notePress.running").await,
+        None
+    );
+
+    // A component and its flow can be made together, the flow first.
+    let component_id = "01JC0000000000000000000ABC";
+    let (status, body) = server
+        .post(
+            "/batch",
+            json!({ "ops": [
+                { "op": "create", "type": "flow", "body": {
+                    "name": "Owned", "enabled": true, "concurrency": "ignore", "owner": component_id,
+                    "triggers": [{ "kind": "event", "from": { "controls": "k0" }, "event": "press" }],
+                    "body": [],
+                } },
+                { "op": "create", "type": "component", "body": {
+                    "id": component_id, "name": "Audio", "controls": keys(15), "show": {},
+                } },
+            ] }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    server
+        .eventually(WAIT, "the batch's flow under its component", || async {
+            server.value("component.audio.flows.owned.running").await
+        })
+        .await;
 }

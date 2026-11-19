@@ -1,0 +1,25 @@
+{
+  "id": "01JC0000000000000000000009",
+  "name": "Take on press",
+  "slug": "takeOnPress",
+  "enabled": true,
+  "owner": "01JBZ7P0D3F5G7H9J1K3L5M7PA",
+  "triggers": [
+    {
+      "kind": "event",
+      "from": { "controls": ["k0", "k1"] },
+      "event": "press"
+    }
+  ],
+  "concurrency": "ignore",
+  "failover": "abort",
+  "body": [
+    {
+      "id": "route1",
+      "kind": "action",
+      "target": { "conn": "01JBZ7P0D3F5G7H9J1K3L5M7N9" },
+      "action": "route",
+      "params": { "output": 1, "input": { "expr": "trigger.control == \"k0\" ? 1 : 2" } }
+    }
+  ]
+}

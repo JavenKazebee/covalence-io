@@ -57,6 +57,10 @@ pub struct Flow {
     pub bindings: BTreeMap<String, Source<serde_json::Value>>,
     /// An instance's items: one flow per item (composition §4).
     pub for_each: Option<ForEach>,
+    /// The component that owns it (composition §2): its status is under the
+    /// component's home, `params` are the component's, and `{controls}` sources
+    /// name the component's controls. It's deleted with the component.
+    pub owner: Option<ComponentId>,
     /// Any one starts the flow.
     pub triggers: Vec<Trigger>,
     /// Expressions that must all be truthy when a trigger matches (spec §8.2).
@@ -104,6 +108,7 @@ impl Flow {
             params: template.params.clone(),
             bindings: self.bindings.clone(),
             for_each: self.for_each.clone(),
+            owner: self.owner.clone(),
             editor: self.editor.clone(),
             ..template.clone()
         }
@@ -127,6 +132,8 @@ struct Wire {
     params: serde_json::Map<String, serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     for_each: Option<ForEach>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    owner: Option<ComponentId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     triggers: Option<Vec<Trigger>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -226,6 +233,7 @@ impl TryFrom<Wire> for Flow {
             params,
             bindings,
             for_each: w.for_each,
+            owner: w.owner,
             triggers: w.triggers.unwrap_or_default(),
             conditions: w.conditions,
             concurrency,
@@ -266,6 +274,7 @@ impl From<Flow> for Wire {
             template: f.template,
             params,
             for_each: f.for_each,
+            owner: f.owner,
             triggers: own(true).map(|_| f.triggers),
             conditions: f.conditions,
             concurrency: own(true).map(|_| f.concurrency),
@@ -344,6 +353,9 @@ pub enum EventSource {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         controls: Option<Selector<Controls>>,
     },
+    /// In an owned flow, its owner's controls: the component is implied
+    /// (composition spec §2).
+    Owner { controls: Selector<Controls> },
 }
 
 /// One event name or several; `"*"` is any.

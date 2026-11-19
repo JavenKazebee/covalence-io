@@ -14,7 +14,7 @@ The connections they refer to:
 | `01JBZ7P0D3F5G7H9J1K3L5M7NA` | `vh2` | Videohub |
 | `01JBZ7P0D3F5G7H9J1K3L5M7NB` | `later` | A plugin that hasn't loaded |
 
-The layer they refer to:
+The component they refer to, which `owned-press.json` is owned by (composition spec §2):
 
 | ID | Controls |
 |---|---|

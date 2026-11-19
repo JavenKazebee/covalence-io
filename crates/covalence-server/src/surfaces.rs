@@ -448,6 +448,16 @@ impl EntityKind for Component {
             app.sync_helpers_on(&b, &self.slug);
             crate::write(&app.bindings).insert(b.id.clone(), b);
         }
+        // So do its flows' homes (composition spec §2).
+        let flows = read(&app.flows).clone();
+        let mut components = read(&app.components).clone();
+        components.insert(self.id.clone(), self.clone());
+        for flow in flows
+            .values()
+            .filter(|f| f.owner.as_deref() == Some(self.id.as_str()))
+        {
+            crate::flows::place(&app.runtime, flow, &flows, &components);
+        }
         Ok(())
     }
 

@@ -1307,7 +1307,7 @@ async fn one_flow_hears_every_key_with_captures() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn layer_sources_pick_controls_and_the_payload_carries_context() {
+async fn component_sources_pick_controls_and_the_payload_carries_context() {
     let world = World::new();
     world.add(json!({
         "id": "keys", "name": "keys", "slug": "keys", "enabled": true,

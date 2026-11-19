@@ -376,6 +376,7 @@ async function remove() {
             <EventSourceInput
               v-model="draft.triggers[i] as Extract<Trigger, { kind: 'event' }>"
               :index="i"
+              :owner="draft.owner"
               :problems="at('triggers', i)"
             />
             <button

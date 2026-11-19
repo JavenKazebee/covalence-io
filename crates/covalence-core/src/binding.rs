@@ -337,7 +337,7 @@ impl ControlBinding {
     /// Its component-scoped helpers' cells, for a component with this slug
     /// (surfaces §4.3): `component.<slug>.controls.<id>.<name>`, whose `on`
     /// defaults to the control's events on the component.
-    pub fn helper_cells(&self, layer_slug: &str) -> Vec<crate::dataflow::CellDef> {
+    pub fn helper_cells(&self, component_slug: &str) -> Vec<crate::dataflow::CellDef> {
         use crate::flow::EventSource;
         use crate::select::Selector;
         self.helpers
@@ -348,7 +348,7 @@ impl ControlBinding {
                 let home = StatePath::new(
                     crate::source::Root::Component.as_str(),
                     vec![
-                        key(layer_slug),
+                        key(component_slug),
                         key("controls"),
                         key(&self.control),
                         key(&name),
@@ -557,7 +557,7 @@ pub fn validate(binding: &ControlBinding, ctx: &Context) -> Report {
         None => {
             v.error(
                 vec![key("component")],
-                Code::UnknownLayer,
+                Code::UnknownComponent,
                 format!("no component {:?}", binding.component),
             );
             None

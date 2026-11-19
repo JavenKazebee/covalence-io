@@ -419,7 +419,7 @@ impl App {
             runtime.set_read_only(variables::read_only(&variables));
             runtime.set_cells(dataflow.clone());
             for flow in flows.values() {
-                flows::place(&runtime, flow, &flows);
+                flows::place(&runtime, flow, &flows, &components);
             }
             if let Err(e) = runtime.startup("boot") {
                 tracing::error!("cannot journal sys:startup: {e}");
@@ -519,18 +519,23 @@ impl App {
 
     /// Makes a binding's helper cells match it (surfaces §4.3), for a
     /// component with this slug.
-    pub(crate) fn sync_helpers_on(&self, b: &ControlBinding, layer_slug: &str) {
-        self.sync_helpers_with(b, layer_slug, None);
+    pub(crate) fn sync_helpers_on(&self, b: &ControlBinding, component_slug: &str) {
+        self.sync_helpers_with(b, component_slug, None);
     }
 
     /// [`sync_helpers_on`](Self::sync_helpers_on), with one surface's new
     /// entity in place of the stored one.
-    fn sync_helpers_with(&self, b: &ControlBinding, layer_slug: &str, renamed: Option<&Surface>) {
+    fn sync_helpers_with(
+        &self,
+        b: &ControlBinding,
+        component_slug: &str,
+        renamed: Option<&Surface>,
+    ) {
         let cells = {
             let shown_on = self.shown_on.lock().unwrap_or_else(|e| e.into_inner());
             helper_cells(
                 b,
-                layer_slug,
+                component_slug,
                 &shown_on,
                 &read(&self.surface_entities),
                 renamed,
@@ -1031,12 +1036,12 @@ fn is_valid_alias(alias: &str) -> bool {
 /// component. `renamed` stands in for its stored entity.
 fn helper_cells(
     b: &ControlBinding,
-    layer_slug: &str,
+    component_slug: &str,
     shown_on: &BTreeMap<ComponentId, BTreeSet<SurfaceId>>,
     surfaces: &BTreeMap<SurfaceId, Surface>,
     renamed: Option<&Surface>,
 ) -> Vec<covalence_core::dataflow::CellDef> {
-    let mut cells = b.helper_cells(layer_slug);
+    let mut cells = b.helper_cells(component_slug);
     if b.has_surface_helpers() {
         for id in shown_on.get(&b.component).into_iter().flatten() {
             let surface = renamed.filter(|s| &s.id == id).or_else(|| surfaces.get(id));

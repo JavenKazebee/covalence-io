@@ -104,7 +104,7 @@ pub trait CoreActions: Send + Sync + 'static {
     fn invoke(&self, call: CoreCall) -> Pin<Box<dyn Future<Output = CoreResult> + Send + '_>>;
 }
 
-/// An error with the spec's name for it (`unknownLayer`, `doesNotFit`) in
+/// An error with the spec's name for it (`unknownComponent`, `doesNotFit`) in
 /// `data.code`, which a run's error takes as its code.
 pub fn error(code: ErrorCode, name: &str, message: impl Into<String>) -> ProtocolError {
     let mut e = ProtocolError::new(code, message);

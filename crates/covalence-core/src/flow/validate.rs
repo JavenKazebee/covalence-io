@@ -44,8 +44,6 @@ pub enum Code {
     BadPath,
     /// A `branch` without arms.
     NoArms,
-    /// A binding on a component that doesn't exist.
-    UnknownLayer,
     /// An event trigger, or a surface's start, naming a component that
     /// doesn't exist (surfaces spec §7).
     UnknownComponent,
@@ -309,12 +307,7 @@ fn find_unsupported(json: &Value) -> Vec<Problem> {
                 let from = trigger.get("from");
                 if from.is_some_and(|f| f.get("group").is_some()) {
                     not_yet(at("from"), "control group event sources");
-                } else if from.is_some_and(|f| {
-                    f.get("slot").is_some()
-                        || (f.get("controls").is_some()
-                            && f.get("component").is_none()
-                            && f.get("surface").is_none())
-                }) {
+                } else if from.is_some_and(|f| f.get("slot").is_some()) {
                     not_yet(at("from"), "component event sources");
                 }
             }
@@ -390,13 +383,23 @@ pub enum SetTarget {
 
 /// Checks a parsed flow against the connections and manifests it refers to.
 pub fn validate(flow: &Flow, ctx: &Context) -> Report {
+    let none = BTreeMap::new();
+    let owner = flow.owner.as_ref().and_then(|id| ctx.components.get(id));
     let mut v = Validation {
         ctx,
         report: Report::default(),
         seen: BTreeSet::new(),
         acted_on: BTreeSet::new(),
         outputs: &flow.outputs,
-        params: &flow.params,
+        // An owned flow's params are its owner's (composition spec §2),
+        // and components don't declare any yet.
+        params: if flow.owner.is_some() {
+            &none
+        } else {
+            &flow.params
+        },
+        owned: flow.owner.is_some(),
+        owner,
         placing: false,
     };
 
@@ -420,6 +423,9 @@ pub fn validate(flow: &Flow, ctx: &Context) -> Report {
         );
     }
 
+    if let Some(id) = &flow.owner {
+        v.owned(flow, id);
+    }
     if flow.is_instance() {
         v.instance(flow);
         return v.report;
@@ -550,14 +556,45 @@ struct Validation<'a> {
     acted_on: BTreeSet<ConnId>,
     /// What a `stop` step may hand back.
     outputs: &'a BTreeMap<String, serde_json::Map<String, Value>>,
-    /// The flow's own params, which `{scope: "params"}` refs name.
+    /// The params `{scope: "params"}` refs name: the flow's own, or its
+    /// owner's.
     params: &'a BTreeMap<String, ParamDef>,
+    /// It has an owner, whether or not it exists.
+    owned: bool,
+    /// The component that owns it, when there is one.
+    owner: Option<&'a Component>,
     /// Checking an instance's bindings, whose `{scope}` refs
     /// `compose::check_bindings` has checked where it's placed.
     placing: bool,
 }
 
 impl<'a> Validation<'a> {
+    /// An owned flow (composition §2): its owner is a component, and its
+    /// params are the component's.
+    fn owned(&mut self, flow: &Flow, id: &str) {
+        if self.owner.is_none() {
+            self.error(
+                path![key("owner")],
+                Code::UnknownComponent,
+                format!("no component {id:?}"),
+            );
+        }
+        if flow.is_instance() {
+            self.error(
+                path![key("template")],
+                Code::Unsupported,
+                "a component can't own an instance of a flow template yet".into(),
+            );
+        }
+        if !flow.params.is_empty() {
+            self.error(
+                path![key("params")],
+                Code::Invalid,
+                "an owned flow's `params` are its owner's, so it declares none".into(),
+            );
+        }
+    }
+
     /// An instance (composition §9): its template exists and isn't an
     /// instance, its bindings fit, and its `forEach` reads what it can.
     fn instance(&mut self, flow: &Flow) {
@@ -755,6 +792,11 @@ impl<'a> Validation<'a> {
             return;
         }
         match scope {
+            ScopeName::Params if self.params.is_empty() && self.owned => self.error(
+                at,
+                Code::NotInScope,
+                "an owned flow's params are its component's, and components have no params".into(),
+            ),
             ScopeName::Params if self.params.is_empty() => self.error(
                 at,
                 Code::NotInScope,
@@ -881,18 +923,18 @@ impl<'a> Validation<'a> {
                     );
                     return;
                 };
-                let listed: Vec<&crate::surface::ControlSpec> = match controls {
-                    None => def.controls.iter().collect(),
-                    Some(selector) => {
-                        self.controls(selector, &join(at, &[key("controls")]), &|id| {
-                            def.control(id).is_some()
-                        });
-                        let mut ids = Vec::new();
-                        selector.each_id(&mut Vec::new(), &mut |_, id| ids.push(id.clone()));
-                        ids.iter().filter_map(|id| def.control(id)).collect()
-                    }
-                };
-                self.control_events(names, &listed, at_event);
+                self.component_controls(def, controls.as_ref(), names, at, at_event);
+            }
+            EventSource::Owner { controls } => {
+                if !self.owned {
+                    self.error(
+                        join(at, &[key("controls")]),
+                        Code::NotInScope,
+                        "`{controls}` names the controls of the component that owns the flow, and this flow has no owner".into(),
+                    );
+                } else if let Some(def) = self.owner {
+                    self.component_controls(def, Some(controls), names, at, at_event);
+                }
             }
             EventSource::Surface { surface, controls } => {
                 if !self.ctx.surfaces.contains(surface) {
@@ -913,6 +955,29 @@ impl<'a> Validation<'a> {
             let (Issue::Unknown(message) | Issue::Bad(message)) = issue;
             self.error(path, code, message);
         }
+    }
+
+    /// A component's controls in an event source, and the events it listens for.
+    fn component_controls(
+        &mut self,
+        def: &Component,
+        controls: Option<&Selector<Controls>>,
+        names: &Names,
+        at: &Path,
+        at_event: &Path,
+    ) {
+        let listed: Vec<&crate::surface::ControlSpec> = match controls {
+            None => def.controls.iter().collect(),
+            Some(selector) => {
+                self.controls(selector, &join(at, &[key("controls")]), &|id| {
+                    def.control(id).is_some()
+                });
+                let mut ids = Vec::new();
+                selector.each_id(&mut Vec::new(), &mut |_, id| ids.push(id.clone()));
+                ids.iter().filter_map(|id| def.control(id)).collect()
+            }
+        };
+        self.control_events(names, &listed, at_event);
     }
 
     /// A control selector in an event source: IDs, lists, `expr` and the

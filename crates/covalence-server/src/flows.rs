@@ -7,12 +7,14 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use covalence_core::component::Component;
 use covalence_core::flow::runtime::{
-    CancelError, FireError, FireOutcome, Placement, RunInfo, Runtime,
+    CancelError, FireError, FireOutcome, Owner, Placement, RunInfo, Runtime,
 };
 use covalence_core::flow::{self, Flow};
 use covalence_core::journal::Origin;
 use covalence_core::state::ConnId;
+use covalence_core::surface::ComponentId;
 use covalence_core::{compose, expr};
 use covalence_protocol::plugin::Manifest;
 use covalence_protocol::state::PathSegment;
@@ -257,10 +259,23 @@ async fn evaluate(
 
 /// Makes the runtime run `flow` as it should (composition spec §9): an
 /// instance with its template's steps, a template by itself unless it's
-/// abstract, or a plain flow. `flows` is every flow, by ID.
-pub(crate) fn place(runtime: &Runtime, flow: &Flow, flows: &BTreeMap<String, Flow>) {
+/// abstract, or a plain flow, owned by its component if it has one
+/// (composition spec §2). `flows` is every flow, and `components` every component.
+pub(crate) fn place(
+    runtime: &Runtime,
+    flow: &Flow,
+    flows: &BTreeMap<String, Flow>,
+    components: &BTreeMap<ComponentId, Component>,
+) {
     let template = flow.template.as_ref().and_then(|t| flows.get(t));
-    match Placement::of(flow, template) {
+    let placement = match &flow.owner {
+        // An owned flow whose component is gone doesn't run.
+        Some(owner) => components
+            .get(owner)
+            .and_then(|l| Some(Placement::of(flow, template)?.owned_by(Owner::of(l)))),
+        None => Placement::of(flow, template),
+    };
+    match placement {
         Some(p) => runtime.place(p),
         None => {
             if let Err(e) = runtime.remove_flow(&flow.id) {
@@ -324,7 +339,8 @@ impl EntityKind for Flow {
         if self.slug.is_empty() {
             self.slug = flow::derive_slug(&self.name, &taken);
         }
-        let components = app.components();
+        // The app's copies, so a batch's owned flow sees the component it creates.
+        let components = read(&app.components).clone();
         let surfaces: BTreeSet<String> = read(&app.surface_entities).keys().cloned().collect();
         let mut by_id: BTreeMap<String, Flow> = flows.clone();
         by_id.insert(self.id.clone(), self.clone());
@@ -347,9 +363,25 @@ impl EntityKind for Flow {
         )
     }
 
+    /// An owned flow goes with its component (composition spec §2).
+    fn refs(&self) -> Vec<entity::Ref> {
+        self.owner
+            .iter()
+            .map(|component| {
+                entity::Ref::new(
+                    covalence_core::component::ENTITY,
+                    component,
+                    "owner",
+                    entity::OnDelete::Cascade,
+                )
+            })
+            .collect()
+    }
+
     fn apply(&self, app: &App) -> Result<(), SaveError> {
         let flows = read(&app.flows).clone();
-        place(&app.runtime, self, &flows);
+        let components = read(&app.components).clone();
+        place(&app.runtime, self, &flows, &components);
         // A template's instances run its new steps and params.
         if !self.is_instance() {
             for instance in flows

@@ -15,7 +15,7 @@ Users build bigger things out of smaller ones, and reuse them by giving them par
 
 **Instances take parameters, not overrides.** An instance can't change, add to or remove anything inside its template. Where copies may differ, the template says so with a param, which can hold a whole component or flow (§1.2). If one copy has to differ anywhere else, "Detach" turns it into a plain entity with no link back. That keeps "what does this do?" answerable from one place.
 
-**Markers.** Everything here is **(M9)** ([M9](../milestones/m9-composition.md)) unless marked **(Later)**. Built so far, for flows (§9): params as cells and in scope (§1), flow params (§1.2), `forEach` (§4), the instance chain, its filters, validation and Detach (§5), and batches. Composites and components as templates, owned flows (§2), nesting (§3) and component params aren't yet. Components replace the `layer` and `control_binding` entities that M5 and M8 built (§7.4): the `component` entity, its embedded bindings and `show` are built. A component's children (§8) aren't yet. The UI edits a component's `show` and bindings, saving a binding by putting its component back.
+**Markers.** Everything here is **(M9)** ([M9](../milestones/m9-composition.md)) unless marked **(Later)**. Built so far, for flows (§9): params as cells and in scope (§1), flow params (§1.2), `forEach` (§4), the instance chain, its filters, validation and Detach (§5), and batches. Owned flows (§2) are built for plain components, which have one instance, themselves, and no params. Components replace the `layer` and `control_binding` entities that M5 and M8 built (§7.4): the `component` entity, its embedded bindings and `show` are built. Composites and components as templates (so owned flows per instance, and composite owners), children (§8), owned flow instances and component params aren't yet. The UI edits a component's `show` and bindings, saving a binding by putting its component back.
 
 ---
 
@@ -104,8 +104,9 @@ Cam C's strip binds `recordKey` to another component. It keeps every later fix t
 
   - In a project, they're `flow` entities with `owner`. A plugin's manifest component carries its flows inline, so a plugin can ship a component whole, and the core loads them as flows it owns.
   - They run **per instance** of their owner, children included. Their status is at `<owner's home>.flows.<slug>`, and their events at `<owner's home>.flows.<slug>:finished`.
-  - Inside them, `params` is the owner instance's (dataflow §8).
-  - Their event triggers name the owner's controls: `from: {controls: "key"}`, the owning component implied.
+  - Inside them, `params` is the owner instance's (dataflow §8), so an owned flow declares no `params` of its own.
+  - Their event triggers name the owner's controls: `from: {controls: "key"}`, the owning component implied. `{controls}` always names controls, and in a flow with no owner it's `notInScope`.
+  - **They go with their owner.** Deleting a component deletes the flows it owns, as it does its bindings; renaming its slug moves their homes.
   - An event trigger on the owner matches events from every instance, and each run belongs to the instance the event came from.
 - **Free-standing flows see only their own `params`.** A free-standing flow triggered by a control event gets `trigger.component` and `trigger.instance` (§5), not the component's params. A flow that should handle every instance of a component is owned by it.
 
@@ -529,6 +530,11 @@ Why composition works this way, and what was rejected. Keep these notes when the
   - *Four mechanisms:* each simpler alone, every later improvement built four times.
   - *A single `template` entity with kind-specific payloads:* each kind has its own store, API and editor, and an instance must be its kind's entity anyway to appear where that kind does.
   - *Merging flow `inputs` into `params`:* every call would create an instance with a state home and a lifetime, for something that already has a run.
+- **Decided:** an owned flow is part of its owner's body (§2), so deleting the owner deletes it, as a component's bindings go with it.
+- **Why:** an owned flow has no meaning without its owner: its `params`, its `{controls}` sources and its home are the owner's.
+- **Rejected:**
+  - *Refusing to delete an owner that has owned flows, as a template with instances is refused (§11.6):* instances are separate entities that something else uses, but an owned flow is inside the thing being deleted, the way a binding is.
+  - *Keeping them as free-standing flows:* their `{controls}` sources and `params` would name nothing.
 
 ### 11.3 One instance per item of a live list
 - **Decided:** `forEach` makes one instance per item of a list or target selector (§4), keyed so a reorder doesn't reset them, created and removed with the list and journaled with `cause`, at most 256. Each item of a composite with `forEach` is a target. A child with `forEach` spreads its items over its container's controls (§8.2), which replaces control groups.

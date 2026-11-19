@@ -283,6 +283,7 @@ This section is what the core accepts today.
 | `conditions` | **(M4)** Optional list of expressions. All must be truthy when a trigger matches, or no run starts (§8.2) |
 | `inputs` | Optional. `{[name]: ParamDef}`: a state schema node (`type`, `minimum` …, checked as action params are) with `default?` (a source, evaluated when the run is fired) and `required?`. Names are identifiers. Steps read the bound values as `input.<name>` (§3) |
 | `outputs` | Optional. `{[name]: StateSchemaNode}`: what a `stop` step may hand back |
+| `owner` | **(M9)** Optional. A component's ID ([composition §2](composition.md#2-bodies-and-owned-flows)): the flow's status is at `component.<slug>.flows.<slug>`, its `params` are the component's, its event triggers can use `from: {controls}` with the component implied, and it's deleted with the component. An owned flow declares no `params`, and isn't an instance of a template yet |
 | `concurrency` | Required. All four modes |
 | `failover` | Optional; only `abort` (the default) |
 | `body` | `action`, `wait`, `call`, `stop` and **(M4)** `waitUntil`, `set` and `branch` steps (§8.3). `branch` is the only block |
@@ -374,6 +375,7 @@ Errors block the save; warnings don't.
   - a bad literal duration
   - **(M4)** an expression that doesn't compile, a malformed `set` path, a `branch` with no arms
   - a `call` step on a flow that doesn't exist (`unknownFlow`) or has no `call` trigger (`notCallable`), an input the callee doesn't declare (`unknownInput`), or a required input with no default left out (`missingInput`); an `event` or `state` trigger on a flow with such an input (`missingInput`); a `stop` output the flow doesn't declare (`unknownOutput`); an input or output name that isn't an identifier (`badId`); a literal input, default or output that fails its schema (`badValue`)
+  - **(M9)** an `owner` that isn't a component (`unknownComponent`), an owned flow that declares `params` (`invalid`) or is an instance (`unsupported`), and a `{controls}` source in a flow with no owner (`notInScope`)
   - **(M5)** a `gesture` trigger on a page that doesn't exist (`unknownPage`), or a control outside its layout (`unknownControl`). **(Now)** The same for a `control` trigger, with `unknownLayer` (**(M9)** `unknownComponent`), `unknownControl` for a control the layer doesn't list, and `unsupported` for an event its control's inputs can't give
 - **Warnings:**
   - no triggers
