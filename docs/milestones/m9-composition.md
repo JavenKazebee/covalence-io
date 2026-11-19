@@ -1,6 +1,6 @@
 # Milestone 9: Composition
 
-- **Status:** Planned, after [M8](m8-dataflow.md)
+- **Status:** In progress: the template primitive is built for flows; composites, layers and components are next
 
 Users build bigger things out of smaller ones, and reuse them by parameters, never by copying ([composition §11.4](../specs/composition.md#114-composite-connections), [composition §11.1](../specs/composition.md#111-reuse-is-by-parameters-never-by-copying-or-overriding), [composition §11.2](../specs/composition.md#112-one-template-primitive-for-four-kinds)):
 - **One template primitive.** Layers, composite connections, components and flows declare `params`, and instances bind them. Binding, scope, identity, validation and Detach are built once, for all four.
@@ -34,32 +34,34 @@ Users build bigger things out of smaller ones, and reuse them by parameters, nev
 - [x] Interfaces dropped for now, the core's included (they only named its collections), and composite templates are how devices from different plugins are controlled as one kind ([plugin protocol §13.9](../specs/plugin-protocol.md#139-dynamic-targets-proposed), [composition §6.5](../specs/composition.md#65-templates-as-contracts)).
 - [x] A target is a connection and nothing within it: `core`'s surfaces and flows became `surface` and `flow` parameters ([core actions §2](../specs/core-actions.md#2-surfaces-and-flows-are-parameters)), and plugins don't declare collections ([plugin protocol §13.9](../specs/plugin-protocol.md#139-dynamic-targets-proposed)).
 - [x] Dynamic targets for plugins ([plugin protocol §13.9](../specs/plugin-protocol.md#139-dynamic-targets-proposed)): a step's target can follow state with a `{plugin}` constraint, checked against the plugin's manifest on save and against the connection's plugin when the step runs. The step editor offers "the <plugin> in a variable".
-- [x] **Edits across entities** ([state spec §7.6](../specs/state-and-event-log.md#76-editing-a-running-show-proposed-kept-state-settled-in-m8)): edits stay live, and one that spans entities is saved as a batch, validated as a whole and applied all or nothing; runs record the revision they started on.
+- [x] **Edits across entities** ([state spec §7.6](../specs/state-and-event-log.md#76-editing-a-running-show)): edits stay live, and one that spans entities is saved as a batch, validated as a whole and applied all or nothing; runs record the revision they started on.
 - [x] The `instance` chain's API shape ([composition §5](../specs/composition.md#5-identity-validation-and-detach)): IDs in the chain, names resolved on read, params recorded on `run.started`, and filters by instance, item and template on the journal and the runs list.
 - [x] The open questions the template primitive depends on: a fixed cap of 256 items, each `forEach` composite item a connection with a derived ID, and params that hold a component or a flow ([composition §1.2](../specs/composition.md#12-params-that-hold-a-component-or-a-flow)).
-- [ ] Accept the composition design ([composition §11](../specs/composition.md#11-decisions)) and live edits ([state spec §7.6](../specs/state-and-event-log.md#76-editing-a-running-show-proposed-kept-state-settled-in-m8)): drop "proposed" from their headings.
+- [x] Accept the composition design ([composition §11](../specs/composition.md#11-decisions)) and live edits ([state spec §7.6](../specs/state-and-event-log.md#76-editing-a-running-show)): drop "proposed" from their headings.
 
 ### Phase 1: Flow inputs and outputs (Rust)
 - [x] `inputs` (as `ParamDef`s) and `outputs` on flows, `stop` with outputs, and the `call` step with `wait`. Composite actions need them. Flows with a `call` trigger can be called, `POST /flows/{id}/run` takes `{inputs}`, and the flow editor edits inputs, outputs, `call` and `stop` ([flows §8.3](../specs/flows.md#83-steps)).
 
 ### Phase 2: The template primitive (Rust)
-- [ ] `covalence_core::compose`: `ParamDef` (source defaults, `required`), `template` and `params` on an instance, binding in the placer's scope, homes (composition §1.1), abstract templates, `badInstance` checked across every instance at every depth.
-- [ ] `params` in scope (dataflow §8) and `{scope}` refs. The `layer.params` shorthand is rejected.
+- [x] `covalence_core::compose`: `ParamDef` (source defaults, `required`), `template` and `params` on an instance, binding in the placer's scope, homes (composition §1.1), abstract templates, `badInstance` checked across every instance at every depth. Params are cells at `<home>.params.<name>`. A template with instances can't be deleted.
+- [x] `params` in scope (dataflow §8) and `{scope}` refs (`params`, `self`, `item`), checked on save (`notInScope`, `unknownParam`).
 - [ ] Owned flows: `owner`, per-instance runs, `params` from the owner instance, and the owner's controls or slots in triggers.
 - [ ] Nesting: instances inside a template's body, `recursiveTemplate`, `tooDeep`.
-- [ ] Batches: `POST /batch`, the `batch` op, validation of the result as a whole, one timeline entry and one undo.
-- [ ] `forEach`: per-item instances at `<home>.items[<key>]`, created and ended with the list, `instance.added` and `instance.removed`, cancellation with `removed`, `tooMany`.
-- [ ] The `instance` chain on journal entries and `trigger.instance`, `params` on `run.started`, and the `instance`, `key` and `template` filters on `GET /journal` and `GET /runs`.
-- [ ] Params that hold a component or a flow: `{param}` where a body names a template, literal bindings, and the fit checks.
-- [ ] "Detach", for every kind.
+- [x] Batches: `POST /batch`, validated as a whole and saved all or nothing.
+- [ ] Batches as one `batch` op in one turn, with base revisions, one timeline entry and one undo. Needs the project op log (state spec §2.3), which isn't built.
+- [x] `forEach`: per-item instances at `<home>.items[<key>]`, created and ended with the list, `instance.added` and `instance.removed`, cancellation with `removed`, `tooMany`.
+- [x] The `instance` chain on journal entries and `trigger.instance`, `params` on `run.started`, and the `instance`, `key` and `template` filters on `GET /journal` and `GET /runs`. Entries from the API name each link.
+- [x] Params that hold a flow: `{param}` in a `call` step, literal bindings, and the fit checks. Component params come with components (Phase 4).
+- [ ] "Detach", for every kind. Flows have it: `POST /flows/{id}/detach`.
 
 ### Phase 3: Template kinds (Rust)
 - [ ] `target(t)` in expressions (`.alias`, `.name`, `.plugin`, `.connected`, `.supports(action)` and the connection's state), `kind: "target"` in state schemas, and constraints on sinks' targets ([plugin protocol §13.9](../specs/plugin-protocol.md#139-dynamic-targets-proposed)). Composites read their parts through `target()`.
 - [ ] **Composites:** plugin `core.composite`: `params`, state cells, `connected`, `forward` and owned-flow actions, re-emitted events, `{template}` constraints and selectors. Causation through composite actions and events; `cycle`, the loop guard and `tooDeep`. Collections through `forEach`, each item accepted by `{template}`.
-- [ ] **Layers:** per-instance evaluation of bindings, helpers, groups and placements; `forEach` layers and `navigate` with `item`.
-- [ ] **Flows:** flow templates and instances, with `forEach`.
+- [ ] **Layers:** per-instance evaluation of bindings, helpers, groups and placements; `forEach` layers and `navigate` with `item`. The `layer.params` shorthand is rejected.
+- [x] **Flows:** flow templates and instances, with `forEach`. An instance runs its template's steps with its identity; each `forEach` item runs as `<instance>[<key>]`. The UI lists instances but can't edit them yet (Phase 6).
 
 ### Phase 4: Components and placements (Rust)
+- [ ] Params that hold a component: `{param}` as a part's or placement's `template`, and the slot fit check.
 - [ ] `component` and `placement` entities; slot fit; owned controls; per-placement bindings, helpers and owned flows with `{slot}` triggers; `parts` with slot mapping; state at `layer.<slug>.parts.<placement>`.
 - [ ] Control groups that place a component per item (`use`), with `item` bound into params.
 

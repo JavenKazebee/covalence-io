@@ -10,19 +10,21 @@
 //! | `POST /connections`          | Creates a connection: `{plugin, alias, config, mode?}`   |
 //! | `GET /state?path=vh.outputs` | Leaves at or below a text path (all state without one); `flow.*` and `vars.*` included |
 //! | `POST /actions`              | Requests an action: `{action: "vh.route", params}`       |
-//! | `GET /journal?from&limit`    | Journal entries, oldest first                            |
+//! | `GET /journal?from&limit`    | Journal entries, oldest first; `instance`, `key` and `template` filter them (composition spec §5) |
 //! | `GET /journal/{seq}/why`     | The cause chain from an entry back to its root           |
 //! | `GET /ws`                    | Live state, journal and host status (see `ws`)           |
 //! | `GET /flows`                 | Flows                                                    |
 //! | `POST /flows`                | Creates a flow: `201 {flow, warnings}` or `422 {errors, warnings}` |
 //! | `GET /flows/{id}`            | One flow                                                 |
 //! | `PUT /flows/{id}`            | Replaces a flow; same answers as `POST /flows`           |
-//! | `DELETE /flows/{id}`         | Deletes a flow and cancels its runs                      |
+//! | `DELETE /flows/{id}`         | Deletes a flow and cancels its runs; `409` for a template with instances |
+//! | `POST /flows/{id}/detach`    | Turns an instance into plain flows: `{flows}` (composition spec §5) |
 //! | `POST /flows/{id}/run`       | Fires the `api` trigger: `{matched, status, run?, reason?}` |
-//! | `GET /runs?flow`             | Active, queued and recent runs, newest first             |
+//! | `GET /runs?flow`             | Active, queued and recent runs, newest first; also `instance`, `key`, `template` |
 //! | `GET /runs/{run}`            | One run                                                  |
 //! | `POST /runs/{run}/cancel`    | Cancels a run: `202 {run, status}`                       |
 //! | `POST /expressions/evaluate` | Previews an expression: `{source, trigger?}` → `{value?, error?, reads}` |
+//! | `POST /batch`                | Edits across entities, checked as a whole and saved all or nothing (see `batch`) |
 //! | `GET /devices?plugin`        | HID and serial devices, who holds each, and offers (see `devices`) |
 //! | `GET /connections/{id}/traffic` | Each of the connection's transport handles and its recent traffic |
 //!
@@ -80,6 +82,7 @@ use covalence_store::Store;
 use serde::{Deserialize, Serialize};
 
 mod api;
+mod batch;
 mod core_actions;
 mod devices;
 mod entity;
@@ -287,14 +290,15 @@ pub struct App {
     /// Draws previews.
     renderer: Mutex<Renderer>,
     /// Held while an entity is checked and stored, so slugs stay unique.
-    saving: Mutex<()>,
+    pub(crate) saving: Mutex<()>,
     /// Set at shutdown, so long-lived WebSocket sessions let go of the app.
     closing: tokio::sync::watch::Sender<bool>,
     /// HID and serial devices, unless they're off.
     devices: Option<covalence_devices::Devices>,
     variables: RwLock<BTreeMap<String, Variable>>,
-    /// Computed variables' cells and their sinks (dataflow §5).
-    dataflow: Dataflow,
+    /// Computed variables', helpers' and params' cells, and their sinks
+    /// (dataflow §5).
+    dataflow: Arc<Dataflow>,
     /// The surfaces each layer has been shown on, which have its bindings'
     /// surface-scoped helpers (surfaces spec §11.4).
     shown_on: Mutex<BTreeMap<LayerId, BTreeSet<SurfaceId>>>,
@@ -336,7 +340,7 @@ impl App {
         let variables = load_kind::<Variable>(&store)?;
         // Variables come back before any trigger is armed (dataflow §6):
         // persisted values first, so reducers resume from them, then cells.
-        let dataflow = Dataflow::start(core.shared());
+        let dataflow = Arc::new(Dataflow::start(core.shared()));
         dataflow.set_aliases(alias_map(&conns));
         variables::restore(core.shared(), &store, &variables);
         for var in variables.values() {
@@ -400,8 +404,9 @@ impl App {
             runtime.set_aliases(alias_map(&conns));
             runtime.set_targets(target_views(&conns));
             runtime.set_read_only(variables::read_only(&variables));
+            runtime.set_cells(dataflow.clone());
             for flow in flows.values() {
-                runtime.set_flow(flow.clone());
+                flows::place(&runtime, flow, &flows);
             }
             if let Err(e) = runtime.startup("boot") {
                 tracing::error!("cannot journal sys:startup: {e}");
@@ -800,6 +805,9 @@ pub enum SaveError {
     },
     #[error("it doesn't exist")]
     NotFound,
+    /// It can't be done as things are: a template with instances can't be deleted.
+    #[error("{0}")]
+    Conflict(String),
     #[error(transparent)]
     Store(#[from] covalence_store::StoreError),
     #[error(transparent)]

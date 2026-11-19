@@ -104,6 +104,7 @@ fn cell(id: &str, home: StatePath, source: Json) -> CellDef {
         journal: JournalMode::Full,
         to: Vec::new(),
         control: None,
+        values: Vec::new(),
     }
 }
 

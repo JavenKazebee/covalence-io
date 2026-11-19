@@ -38,6 +38,8 @@ pub struct ActionRequest {
     /// The entry that caused this request, if any.
     pub cause: Option<Seq>,
     pub run: Option<String>,
+    /// The instances it was made inside (composition spec §5).
+    pub instance: Option<crate::compose::InstanceChain>,
     pub conn: ConnId,
     pub action: String,
     pub params: Value,
@@ -58,6 +60,7 @@ impl ActionRequest {
             origin,
             cause: None,
             run: None,
+            instance: None,
             conn: conn.into(),
             action: action.into(),
             params,
@@ -189,7 +192,8 @@ impl Core {
                     }),
                 )
                 .cause(req.cause)
-                .run(req.run.clone()),
+                .run(req.run.clone())
+                .instance(req.instance.clone()),
             )?
             .seq;
         let input = GateInput {

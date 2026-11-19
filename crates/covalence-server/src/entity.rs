@@ -82,6 +82,12 @@ pub trait EntityKind: Clone + Serialize + DeserializeOwned + Send + Sync + 'stat
     /// store and the app's copy.
     fn unapply(id: &str, app: &App) -> Result<(), SaveError>;
 
+    /// Whether it can be deleted now: `Err` says why not.
+    fn deletable(app: &App, id: &str) -> Result<(), String> {
+        let _ = (app, id);
+        Ok(())
+    }
+
     /// Waits until the core has acted on a change, before the API answers.
     fn settle(app: &App) -> impl Future<Output = ()> + Send {
         let _ = app;
@@ -210,10 +216,11 @@ impl App {
     /// it if there was one.
     pub fn delete<K: EntityKind>(&self, id: &str) -> Result<Option<K>, SaveError> {
         let _saving = self.saving.lock().unwrap_or_else(|e| e.into_inner());
+        K::deletable(self, id).map_err(SaveError::Conflict)?;
         self.delete_locked::<K>(id)
     }
 
-    fn delete_locked<K: EntityKind>(&self, id: &str) -> Result<Option<K>, SaveError> {
+    pub(crate) fn delete_locked<K: EntityKind>(&self, id: &str) -> Result<Option<K>, SaveError> {
         if !read(K::all(self)).contains_key(id) {
             return Ok(None);
         }
@@ -291,7 +298,12 @@ async fn remove<K: EntityKind>(
     State(app): State<Arc<App>>,
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
-    let removed = app.delete::<K>(&id).map_err(ApiError::internal)?;
+    let removed = app.delete::<K>(&id).map_err(|e| match e {
+        SaveError::Conflict(why) => {
+            ApiError::new(StatusCode::CONFLICT, format!("can't delete it: {why}"))
+        }
+        e => ApiError::internal(e),
+    })?;
     K::settle(&app).await;
     match removed {
         Some(_) => Ok(StatusCode::NO_CONTENT),

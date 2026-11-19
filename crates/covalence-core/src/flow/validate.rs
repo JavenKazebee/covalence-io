@@ -9,10 +9,12 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::{Cond, EventSource, Flow, Names, Step, StepKind, Trigger};
+use crate::compose;
 use crate::expr::{At, Evaluator};
 use crate::journal::ControlEvent;
+use crate::param::ParamDef;
 use crate::select::{Controls, Issue, Pattern, Selector, Targets};
-use crate::source::{Part, Ref, Source};
+use crate::source::{Part, Ref, ScopeName, Source};
 use crate::state::ConnId;
 use crate::surface::{self, Layer, LayerId};
 use crate::{core_conn, schema};
@@ -72,6 +74,26 @@ pub enum Code {
     MissingInput,
     /// A `stop` output the flow doesn't declare.
     UnknownOutput,
+    /// An instance of a template that doesn't exist (composition §5).
+    UnknownTemplate,
+    /// An instance whose template is itself an instance.
+    TemplateIsInstance,
+    /// An instance whose params don't fit its template: one required and
+    /// unbound, or a binding of the wrong type. Saving a template lists the
+    /// instances it would break.
+    BadInstance,
+    /// A binding or `{scope: "params"}` ref for a param that isn't declared.
+    UnknownParam,
+    /// An abstract template used directly: a required param with no default.
+    UnboundParam,
+    /// A component or flow param bound to anything but an ID (composition §1.2).
+    TemplateNotLiteral,
+    /// A template that reaches itself through its params (composition §3).
+    RecursiveTemplate,
+    /// Instances nested more than 16 deep.
+    TooDeep,
+    /// A `{scope}` ref to a name that isn't in scope there (dataflow §8).
+    NotInScope,
     // Warnings.
     NoTriggers,
     /// An event trigger on a connection the flow also acts on (spec §8.6).
@@ -141,6 +163,47 @@ pub struct Context<'a> {
     pub variables: &'a BTreeMap<String, bool>,
 }
 
+impl Context<'_> {
+    /// A flow as it runs: an instance with its template's steps.
+    pub fn effective(&self, id: &str) -> Option<Flow> {
+        let flow = self.flows.get(id)?;
+        match &flow.template {
+            Some(t) => self.flows.get(t).map(|t| flow.instance_of(t)),
+            None => Some(flow.clone()),
+        }
+    }
+}
+
+/// Calls `f` on every step, nested ones included.
+fn each_step<'s>(steps: &'s [Step], f: &mut dyn FnMut(&'s Step)) {
+    for step in steps {
+        f(step);
+        let children: Vec<&Step> = step.kind.children().collect();
+        for child in children {
+            each_step(std::slice::from_ref(child), f);
+        }
+    }
+}
+
+/// Why a `call` step giving `given` inputs can't call `callee`, if it can't.
+fn call_problem(callee: &Flow, given: &BTreeSet<String>) -> Option<String> {
+    if !callee
+        .triggers
+        .iter()
+        .any(|t| matches!(t, Trigger::Call {}))
+    {
+        return Some("it has no `call` trigger".into());
+    }
+    if let Some(name) = given.iter().find(|n| !callee.inputs.contains_key(*n)) {
+        return Some(format!("it has no input {name:?}"));
+    }
+    callee
+        .inputs
+        .iter()
+        .find(|(n, d)| d.needs_value() && !given.contains(*n))
+        .map(|(n, _)| format!("it needs input {n:?}"))
+}
+
 fn key(k: &str) -> PathSegment {
     PathSegment::Key(k.to_owned())
 }
@@ -167,6 +230,7 @@ enum Found {
     Conn(ConnId),
     Bad(String),
     Unsupported(String),
+    Scope(ScopeName, Option<String>),
 }
 
 /// `base` followed by `more`.
@@ -183,7 +247,7 @@ impl Flow {
         if !unsupported.is_empty() {
             return Err(unsupported);
         }
-        serde_path_to_error::deserialize(json).map_err(|e| {
+        let wire: super::Wire = serde_path_to_error::deserialize(json).map_err(|e| {
             let path = e
                 .path()
                 .iter()
@@ -198,7 +262,8 @@ impl Flow {
                 Code::Invalid,
                 e.into_inner().to_string(),
             )]
-        })
+        })?;
+        Flow::try_from(wire).map_err(|e| vec![Problem::new(e.path, Code::Invalid, e.message)])
     }
 }
 
@@ -327,6 +392,8 @@ pub fn validate(flow: &Flow, ctx: &Context) -> Report {
         seen: BTreeSet::new(),
         acted_on: BTreeSet::new(),
         outputs: &flow.outputs,
+        params: &flow.params,
+        placing: false,
     };
 
     if flow.name.trim().is_empty() {
@@ -348,6 +415,12 @@ pub fn validate(flow: &Flow, ctx: &Context) -> Report {
             format!("another flow already has slug {:?}", flow.slug),
         );
     }
+
+    if flow.is_instance() {
+        v.instance(flow);
+        return v.report;
+    }
+    v.template(flow);
 
     for (i, trigger) in flow.triggers.iter().enumerate() {
         let at = |k: &str| path![key("triggers"), index(i), key(k)];
@@ -473,9 +546,232 @@ struct Validation<'a> {
     acted_on: BTreeSet<ConnId>,
     /// What a `stop` step may hand back.
     outputs: &'a BTreeMap<String, serde_json::Map<String, Value>>,
+    /// The flow's own params, which `{scope: "params"}` refs name.
+    params: &'a BTreeMap<String, ParamDef>,
+    /// Checking an instance's bindings, whose `{scope}` refs
+    /// `compose::check_bindings` has checked where it's placed.
+    placing: bool,
 }
 
 impl<'a> Validation<'a> {
+    /// An instance (composition §9): its template exists and isn't an
+    /// instance, its bindings fit, and its `forEach` reads what it can.
+    fn instance(&mut self, flow: &Flow) {
+        let id = flow.template.as_deref().unwrap_or_default();
+        let at_template = path![key("template")];
+        let Some(template) = self.ctx.flows.get(id) else {
+            self.error(
+                at_template,
+                Code::UnknownTemplate,
+                format!("no flow {id:?}"),
+            );
+            return;
+        };
+        if template.is_instance() {
+            self.error(
+                at_template,
+                Code::TemplateIsInstance,
+                format!(
+                    "{:?} is itself an instance; use its template, {:?}",
+                    template.name,
+                    template.template.as_deref().unwrap_or_default()
+                ),
+            );
+            return;
+        }
+        if template.id == flow.id {
+            self.error(
+                at_template,
+                Code::RecursiveTemplate,
+                "a flow can't be an instance of itself".into(),
+            );
+            return;
+        }
+        let for_each = flow.for_each.is_some();
+        self.placing = true;
+        for p in compose::check_bindings(&template.params, &flow.bindings, for_each) {
+            self.report.errors.push(p);
+        }
+        for (name, binding) in &flow.bindings {
+            let at = path![key("params"), key(name)];
+            self.source(at.clone(), binding);
+            if let Some(def) = template.params.get(name)
+                && compose::ParamKind::of(def) == compose::ParamKind::Flow
+                && let Some(Value::String(bound)) = binding.literal()
+            {
+                self.flow_param_fits(at, template, name, bound);
+            }
+        }
+        if let Some(fe) = &flow.for_each {
+            let at = path![key("forEach")];
+            match &fe.from {
+                compose::ItemsFrom::Items(items) => self.source(join(&at, &[key("items")]), items),
+                compose::ItemsFrom::Targets(targets) => {
+                    let conns = self.ctx.conns;
+                    for (rel, issue) in targets.problems(&|c| conns.contains_key(c)) {
+                        let (Issue::Unknown(m) | Issue::Bad(m)) = issue;
+                        let path = join(&at, &[key("targets")])
+                            .into_iter()
+                            .chain(rel)
+                            .collect();
+                        self.error(path, Code::UnknownConnection, m);
+                    }
+                    for (rel, e) in targets.exprs() {
+                        let path = join(&at, &[key("targets")])
+                            .into_iter()
+                            .chain(rel)
+                            .collect();
+                        self.expr(path, e);
+                    }
+                }
+            }
+            if let Some(k) = &fe.key {
+                self.expr(join(&at, &[key("key")]), k);
+            }
+        }
+    }
+
+    /// A template's params: names, defaults that fit, and saving it
+    /// doesn't break an instance (composition §5).
+    fn template(&mut self, flow: &Flow) {
+        for (name, def) in &flow.params {
+            let at = path![key("params"), key(name)];
+            if !is_identifier(name) {
+                self.error(
+                    at.clone(),
+                    Code::BadId,
+                    format!("param {name:?} isn't a name"),
+                );
+            }
+            if let Some(default) = &def.default {
+                let at = join(&at, &[key("default")]);
+                match compose::ParamKind::of(def) {
+                    compose::ParamKind::Value => {
+                        self.source(at.clone(), default);
+                        self.fits(at, default, &def.schema());
+                    }
+                    kind => match default.literal() {
+                        Some(Value::String(bound)) if kind == compose::ParamKind::Flow => {
+                            self.flow_param_fits(at, flow, name, bound)
+                        }
+                        Some(Value::String(_)) => {}
+                        _ => self.error(
+                            at,
+                            Code::TemplateNotLiteral,
+                            format!("{name:?} holds a template: its default is the template's ID"),
+                        ),
+                    },
+                }
+            }
+        }
+        let instances = self
+            .ctx
+            .flows
+            .values()
+            .filter(|f| f.template.as_deref() == Some(flow.id.as_str()) && !flow.id.is_empty());
+        let broken = compose::broken_instances(
+            &flow.params,
+            instances.map(|f| (f.name.as_str(), &f.bindings, f.for_each.is_some())),
+        );
+        if !broken.is_empty() {
+            let list: Vec<String> = broken
+                .iter()
+                .map(|(name, why)| format!("{name:?} ({})", why.join("; ")))
+                .collect();
+            self.error(
+                path![key("params")],
+                Code::BadInstance,
+                format!(
+                    "this change would break {} instance{}: {}",
+                    broken.len(),
+                    if broken.len() == 1 { "" } else { "s" },
+                    list.join(", ")
+                ),
+            );
+        }
+    }
+
+    /// The flow a `flow` param is bound to can be called by every `call`
+    /// step that uses the param, with the inputs it gives (composition §1.2).
+    fn flow_param_fits(&mut self, at: Path, template: &Flow, param: &str, bound: &str) {
+        let Some(callee) = self.ctx.effective(bound) else {
+            self.error(
+                at,
+                Code::BadInstance,
+                format!("{param:?}: no flow {bound:?}"),
+            );
+            return;
+        };
+        if callee.for_each.is_some() || callee.is_abstract() {
+            let why = if callee.is_abstract() {
+                "a template with a required param, which only runs through its instances"
+            } else {
+                "a flow per item, so a call can't name one of them"
+            };
+            self.error(
+                at,
+                Code::BadInstance,
+                format!("{param:?} is bound to {:?}: {why}", callee.name),
+            );
+            return;
+        }
+        let mut calls = Vec::new();
+        each_step(&template.body, &mut |step| {
+            if let StepKind::Call {
+                flow: super::FlowRef::Param { param: p },
+                inputs,
+                ..
+            } = &step.kind
+                && p == param
+            {
+                calls.push((
+                    step.id.clone(),
+                    inputs.keys().cloned().collect::<BTreeSet<_>>(),
+                ));
+            }
+        });
+        for (step, given) in calls {
+            let why = call_problem(&callee, &given);
+            if let Some(why) = why {
+                self.error(
+                    at.clone(),
+                    Code::BadInstance,
+                    format!(
+                        "{param:?} is bound to {:?}, which step {step:?} can't call: {why}",
+                        callee.name
+                    ),
+                );
+            }
+        }
+    }
+
+    /// A `{scope}` ref in a flow's steps: `params.<name>` of its own params.
+    fn scope_ref(&mut self, at: Path, scope: ScopeName, first: Option<String>) {
+        if self.placing {
+            return;
+        }
+        match scope {
+            ScopeName::Params if self.params.is_empty() => self.error(
+                at,
+                Code::NotInScope,
+                "this flow has no params; a flow that's placed with params declares them".into(),
+            ),
+            ScopeName::Params => match first {
+                Some(name) if !self.params.contains_key(&name) => self.error(
+                    at,
+                    Code::UnknownParam,
+                    format!("the flow has no param {name:?}"),
+                ),
+                _ => {}
+            },
+            other => self.error(
+                at,
+                Code::NotInScope,
+                format!("{:?} isn't in scope in a flow's steps", other.as_str()),
+            ),
+        }
+    }
+
     fn error(&mut self, path: Path, code: Code, message: String) {
         self.report.errors.push(Problem::new(path, code, message));
     }
@@ -680,6 +976,13 @@ impl<'a> Validation<'a> {
                 found.push((at.clone(), Found::Conn(conn.clone())))
             }
             Part::Ref(Ref::Root { .. }) => {}
+            Part::Ref(Ref::Scope { scope, path }) => {
+                let first = match path.first() {
+                    Some(PathSegment::Key(k)) => Some(k.clone()),
+                    _ => None,
+                };
+                found.push((at.clone(), Found::Scope(*scope, first)))
+            }
             Part::Transform(t) => {
                 if t.is_reducer() {
                     found.push((
@@ -707,6 +1010,7 @@ impl<'a> Validation<'a> {
                 Found::Conn(_) => {}
                 Found::Bad(message) => self.error(at, Code::BadValue, message),
                 Found::Unsupported(message) => self.error(at, Code::Unsupported, message),
+                Found::Scope(name, first) => self.scope_ref(at, name, first),
             }
         }
     }
@@ -913,10 +1217,53 @@ impl<'a> Validation<'a> {
                 for (name, input) in inputs {
                     self.source(join(here, &[key("inputs"), key(name)]), input);
                 }
-                let Some(callee) = self.ctx.flows.get(flow) else {
+                let flow = match flow {
+                    super::FlowRef::Id(id) => id,
+                    super::FlowRef::Param { param } => {
+                        // The bound flow is checked where the param is bound.
+                        match self.params.get(param) {
+                            Some(def) if compose::ParamKind::of(def) == compose::ParamKind::Flow => {}
+                            Some(_) => self.error(
+                                at("flow"),
+                                Code::Invalid,
+                                format!("param {param:?} doesn't hold a flow: declare it with `kind: \"flow\"`"),
+                            ),
+                            None => self.error(
+                                at("flow"),
+                                Code::UnknownParam,
+                                format!("the flow has no param {param:?}"),
+                            ),
+                        }
+                        return;
+                    }
+                };
+                let Some(callee) = self.ctx.effective(flow) else {
                     self.error(at("flow"), Code::UnknownFlow, format!("no flow {flow:?}"));
                     return;
                 };
+                if callee.for_each.is_some() {
+                    self.error(
+                        at("flow"),
+                        Code::NotCallable,
+                        format!(
+                            "{:?} is a flow per item, so a call can't name one of them",
+                            callee.name
+                        ),
+                    );
+                    return;
+                }
+                if callee.is_abstract() {
+                    self.error(
+                        at("flow"),
+                        Code::UnboundParam,
+                        format!(
+                            "{:?} has a required param with no default, so it only runs through its instances",
+                            callee.name
+                        ),
+                    );
+                    return;
+                }
+                let callee = &callee;
                 if !callee
                     .triggers
                     .iter()

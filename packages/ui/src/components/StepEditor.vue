@@ -666,7 +666,18 @@ function toggleElse() {
       class="call"
     >
       <div class="row">
-        <div class="field">
+        <div
+          v-if="typeof step.flow === 'object'"
+          class="field"
+        >
+          <span class="label">Flow</span>
+          <span>The flow in param <code>{{ step.flow.param }}</code></span>
+          <small class="hint">The template's instances say which flow (composition §1.2).</small>
+        </div>
+        <div
+          v-else
+          class="field"
+        >
           <label :for="`${prefix}-flow`">Flow</label>
           <select
             :id="`${prefix}-flow`"

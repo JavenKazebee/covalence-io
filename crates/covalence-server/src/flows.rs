@@ -7,12 +7,15 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use covalence_core::expr;
-use covalence_core::flow::runtime::{CancelError, FireError, FireOutcome, RunInfo};
+use covalence_core::flow::runtime::{
+    CancelError, FireError, FireOutcome, Placement, RunInfo, Runtime,
+};
 use covalence_core::flow::{self, Flow};
 use covalence_core::journal::Origin;
 use covalence_core::state::ConnId;
+use covalence_core::{compose, expr};
 use covalence_protocol::plugin::Manifest;
+use covalence_protocol::state::PathSegment;
 use serde::Deserialize;
 use serde_json::{Value as JsonValue, json};
 
@@ -24,6 +27,7 @@ pub(crate) fn routes() -> Router<Arc<App>> {
     Router::new()
         .merge(entity::routes::<Flow>())
         .route("/flows/{id}/run", post(run))
+        .route("/flows/{id}/detach", post(detach))
         .route("/runs", get(runs))
         .route("/runs/{run}", get(one_run))
         .route("/runs/{run}/cancel", post(cancel))
@@ -77,13 +81,115 @@ async fn run(
     Ok(Json(body))
 }
 
+/// Filters on `GET /runs` and `GET /journal` (composition spec §5).
+#[derive(Default, Deserialize)]
+pub(crate) struct InstanceFilter {
+    /// Inside this instance, at any depth.
+    pub instance: Option<String>,
+    /// That item of it, with `instance`: the key's text, as in brackets.
+    pub key: Option<String>,
+    /// Inside any instance of this template, at any depth.
+    pub template: Option<String>,
+}
+
+impl InstanceFilter {
+    pub fn is_empty(&self) -> bool {
+        self.instance.is_none() && self.template.is_none()
+    }
+
+    pub fn matches(&self, chain: Option<&[compose::Link]>) -> bool {
+        if self.is_empty() {
+            return true;
+        }
+        let Some(chain) = chain else { return false };
+        let key = self.key.as_deref().map(key_segment);
+        self.instance
+            .as_deref()
+            .is_none_or(|i| compose::chain_has(chain, i, key.as_ref()))
+            && self
+                .template
+                .as_deref()
+                .is_none_or(|t| compose::chain_uses(chain, t))
+    }
+}
+
+/// A key as a query string gives it: a whole number is an index.
+fn key_segment(text: &str) -> PathSegment {
+    match text.parse::<i64>() {
+        Ok(i) => PathSegment::Index(i),
+        Err(_) => PathSegment::Key(text.trim_matches('"').to_owned()),
+    }
+}
+
 #[derive(Deserialize)]
 struct RunsQuery {
     flow: Option<String>,
+    #[serde(flatten)]
+    filter: InstanceFilter,
 }
 
 async fn runs(State(app): State<Arc<App>>, Query(query): Query<RunsQuery>) -> Json<Vec<RunInfo>> {
-    Json(app.runtime().runs(query.flow.as_deref()))
+    let runs = app.runtime().runs(query.flow.as_deref());
+    Json(
+        runs.into_iter()
+            .filter(|r| query.filter.matches(r.instance.as_deref()))
+            .collect(),
+    )
+}
+
+/// Turns an instance into plain flows with no link back (composition
+/// spec §5): its template's steps copied in, and its params as their own,
+/// defaulting to what they were bound to. A `forEach` instance becomes one
+/// flow per current item, with the item written in.
+async fn detach(State(app): State<Arc<App>>, Path(id): Path<String>) -> ApiResult<Json<JsonValue>> {
+    let _saving = app.saving.lock().unwrap_or_else(|e| e.into_inner());
+    let flows = read(&app.flows).clone();
+    let instance = flows
+        .get(&id)
+        .ok_or_else(|| entity::not_found::<Flow>(&id))?;
+    let template = instance
+        .template
+        .as_ref()
+        .and_then(|t| flows.get(t))
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::CONFLICT,
+                format!("flow {:?} isn't an instance of a template", instance.name),
+            )
+        })?;
+    let plain = |item: Option<&compose::Item>| Flow {
+        template: None,
+        for_each: None,
+        bindings: BTreeMap::new(),
+        params: compose::detached_params(&template.params, &instance.bindings, item),
+        ..instance.instance_of(template)
+    };
+    let mut detached = Vec::new();
+    match &instance.for_each {
+        None => detached.push(plain(None)),
+        Some(_) => {
+            let mut taken: BTreeSet<String> = flows
+                .values()
+                .filter(|f| f.id != id)
+                .map(|f| f.slug.clone())
+                .collect();
+            for item in app.runtime().items(&id).unwrap_or_default() {
+                let key = compose::key_text(&item.key);
+                let mut flow = plain(Some(&item));
+                flow.id = ulid::Ulid::generate().to_string();
+                flow.name = format!("{} {}", instance.name, key.trim_matches('"'));
+                flow.slug = flow::derive_slug(&flow.name, &taken);
+                taken.insert(flow.slug.clone());
+                detached.push(flow);
+            }
+            // The instance goes; its items are plain flows now.
+            app.delete_locked::<Flow>(&id).map_err(ApiError::internal)?;
+        }
+    }
+    for flow in &detached {
+        app.put(flow.clone()).map_err(ApiError::internal)?;
+    }
+    Ok(Json(json!({ "flows": detached })))
 }
 
 async fn one_run(State(app): State<Arc<App>>, Path(run): Path<String>) -> ApiResult<Json<RunInfo>> {
@@ -147,6 +253,21 @@ async fn evaluate(
     }
     out.insert("reads".into(), json!(evaluation.reads.text));
     Ok(Json(JsonValue::Object(out)))
+}
+
+/// Makes the runtime run `flow` as it should (composition spec §9): an
+/// instance with its template's steps, a template by itself unless it's
+/// abstract, or a plain flow. `flows` is every flow, by ID.
+pub(crate) fn place(runtime: &Runtime, flow: &Flow, flows: &BTreeMap<String, Flow>) {
+    let template = flow.template.as_ref().and_then(|t| flows.get(t));
+    match Placement::of(flow, template) {
+        Some(p) => runtime.place(p),
+        None => {
+            if let Err(e) = runtime.remove_flow(&flow.id) {
+                tracing::error!(flow = %flow.id, "cannot end a flow that no longer runs: {e}");
+            }
+        }
+    }
 }
 
 impl EntityKind for Flow {
@@ -227,8 +348,43 @@ impl EntityKind for Flow {
     }
 
     fn apply(&self, app: &App) -> Result<(), SaveError> {
-        app.runtime.set_flow(self.clone());
+        let flows = read(&app.flows).clone();
+        place(&app.runtime, self, &flows);
+        // A template's instances run its new steps and params.
+        if !self.is_instance() {
+            for instance in flows
+                .values()
+                .filter(|f| f.template.as_deref() == Some(self.id.as_str()))
+            {
+                match Placement::of(instance, Some(self)) {
+                    Some(p) => app.runtime.place(p),
+                    None => {
+                        let _ = app.runtime.remove_flow(&instance.id);
+                    }
+                }
+            }
+        }
         Ok(())
+    }
+
+    /// A template with instances stays until they're detached or deleted
+    /// (composition spec §5).
+    fn deletable(app: &App, id: &str) -> Result<(), String> {
+        let flows = read(&app.flows);
+        let instances: Vec<String> = flows
+            .values()
+            .filter(|f| f.template.as_deref() == Some(id))
+            .map(|f| format!("{:?}", f.name))
+            .collect();
+        if instances.is_empty() {
+            Ok(())
+        } else {
+            Err(format!(
+                "it's the template of {}; detach or delete {} first",
+                instances.join(", "),
+                if instances.len() == 1 { "it" } else { "them" }
+            ))
+        }
     }
 
     /// Cancels its runs. The flow is gone either way, so a journal error is
@@ -238,5 +394,31 @@ impl EntityKind for Flow {
             tracing::error!(flow = %id, "cannot journal the end of a deleted flow's runs: {e}");
         }
         Ok(())
+    }
+}
+
+impl App {
+    /// A journal entry as the API sends it: each link of its instance chain
+    /// with the instance's and the template's names as they are now
+    /// (composition spec §5). The entry itself keeps only IDs.
+    pub(crate) fn with_names(&self, entry: &covalence_core::journal::Entry) -> JsonValue {
+        let mut json = serde_json::to_value(entry).unwrap_or_default();
+        let Some(links) = json.get_mut("instance").and_then(JsonValue::as_array_mut) else {
+            return json;
+        };
+        let flows = read(&self.flows);
+        for link in links {
+            for (field, named) in [("instance", "name"), ("template", "templateName")] {
+                let name = link
+                    .get(field)
+                    .and_then(JsonValue::as_str)
+                    .and_then(|id| flows.get(id))
+                    .map(|f| f.name.clone());
+                if let (Some(name), Some(obj)) = (name, link.as_object_mut()) {
+                    obj.insert(named.into(), JsonValue::String(name));
+                }
+            }
+        }
+        json
     }
 }

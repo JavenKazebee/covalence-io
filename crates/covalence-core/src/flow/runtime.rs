@@ -26,13 +26,15 @@ use tokio::time::Instant;
 use super::{
     Cond, Edge, EventSource, Flow, FlowId, OnError, SetTarget, Step, StepKind, StopStatus, Trigger,
 };
+use crate::compose::{self, ForEach, InstanceChain, Link};
 use crate::core_conn;
+use crate::dataflow::CellDef;
 use crate::engine::{ActionRequest, Actions, CoreError};
 use crate::expr::{Evaluation, Evaluator, ExprError, Reads, Scope, json_to_value, to_json, truthy};
 use crate::gate::Verdict;
 use crate::journal::{
-    BlockReason, EventRecord, JournalError, JournalOp, NewEntry, Origin, Record, RunError,
-    RunFinishedRecord, RunStartedRecord, RunStatus, RunStepRecord, Seq, StatePatchRecord,
+    BlockReason, EventRecord, InstanceRecord, JournalError, JournalOp, NewEntry, Origin, Record,
+    RunError, RunFinishedRecord, RunStartedRecord, RunStatus, RunStepRecord, Seq, StatePatchRecord,
     StepDetail, StepStatus, TriggerMatchedRecord,
 };
 use crate::select::{ControlView, Pattern, Target, TargetView};
@@ -84,6 +86,12 @@ pub struct RunInfo {
     /// What a `stop` step handed back (spec §2.3).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub outputs: Option<serde_json::Value>,
+    /// The instances it ran inside (composition spec §5).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instance: Option<InstanceChain>,
+    /// Their params when it started.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub params: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -170,6 +178,94 @@ struct Inner {
     /// Event triggers by the root of the paths they can match; `None`
     /// for those that can match any.
     index: RwLock<EventIndex>,
+    /// Where each placed flow runs, by its slot's ID.
+    places: RwLock<BTreeMap<FlowId, Arc<Place>>>,
+    /// `forEach` instances, by the instance's ID (composition spec §4).
+    lists: Mutex<BTreeMap<FlowId, List>>,
+    /// Keeps params' cells (composition spec §1), once the owner sets it.
+    cells: RwLock<Option<Arc<dyn Cells>>>,
+}
+
+/// Where a placed flow runs (composition spec §1.1): its home in the state
+/// tree, and the instances it's inside.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Place {
+    /// `flow.<slug>`, or for an item of a `forEach` instance,
+    /// `flow.<slug>.items[<key>]`.
+    pub home: StatePath,
+    pub instance: Option<InstanceChain>,
+}
+
+impl Place {
+    /// A flow's own home, outside any instance.
+    pub fn of(flow: &Flow) -> Place {
+        Place {
+            home: StatePath::new(STATE_ROOT, vec![PathSegment::Key(flow.slug.clone())]),
+            instance: None,
+        }
+    }
+
+    /// `params` in its expressions: `<home>.params`.
+    fn named(&self) -> Vec<(String, StatePath)> {
+        vec![("params".to_owned(), self.home.key("params"))]
+    }
+}
+
+/// Keeps cells for the runtime: the dataflow graph.
+pub trait Cells: Send + Sync {
+    /// Makes the cells whose IDs start with `prefix` exactly `cells`.
+    fn replace(&self, prefix: &str, cells: Vec<CellDef>);
+}
+
+impl Cells for crate::dataflow::Dataflow {
+    fn replace(&self, prefix: &str, cells: Vec<CellDef>) {
+        crate::dataflow::Dataflow::replace(self, prefix, cells, None);
+    }
+}
+
+/// A flow to run (composition spec §9): a plain flow, a template run by
+/// itself with its params' defaults, or an instance with its template's
+/// steps, its params' sources and its items.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Placement {
+    /// What runs: for an instance, its template's steps with its identity.
+    pub flow: Flow,
+    /// Each param's source: the instance's binding, or the default.
+    pub bound: Vec<(String, Source<serde_json::Value>)>,
+    pub for_each: Option<ForEach>,
+}
+
+impl Placement {
+    /// How `flow` runs, given its template if it's an instance. `None` for
+    /// one that doesn't run by itself: an abstract template, or an instance
+    /// whose template is missing.
+    pub fn of(flow: &Flow, template: Option<&Flow>) -> Option<Placement> {
+        match (&flow.template, template) {
+            (Some(_), Some(t)) => Some(Placement {
+                bound: compose::bound(&t.params, &flow.bindings),
+                for_each: flow.for_each.clone(),
+                flow: flow.instance_of(t),
+            }),
+            (Some(_), None) => None,
+            (None, _) if flow.is_abstract() => None,
+            (None, _) => Some(Placement {
+                bound: compose::bound(&flow.params, &BTreeMap::new()),
+                for_each: None,
+                flow: flow.clone(),
+            }),
+        }
+    }
+}
+
+/// A `forEach` instance's items as they're placed.
+struct List {
+    placement: Arc<Placement>,
+    /// Each placed item, by key: its index and value.
+    items: BTreeMap<PathSegment, compose::Item>,
+    /// What the list read, so a change to it lists the items again.
+    reads: std::collections::BTreeSet<StatePath>,
+    /// How many items were past the limit, last time.
+    dropped: usize,
 }
 
 /// Event triggers, by flow and index, under the root they can match.
@@ -203,6 +299,7 @@ struct Book {
 
 struct Slot {
     flow: Arc<Flow>,
+    place: Arc<Place>,
     /// Started runs that haven't finished, oldest first.
     running: Vec<RunId>,
     /// `queue` runs waiting to start.
@@ -220,6 +317,9 @@ struct Live {
     done: watch::Receiver<bool>,
     /// The task's half of `cancel` and `done`, until the run is started.
     pending: Option<(watch::Receiver<bool>, watch::Sender<bool>)>,
+    /// Why it was cancelled, when that's more than "cancelled": its
+    /// instance ended with its item (`removed`).
+    reason: Option<RunError>,
 }
 
 impl Live {
@@ -233,6 +333,7 @@ impl Live {
             cancel,
             done,
             pending: Some((cancel_rx, done_tx)),
+            reason: None,
         }
     }
 }
@@ -252,6 +353,9 @@ impl Runtime {
             patterns: Mutex::new(BTreeMap::new()),
             targets: RwLock::new(Arc::new(BTreeMap::new())),
             index: RwLock::new(BTreeMap::new()),
+            places: RwLock::new(BTreeMap::new()),
+            lists: Mutex::new(BTreeMap::new()),
+            cells: RwLock::new(None),
         });
         // Subscribed before anything can be journaled, so `sys:startup`
         // reaches the matcher.
@@ -293,6 +397,13 @@ impl Runtime {
             .write()
             .unwrap_or_else(|e| e.into_inner()) =
             Arc::new(targets.into_iter().map(|t| (t.conn.clone(), t)).collect());
+        // Lists of targets follow the connections.
+        self.inner.sync_lists(None, true);
+    }
+
+    /// Sets what keeps params' cells: the dataflow graph.
+    pub fn set_cells(&self, cells: Arc<dyn Cells>) {
+        *self.inner.cells.write().unwrap_or_else(|e| e.into_inner()) = Some(cells);
     }
 
     /// Journals `sys:startup` (dataflow §3), once the flows are loaded, so
@@ -311,50 +422,92 @@ impl Runtime {
             .seq)
     }
 
-    /// Adds or replaces a flow. Runs already active keep the copy they started with.
+    /// Adds or replaces a plain flow, or a template that runs by itself
+    /// with its params' defaults. Runs already active keep the copy they
+    /// started with.
     pub fn set_flow(&self, flow: Flow) {
-        let inner = &self.inner;
-        let mut book = inner.book();
-        let old_slug = book.flows.get(&flow.id).map(|s| s.flow.slug.clone());
-        if let Some(old) = old_slug.filter(|old| *old != flow.slug) {
-            inner.delete_state(&old);
-        }
-        let slot = book
-            .flows
-            .entry(flow.id.clone())
-            .and_modify(|slot| slot.flow = Arc::new(flow.clone()))
-            .or_insert_with(|| Slot {
-                flow: Arc::new(flow.clone()),
-                running: Vec::new(),
-                queue: VecDeque::new(),
-            });
-        let seq = inner.shared.journal.last_seq().unwrap_or(0);
-        inner.publish_running(slot, seq);
-        inner.reindex(&book);
-        drop(book);
-        inner.baseline(&flow);
-    }
-
-    /// Removes a flow, cancels its runs and deletes `flow.<slug>`.
-    pub fn remove_flow(&self, id: &str) -> Result<(), JournalError> {
-        let inner = &self.inner;
-        let mut book = inner.book();
-        let Some(slot) = book.flows.remove(id) else {
-            return Ok(());
-        };
-        inner.watches().retain(|(flow, _), _| flow != id);
-        inner.pattern_watches().retain(|(flow, _), _| flow != id);
-        inner.reindex(&book);
-        inner.delete_state(&slot.flow.slug);
-        for run in &slot.running {
-            if let Some(live) = book.live.get(run) {
-                live.cancel.send_replace(true);
+        match Placement::of(&flow, None) {
+            Some(p) => self.place(p),
+            // An abstract template only runs through its instances.
+            None => {
+                let _ = self.remove_flow(&flow.id);
             }
         }
-        for run in slot.queue {
-            inner.drop_queued(&mut book, &run)?;
+    }
+
+    /// Adds or replaces a flow as it runs (composition spec §9): its params
+    /// become cells at `<home>.params`, and with `forEach`, it runs once per
+    /// item, each at `flow.<slug>.items[<key>]`.
+    pub fn place(&self, placement: Placement) {
+        let inner = &self.inner;
+        let id = placement.flow.id.clone();
+        match placement.for_each.clone() {
+            None => {
+                inner.drop_list(&id);
+                let place = Place {
+                    instance: placement.flow.template.as_ref().map(|t| {
+                        vec![Link {
+                            template: t.clone(),
+                            instance: id.clone(),
+                            key: None,
+                        }]
+                    }),
+                    ..Place::of(&placement.flow)
+                };
+                inner.put_cells(
+                    &compose::param_prefix(&id, None),
+                    &place.home,
+                    &placement.bound,
+                    &[],
+                );
+                inner.put_slot(placement.flow, place);
+            }
+            Some(_) => {
+                // The instance itself doesn't run; its items do.
+                if inner.book().flows.contains_key(&id) {
+                    let _ = inner.remove_slot(&id, None);
+                }
+                inner.put_cells(
+                    &compose::param_prefix(&id, None),
+                    &Place::of(&placement.flow).home,
+                    &[],
+                    &[],
+                );
+                let mut lists = inner.lists();
+                let list = lists.entry(id.clone()).or_insert_with(|| List {
+                    placement: Arc::new(placement.clone()),
+                    items: BTreeMap::new(),
+                    reads: Default::default(),
+                    dropped: 0,
+                });
+                let changed = *list.placement != placement;
+                list.placement = Arc::new(placement);
+                drop(lists);
+                inner.sync_list(&id, changed);
+            }
         }
-        Ok(())
+    }
+
+    /// A `forEach` instance's current items, in list order.
+    pub fn items(&self, id: &str) -> Option<Vec<compose::Item>> {
+        let lists = self.inner.lists();
+        let mut items: Vec<compose::Item> = lists.get(id)?.items.values().cloned().collect();
+        items.sort_by_key(|i| i.index);
+        Some(items)
+    }
+
+    /// Removes a flow, cancels its runs and deletes `flow.<slug>`; for a
+    /// `forEach` instance, every item's.
+    pub fn remove_flow(&self, id: &str) -> Result<(), JournalError> {
+        let inner = &self.inner;
+        inner.drop_list(id);
+        inner.put_cells(
+            &compose::param_prefix(id, None),
+            &StatePath::root(STATE_ROOT),
+            &[],
+            &[],
+        );
+        inner.remove_slot(id, None)
     }
 
     /// Fires a flow's `api` trigger (`POST /flows/{id}/run`), with `inputs`
@@ -501,7 +654,7 @@ async fn match_events(
         } else {
             Origin::system()
         };
-        for (flow, trigger, payload) in inner.event_matches(event) {
+        for (flow, trigger, payload) in inner.event_matches(event, entry.instance.as_ref()) {
             // A false filter journals nothing (spec §8.2).
             if let Trigger::Event {
                 filter: Some(filter),
@@ -617,14 +770,17 @@ async fn watch_state(inner: Arc<Inner>, mut feed: TurnFeed) {
                 Err(_) => break,
             }
         }
-        // After a lag every state trigger is evaluated again.
+        // After a lag every state trigger, and every list, is evaluated again.
         inner.check_watches(dirty.as_ref());
+        inner.sync_lists(dirty.as_ref(), false);
         feed.done();
     }
 }
 
 /// What a run adds to an expression's scope.
 struct RunScope<'a> {
+    /// `params`: the instance's, at its home.
+    named: &'a [(String, StatePath)],
     input: &'a Value,
     local: &'a BTreeMap<String, Value>,
     steps: &'a BTreeMap<String, Value>,
@@ -690,7 +846,11 @@ impl Inner {
 
     /// The enabled flows an event fires, each by its first matching
     /// trigger, with the trigger payload (dataflow §3.1).
-    fn event_matches(&self, event: &EventRecord) -> Vec<(Arc<Flow>, usize, Value)> {
+    fn event_matches(
+        &self,
+        event: &EventRecord,
+        instance: Option<&InstanceChain>,
+    ) -> Vec<(Arc<Flow>, usize, Value)> {
         let keys: Vec<(FlowId, usize)> = {
             let index = self.index.read().unwrap_or_else(|e| e.into_inner());
             let root = index
@@ -750,6 +910,10 @@ impl Inner {
                         Value::Map(vec![("conn".into(), t.conn.as_str().into())]),
                     ));
                 }
+                if let Some(chain) = instance {
+                    let json = serde_json::to_value(chain).unwrap_or_default();
+                    payload.push(("instance".into(), json_to_value(&json)));
+                }
                 for (name, field) in [
                     ("surface", &event.surface),
                     ("layer", &event.layer),
@@ -785,11 +949,12 @@ impl Inner {
         source_matches(from, event, aliases, &mut eval, view)
     }
 
-    /// Journals a flow's own event at `flow.<slug>` (flows spec §1.1).
+    /// Journals a flow's own event at its home: `flow.<slug>` (flows spec
+    /// §1.1), or an item's.
     fn flow_event(
         &self,
         origin: Origin,
-        slug: &str,
+        place: &Place,
         run: &str,
         name: &str,
         payload: Vec<(Value, Value)>,
@@ -797,18 +962,15 @@ impl Inner {
     ) -> Result<Seq, JournalError> {
         let mut fields: Vec<(Value, Value)> = vec![("run".into(), run.into())];
         fields.extend(payload);
-        let record = EventRecord::at(
-            StatePath::new("flow", vec![PathSegment::Key(slug.to_owned())]),
-            name,
-            Some(Value::Map(fields)),
-        );
+        let record = EventRecord::at(place.home.clone(), name, Some(Value::Map(fields)));
         Ok(self
             .shared
             .journal
             .append(
                 NewEntry::new(origin, Record::Event(record))
                     .cause(cause)
-                    .run(run.to_owned()),
+                    .run(run.to_owned())
+                    .instance(place.instance.clone()),
             )?
             .seq)
     }
@@ -817,7 +979,7 @@ impl Inner {
     fn flow_finished(
         &self,
         origin: Origin,
-        slug: &str,
+        place: &Place,
         run: &str,
         status: RunStatus,
         error: Option<&RunError>,
@@ -829,7 +991,7 @@ impl Inner {
             .unwrap_or_default();
         self.flow_event(
             origin.clone(),
-            slug,
+            place,
             run,
             "finished",
             vec![("status".into(), status_text.into())],
@@ -842,7 +1004,7 @@ impl Inner {
             ]);
             self.flow_event(
                 origin,
-                slug,
+                place,
                 run,
                 "failed",
                 vec![("error".into(), error)],
@@ -856,10 +1018,22 @@ impl Inner {
         self.watches.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Evaluates `source` with the current aliases. `run` is a run's scope.
+    /// `params` for a flow's triggers and conditions: at its home.
+    fn named(&self, flow: &str) -> Vec<(String, StatePath)> {
+        self.places
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(flow)
+            .map(|p| p.named())
+            .unwrap_or_default()
+    }
+
+    /// Evaluates `source` with the current aliases, for `flow`. `run` is a
+    /// run's scope.
     fn evaluate(
         &self,
         source: &str,
+        flow: &str,
         trigger: Option<&Value>,
         run: Option<RunScope<'_>>,
     ) -> Evaluation {
@@ -868,8 +1042,13 @@ impl Inner {
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .clone();
+        let named = match &run {
+            Some(run) => run.named.to_vec(),
+            None => self.named(flow),
+        };
         let mut scope = Scope::new(&self.shared.state, &aliases);
         scope.trigger = trigger;
+        scope.named = &named;
         if let Some(run) = run {
             scope.input = Some(run.input);
             scope.local = run.local;
@@ -883,6 +1062,7 @@ impl Inner {
     fn evaluate_source<T: serde::Serialize>(
         &self,
         source: &Source<T>,
+        flow: &str,
         trigger: Option<&Value>,
         run: Option<RunScope<'_>>,
     ) -> source::Outcome {
@@ -891,8 +1071,13 @@ impl Inner {
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .clone();
+        let named = match &run {
+            Some(run) => run.named.to_vec(),
+            None => self.named(flow),
+        };
         let mut scope = Scope::new(&self.shared.state, &aliases);
         scope.trigger = trigger;
+        scope.named = &named;
         if let Some(run) = run {
             scope.input = Some(run.input);
             scope.local = run.local;
@@ -905,7 +1090,7 @@ impl Inner {
     /// Whether a filter or condition is truthy. A failure counts as false
     /// and is logged (spec §8.2).
     fn passes(&self, flow: &Flow, source: &str, trigger: &Value, what: &str) -> bool {
-        match self.evaluate(source, Some(trigger), None).value {
+        match self.evaluate(source, &flow.id, Some(trigger), None).value {
             Ok(value) => truthy(value.as_ref()),
             Err(e) => {
                 tracing::warn!(flow = %flow.id, "{what} failed, counting it as false: {e}");
@@ -977,7 +1162,7 @@ impl Inner {
         trigger: Option<&Value>,
         last: Option<&str>,
     ) -> ((Option<Value>, Reads), Option<String>) {
-        let outcome = self.evaluate_source(&when.0, trigger, None);
+        let outcome = self.evaluate_source(&when.0, &flow.id, trigger, None);
         let reads = Reads {
             paths: outcome.reads,
             text: Default::default(),
@@ -1261,6 +1446,7 @@ impl Inner {
             .get(flow_id)
             .expect("callers check the flow exists");
         let flow = slot.flow.clone();
+        let instance = slot.place.instance.clone();
         let busy = !slot.running.is_empty() || !slot.queue.is_empty();
         enum Plan {
             Start,
@@ -1300,7 +1486,8 @@ impl Inner {
                             .filter(|_| blocked == Some(BlockReason::Condition)),
                     }),
                 )
-                .cause(cause),
+                .cause(cause)
+                .instance(instance.clone()),
             )?
             .seq;
         if let Some(reason) = blocked {
@@ -1324,6 +1511,8 @@ impl Inner {
                 position: None,
                 error: None,
                 outputs: None,
+                instance,
+                params: None,
             },
             payload,
             input,
@@ -1396,6 +1585,7 @@ impl Inner {
         let task = RunTask {
             inner: self.clone(),
             flow: slot.flow.clone(),
+            place: slot.place.clone(),
             run: run.to_owned(),
             matched,
             cancel,
@@ -1405,6 +1595,7 @@ impl Inner {
             local: BTreeMap::new(),
             steps: BTreeMap::new(),
             started: 0,
+            named: slot.place.named(),
         };
         tokio::spawn(async move {
             for mut old in wait_for {
@@ -1431,17 +1622,18 @@ impl Inner {
                 Record::RunFinished(RunFinishedRecord {
                     run: run.to_owned(),
                     status: RunStatus::Cancelled,
-                    error: None,
+                    error: live.reason.clone(),
                     outputs: None,
                 }),
             )
             .cause(live.info.matched)
-            .run(run.to_owned()),
+            .run(run.to_owned())
+            .instance(live.info.instance.clone()),
         )?;
         if let Some(slot) = book.flows.get(&live.info.flow) {
             self.flow_finished(
                 entry.origin.clone(),
-                &slot.flow.slug,
+                &slot.place,
                 run,
                 RunStatus::Cancelled,
                 None,
@@ -1449,6 +1641,7 @@ impl Inner {
             )?;
         }
         live.info.status = RunPhase::Cancelled;
+        live.info.error = live.reason.clone();
         live.info.finished = Some(entry.seq);
         if let Some((_, done)) = live.pending.take() {
             done.send_replace(true);
@@ -1457,10 +1650,8 @@ impl Inner {
         Ok(())
     }
 
-    fn state_path(slug: &str, rest: &[&str]) -> StatePath {
-        let mut path = vec![PathSegment::Key(slug.to_owned())];
-        path.extend(rest.iter().map(|s| PathSegment::Key((*s).to_owned())));
-        StatePath::new(STATE_ROOT, path)
+    fn state_path(home: &StatePath, rest: &[&str]) -> StatePath {
+        rest.iter().fold(home.clone(), |p, k| p.key(k))
     }
 
     fn meta(seq: Seq) -> Meta {
@@ -1473,14 +1664,14 @@ impl Inner {
     }
 
     fn publish_running(&self, slot: &Slot, seq: Seq) {
-        let path = Self::state_path(&slot.flow.slug, &["running"]);
+        let path = Self::state_path(&slot.place.home, &["running"]);
         let count = Value::from(slot.running.len() as u64);
         self.shared
             .state
             .mutate(|tree| ((), tree.set(&path, &count, &Self::meta(seq))));
     }
 
-    fn publish_last_run(&self, slug: &str, info: &RunInfo, seq: Seq) {
+    fn publish_last_run(&self, home: &StatePath, info: &RunInfo, seq: Seq) {
         let mut last = vec![
             ("status".into(), status_name(info.status).into()),
             ("startedAt".into(), info.started_at.unwrap_or(0).into()),
@@ -1495,14 +1686,14 @@ impl Inner {
                 ]),
             ));
         }
-        let path = Self::state_path(slug, &["lastRun"]);
+        let path = Self::state_path(home, &["lastRun"]);
         self.shared
             .state
             .mutate(|tree| ((), tree.set(&path, &Value::Map(last), &Self::meta(seq))));
     }
 
-    fn delete_state(&self, slug: &str) {
-        let path = Self::state_path(slug, &[]);
+    fn delete_state(&self, home: &StatePath) {
+        let path = home.clone();
         self.shared.state.mutate(|tree| ((), tree.delete(&path)));
     }
 }
@@ -1567,16 +1758,18 @@ impl Inner {
         for (name, def) in &flow.inputs {
             let value = match (given.remove(name), &def.default) {
                 (Some(v), _) => Some(v),
-                (None, Some(default)) => match self.evaluate_source(default, None, None).value {
-                    Ok(v) => v.or_else(|| default.fallback().cloned()),
-                    Err(_) if !strict => default.fallback().cloned(),
-                    Err(e) => {
-                        return Err(RunError::new(
-                            "invalidInputs",
-                            format!("input {name:?}'s default failed: {}", e.message),
-                        ));
+                (None, Some(default)) => {
+                    match self.evaluate_source(default, &flow.id, None, None).value {
+                        Ok(v) => v.or_else(|| default.fallback().cloned()),
+                        Err(_) if !strict => default.fallback().cloned(),
+                        Err(e) => {
+                            return Err(RunError::new(
+                                "invalidInputs",
+                                format!("input {name:?}'s default failed: {}", e.message),
+                            ));
+                        }
                     }
-                },
+                }
                 (None, None) => None,
             };
             match value {
@@ -1611,6 +1804,284 @@ impl Inner {
     }
 }
 
+/// Placing flows: slots, params' cells and `forEach` items (composition
+/// spec §1, §4).
+impl Inner {
+    fn lists(&self) -> MutexGuard<'_, BTreeMap<FlowId, List>> {
+        self.lists.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Adds or replaces the slot a flow runs in.
+    fn put_slot(&self, flow: Flow, place: Place) {
+        let place = Arc::new(place);
+        let mut book = self.book();
+        let old_home = book.flows.get(&flow.id).map(|s| s.place.home.clone());
+        if let Some(old) = old_home.filter(|old| *old != place.home) {
+            self.delete_state(&old);
+        }
+        self.places
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(flow.id.clone(), place.clone());
+        let slot = book
+            .flows
+            .entry(flow.id.clone())
+            .and_modify(|slot| {
+                slot.flow = Arc::new(flow.clone());
+                slot.place = place.clone();
+            })
+            .or_insert_with(|| Slot {
+                flow: Arc::new(flow.clone()),
+                place: place.clone(),
+                running: Vec::new(),
+                queue: VecDeque::new(),
+            });
+        let seq = self.shared.journal.last_seq().unwrap_or(0);
+        self.publish_running(slot, seq);
+        self.reindex(&book);
+        drop(book);
+        self.baseline(&flow);
+    }
+
+    /// Removes a slot, cancels its runs (with `reason`, if there is one)
+    /// and deletes its home.
+    fn remove_slot(&self, id: &str, reason: Option<RunError>) -> Result<(), JournalError> {
+        let mut book = self.book();
+        let Some(slot) = book.flows.remove(id) else {
+            return Ok(());
+        };
+        self.places
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(id);
+        self.watches().retain(|(flow, _), _| flow != id);
+        self.pattern_watches().retain(|(flow, _), _| flow != id);
+        self.reindex(&book);
+        self.delete_state(&slot.place.home);
+        for run in &slot.running {
+            if let Some(live) = book.live.get_mut(run) {
+                live.reason = reason.clone();
+                live.cancel.send_replace(true);
+            }
+        }
+        for run in slot.queue {
+            if let Some(live) = book.live.get_mut(&run) {
+                live.reason = reason.clone();
+            }
+            self.drop_queued(&mut book, &run)?;
+        }
+        Ok(())
+    }
+
+    /// Makes an instance's params cells: `<home>.params.<name>`.
+    fn put_cells(
+        &self,
+        prefix: &str,
+        home: &StatePath,
+        bound: &[(String, Source<serde_json::Value>)],
+        values: &[(String, Value)],
+    ) {
+        let cells = self.cells.read().unwrap_or_else(|e| e.into_inner()).clone();
+        if let Some(cells) = cells {
+            cells.replace(prefix, compose::param_cells(prefix, home, bound, values));
+        }
+    }
+
+    /// Ends a `forEach` instance's items, without journaling them as
+    /// removed from the list: the instance itself went.
+    fn drop_list(&self, id: &str) {
+        let Some(list) = self.lists().remove(id) else {
+            return;
+        };
+        for key in list.items.keys() {
+            let _ = self.remove_slot(&item_id(id, key), None);
+            self.put_cells(
+                &compose::param_prefix(id, Some(key)),
+                &StatePath::root(STATE_ROOT),
+                &[],
+                &[],
+            );
+        }
+        self.delete_state(&Place::of(&list.placement.flow).home);
+    }
+
+    /// Lists the items of every `forEach` instance again: those whose
+    /// reads `dirty` touched, those over targets when `targets` changed,
+    /// or with `None`, all of them.
+    fn sync_lists(&self, dirty: Option<&Dirty>, targets: bool) {
+        let due: Vec<FlowId> = self
+            .lists()
+            .iter()
+            .filter(|(_, list)| {
+                let over_targets = matches!(
+                    list.placement.for_each.as_ref().map(|f| &f.from),
+                    Some(compose::ItemsFrom::Targets(_))
+                );
+                match dirty {
+                    _ if targets && over_targets => true,
+                    None => !targets,
+                    Some(d) => d
+                        .iter()
+                        .any(|p| list.reads.iter().any(|r| p.is_within(r) || r.is_within(p))),
+                }
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in due {
+            self.sync_list(&id, false);
+        }
+    }
+
+    /// Makes a `forEach` instance's items match its list: an added item
+    /// gets a slot and params, a removed one ends, its runs cancelled with
+    /// `removed`, both journaled (composition spec §4). `changed` is a new
+    /// placement, which every item takes.
+    fn sync_list(&self, id: &str, changed: bool) {
+        let Some((placement, old)) = self
+            .lists()
+            .get(id)
+            .map(|l| (l.placement.clone(), l.items.clone()))
+        else {
+            return;
+        };
+        let Some(for_each) = &placement.for_each else {
+            return;
+        };
+        let aliases = self.aliases();
+        let scope = Scope::new(&self.shared.state, &aliases);
+        let targets: Vec<TargetView> = self
+            .targets
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .cloned()
+            .collect();
+        let found = match compose::expand(for_each, &scope, self.evaluator.as_ref(), &targets) {
+            Ok(found) => found,
+            Err(e) => {
+                tracing::warn!(flow = %id, "forEach failed; its items stay as they were: {e}");
+                return;
+            }
+        };
+        let cause = self.latest_seq(&found.reads);
+        let root = Place::of(&placement.flow).home;
+        let template = placement.flow.template.clone().unwrap_or_default();
+        let chain = |key: &PathSegment| {
+            vec![Link {
+                template: template.clone(),
+                instance: id.to_owned(),
+                key: Some(key.clone()),
+            }]
+        };
+        let now: BTreeMap<PathSegment, compose::Item> = found
+            .items
+            .iter()
+            .map(|i| (i.key.clone(), i.clone()))
+            .collect();
+        for key in old.keys().filter(|k| !now.contains_key(*k)) {
+            let removed = RunError::new(
+                "removed",
+                format!("its item {} left the list", compose::key_text(key)),
+            );
+            if let Err(e) = self.remove_slot(&item_id(id, key), Some(removed)) {
+                tracing::error!(flow = %id, "cannot end an item: {e}");
+            }
+            self.put_cells(&compose::param_prefix(id, Some(key)), &root, &[], &[]);
+            self.journal_instance(
+                Record::InstanceRemoved(InstanceRecord {
+                    instance: chain(key),
+                }),
+                cause,
+            );
+        }
+        for (key, item) in &now {
+            let before = old.get(key);
+            if before == Some(item) && !changed {
+                continue;
+            }
+            let place = Place {
+                home: root.key("items").child(key.clone()),
+                instance: Some(chain(key)),
+            };
+            self.put_cells(
+                &compose::param_prefix(id, Some(key)),
+                &place.home,
+                &placement.bound,
+                &item.values(),
+            );
+            let mut flow = placement.flow.clone();
+            flow.id = item_id(id, key);
+            self.put_slot(flow, place);
+            if before.is_none() {
+                self.journal_instance(
+                    Record::InstanceAdded(InstanceRecord {
+                        instance: chain(key),
+                    }),
+                    cause,
+                );
+            }
+        }
+        let was_dropped = {
+            let mut lists = self.lists();
+            let Some(list) = lists.get_mut(id) else {
+                return;
+            };
+            list.items = now;
+            list.reads = found.reads;
+            std::mem::replace(&mut list.dropped, found.dropped)
+        };
+        let too_many = root.key("tooMany");
+        if found.dropped > 0 {
+            if was_dropped == 0 {
+                tracing::warn!(
+                    flow = %id,
+                    "forEach has {} items past the limit of {}; they aren't instanced",
+                    found.dropped,
+                    compose::MAX_ITEMS
+                );
+            }
+            let count = Value::from(found.dropped as u64);
+            let meta = Self::meta(self.shared.journal.last_seq().unwrap_or(0));
+            self.shared
+                .state
+                .mutate(|tree| ((), tree.set(&too_many, &count, &meta)));
+        } else if was_dropped > 0 {
+            self.shared
+                .state
+                .mutate(|tree| ((), tree.delete(&too_many)));
+        }
+    }
+
+    /// The newest entry among the leaves at or below `reads`.
+    fn latest_seq(&self, reads: &std::collections::BTreeSet<StatePath>) -> Option<Seq> {
+        self.shared.state.read(|tree| {
+            reads
+                .iter()
+                .flat_map(|r| tree.leaves_under(r).map(|(_, leaf)| leaf.meta.seq))
+                .filter(|s| *s > 0)
+                .max()
+        })
+    }
+
+    fn journal_instance(&self, record: Record, cause: Option<Seq>) {
+        let chain = match &record {
+            Record::InstanceAdded(r) | Record::InstanceRemoved(r) => Some(r.instance.clone()),
+            _ => None,
+        };
+        let entry = NewEntry::new(Origin::system(), record)
+            .cause(cause)
+            .instance(chain);
+        if let Err(e) = self.shared.journal.append(entry) {
+            tracing::error!("cannot journal an instance change: {e}");
+        }
+    }
+}
+
+/// A `forEach` item's slot: `<instance ID>[<key>]` (composition spec §6.4).
+pub fn item_id(instance: &str, key: &PathSegment) -> FlowId {
+    format!("{instance}[{}]", compose::key_text(key))
+}
+
 /// Cancels a called run if the `call` step waiting for it goes away: the
 /// caller cancelled or timed out (spec §8.3).
 struct CancelOnDrop {
@@ -1640,6 +2111,8 @@ fn object_value(object: Object) -> Value {
 struct RunTask {
     inner: Arc<Inner>,
     flow: Arc<Flow>,
+    /// Where it runs: its home and its instances, as they were when it started.
+    place: Arc<Place>,
     run: RunId,
     matched: Seq,
     cancel: watch::Receiver<bool>,
@@ -1654,6 +2127,8 @@ struct RunTask {
     steps: BTreeMap<String, Value>,
     /// The `run.started` entry, which every `run.step` points at.
     started: Seq,
+    /// `params` in expressions.
+    named: Vec<(String, StatePath)>,
 }
 
 /// How a list of steps ended.
@@ -1720,7 +2195,6 @@ impl RunTask {
         live.info.position = None;
         let seq = live.info.finished.unwrap_or(0);
 
-        let slug = self.flow.slug.clone();
         let mut next = None;
         if let Some(slot) = book.flows.get_mut(&self.flow.id) {
             slot.running.retain(|r| *r != self.run);
@@ -1728,8 +2202,8 @@ impl RunTask {
                 next = slot.queue.pop_front();
             }
             // A slug change since the run started already moved the state.
-            if slot.flow.slug == slug {
-                inner.publish_last_run(&slug, &live.info, seq);
+            if slot.place.home == self.place.home {
+                inner.publish_last_run(&self.place.home, &live.info, seq);
             }
         }
         push_recent(&mut book, live.info);
@@ -1757,7 +2231,8 @@ impl RunTask {
             .append(
                 NewEntry::new(self.origin(step), record)
                     .cause(cause)
-                    .run(self.run.clone()),
+                    .run(self.run.clone())
+                    .instance(self.place.instance.clone()),
             )?
             .seq)
     }
@@ -1768,6 +2243,7 @@ impl RunTask {
 
     fn scope(&self) -> RunScope<'_> {
         RunScope {
+            named: &self.named,
             input: &self.input,
             local: &self.local,
             steps: &self.steps,
@@ -1775,10 +2251,31 @@ impl RunTask {
         }
     }
 
+    /// The flow a param of kind `flow` holds: its ID, at `<home>.params`.
+    fn flow_param(&self, param: &str) -> Result<FlowId, RunError> {
+        match self
+            .inner
+            .shared
+            .state
+            .value(&self.place.home.key("params").key(param))
+        {
+            Some(Value::String(id)) => Ok(id.as_str().unwrap_or_default().to_owned()),
+            _ => Err(RunError::new(
+                "unboundParam",
+                format!("param {param:?} holds no flow"),
+            )),
+        }
+    }
+
     /// Evaluates an expression in the run's scope.
     fn eval(&self, source: &str) -> Result<Option<Value>, RunError> {
         self.inner
-            .evaluate(source, Some(&self.trigger), Some(self.scope()))
+            .evaluate(
+                source,
+                &self.flow.id,
+                Some(&self.trigger),
+                Some(self.scope()),
+            )
             .value
             .map_err(|e| {
                 if *self.cancel.borrow() {
@@ -1795,7 +2292,12 @@ impl RunTask {
         source: &Source<T>,
     ) -> Result<Option<serde_json::Value>, RunError> {
         self.inner
-            .evaluate_source(source, Some(&self.trigger), Some(self.scope()))
+            .evaluate_source(
+                source,
+                &self.flow.id,
+                Some(&self.trigger),
+                Some(self.scope()),
+            )
             .value
             .map_err(|e| {
                 if *self.cancel.borrow() {
@@ -1849,7 +2351,7 @@ impl RunTask {
             )?;
             self.inner.flow_finished(
                 self.origin(None),
-                &self.flow.slug,
+                &self.place,
                 &self.run,
                 RunStatus::Cancelled,
                 None,
@@ -1858,6 +2360,22 @@ impl RunTask {
             return Ok((RunStatus::Cancelled, None, None, finished, None));
         }
 
+        // The params it starts with, recorded so `why` can say which camera
+        // it was after they've moved on (composition spec §5).
+        let params: Option<Object> = match self
+            .inner
+            .shared
+            .state
+            .value(&self.place.home.key("params"))
+        {
+            Some(Value::Map(entries)) if !entries.is_empty() => Some(
+                entries
+                    .into_iter()
+                    .filter_map(|(k, v)| Some((k.as_str()?.to_owned(), v)))
+                    .collect(),
+            ),
+            _ => None,
+        };
         let started = self.append(
             None,
             Record::RunStarted(RunStartedRecord {
@@ -1865,13 +2383,14 @@ impl RunTask {
                 run: self.run.clone(),
                 mode: self.flow.concurrency,
                 inputs: self.inputs.clone(),
+                params: params.clone(),
             }),
             self.matched,
         )?;
         self.started = started;
         self.inner.flow_event(
             self.origin(None),
-            &self.flow.slug,
+            &self.place,
             &self.run,
             "started",
             Vec::new(),
@@ -1884,6 +2403,7 @@ impl RunTask {
             if let Some(live) = book.live.get_mut(&self.run) {
                 live.info.started = Some(started);
                 live.info.started_at = Some(started_at);
+                live.info.params = params.map(|p| to_json(&object_value(p)));
             }
             if let Some(slot) = book.flows.get(&self.flow.id) {
                 self.inner.publish_running(slot, started);
@@ -1891,7 +2411,7 @@ impl RunTask {
         }
 
         let flow = self.flow.clone();
-        let (mut status, run_error, outputs) = match self.run_list(&flow.body, &[]).await? {
+        let (mut status, mut run_error, outputs) = match self.run_list(&flow.body, &[]).await? {
             End::Ok => (RunStatus::Ok, None, None),
             End::Failed(e) => (RunStatus::Failed, Some(e), None),
             End::Cancelled => (RunStatus::Cancelled, None, None),
@@ -1912,6 +2432,14 @@ impl RunTask {
         if status == RunStatus::Ok && self.cancelled() {
             status = RunStatus::Cancelled;
         }
+        if status == RunStatus::Cancelled {
+            run_error = self
+                .inner
+                .book()
+                .live
+                .get(&self.run)
+                .and_then(|l| l.reason.clone());
+        }
 
         let finished = self.append(
             None,
@@ -1925,7 +2453,7 @@ impl RunTask {
         )?;
         self.inner.flow_finished(
             self.origin(None),
-            &self.flow.slug,
+            &self.place,
             &self.run,
             status,
             run_error.as_ref(),
@@ -2060,9 +2588,18 @@ impl RunTask {
                 StepKind::Branch { arms, otherwise } => {
                     self.branch(arms, otherwise.as_deref(), position).await
                 }
-                StepKind::Call { flow, inputs, wait } => Ok(self
-                    .call(id, flow, inputs, wait.unwrap_or(true), step_started)
-                    .await),
+                StepKind::Call { flow, inputs, wait } => {
+                    let flow = match flow {
+                        super::FlowRef::Id(id) => Ok(id.clone()),
+                        super::FlowRef::Param { param } => self.flow_param(param),
+                    };
+                    match flow {
+                        Ok(flow) => Ok(self
+                            .call(id, &flow, inputs, wait.unwrap_or(true), step_started)
+                            .await),
+                        Err(e) => Ok(Err(e)),
+                    }
+                }
                 StepKind::Stop {
                     status,
                     outputs,
@@ -2128,6 +2665,7 @@ impl RunTask {
         );
         req.cause = Some(step_started);
         req.run = Some(self.run.clone());
+        req.instance = self.place.instance.clone();
         req.deadline = timeout.map(|t| t.as_millis().min(u32::MAX as u128) as u32);
         // On its own task, so a timeout leaves the request running and its
         // late `action.result` is still journaled. A cancel waits for it
@@ -2300,9 +2838,12 @@ impl RunTask {
     async fn wait_until(&mut self, until: &str) -> Result<Done, RunError> {
         let mut feed = self.inner.shared.state.subscribe_turns();
         loop {
-            let Evaluation { value, reads } =
-                self.inner
-                    .evaluate(until, Some(&self.trigger), Some(self.scope()));
+            let Evaluation { value, reads } = self.inner.evaluate(
+                until,
+                &self.flow.id,
+                Some(&self.trigger),
+                Some(self.scope()),
+            );
             let value = value.map_err(|e| {
                 if self.cancelled() {
                     cancelled_error()
@@ -2398,7 +2939,8 @@ impl RunTask {
                     }),
                 )
                 .cause(step_started)
-                .run(self.run.clone());
+                .run(self.run.clone())
+                .instance(self.place.instance.clone());
                 let journal = &self.inner.shared.journal;
                 self.inner.shared.state.mutate(|tree| {
                     let seq = match journal.append(entry) {

@@ -131,11 +131,13 @@ export interface BranchStep extends StepCommon {
   else?: Step[];
 }
 
+/** A `call` step's flow: by ID, or the one a `flow` param holds (composition §1.2). */
+export type FlowRef = string | { param: string };
+
 /** Starts a flow through its `call` trigger and, unless `wait` is false, takes its outputs. */
 export interface CallStep extends StepCommon {
   kind: "call";
-  /** The flow's ID. */
-  flow: string;
+  flow: FlowRef;
   /** Each a source, evaluated when the step starts. */
   inputs?: Record<string, Source>;
   wait?: boolean;
@@ -168,6 +170,8 @@ export interface Flow {
   conditions?: Expr[];
   concurrency: Concurrency;
   failover?: "abort";
+  /** A template's params (composition §1): `params.<name>` in its steps. */
+  params?: Record<string, ParamDef>;
   /** Bound each time it starts (flow spec §8.1): `input.<name>`. */
   inputs?: Record<string, ParamDef>;
   /** What a `stop` step hands back to a caller. */
@@ -176,6 +180,29 @@ export interface Flow {
   /** View-only metadata, stored as-is. */
   editor?: Record<string, unknown>;
 }
+
+/** Where a `forEach` instance's items come from (composition §4). */
+export type ForEach = ({ items: Source } | { targets: Selector<TargetId> }) & { key?: Expr };
+
+/**
+ * An instance of a flow template (composition §9): its own identity and
+ * `enabled`, its template's params bound, and optionally one flow per item.
+ * Its triggers and steps are the template's.
+ */
+export interface FlowInstance {
+  id: string;
+  name: string;
+  slug: string;
+  enabled: boolean;
+  template: string;
+  params?: Record<string, Source>;
+  forEach?: ForEach;
+  editor?: Record<string, unknown>;
+}
+
+export type AnyFlow = Flow | FlowInstance;
+
+export const isInstance = (flow: AnyFlow): flow is FlowInstance => "template" in flow && flow.template !== undefined;
 
 export type PathSegment = string | number;
 
@@ -288,8 +315,8 @@ export interface StepDraft {
   arms: ArmDraft[];
   /** A branch's `else`, or null without one. */
   otherwise: StepDraft[] | null;
-  /** A `call` step's flow, by ID. */
-  flow: string;
+  /** A `call` step's flow, by ID or param. */
+  flow: FlowRef;
   /** A `call` step's inputs, by name. */
   inputs: Record<string, Source>;
   /** A `call` step's `wait`, or null when left out (it waits). */
@@ -318,6 +345,8 @@ export interface FlowDraft {
   triggers: Trigger[];
   conditions: Expr[];
   concurrency: Concurrency;
+  /** A template's params, kept as they are: the editor doesn't change them yet. */
+  params: Record<string, ParamDef>;
   inputs: Record<string, ParamDef>;
   outputs: Record<string, JsonSchema>;
   body: StepDraft[];
@@ -357,6 +386,7 @@ export function newFlowDraft(): FlowDraft {
     triggers: [{ kind: "api" }],
     conditions: [],
     concurrency: "ignore",
+    params: {},
     inputs: {},
     outputs: {},
     body: [],
@@ -475,7 +505,7 @@ function stepToDraft(step: Step, schemaOf: ParamsSchema): StepDraft {
       draft.otherwise = step.else === undefined ? null : step.else.map((s) => stepToDraft(s, schemaOf));
       break;
     case "call":
-      draft.flow = step.flow;
+      draft.flow = copyJson(step.flow);
       draft.inputs = copyJson(step.inputs ?? {});
       draft.wait = step.wait ?? null;
       break;
@@ -515,6 +545,7 @@ export function toDraft(flow: Flow, schemaOf: ParamsSchema): FlowDraft {
     triggers: copyJson(flow.triggers),
     conditions: [...(flow.conditions ?? [])],
     concurrency: flow.concurrency,
+    params: copyJson(flow.params ?? {}),
     inputs: copyJson(flow.inputs ?? {}),
     outputs: copyJson(flow.outputs ?? {}),
     editor: flow.editor,
@@ -614,6 +645,7 @@ export function fromDraft(draft: FlowDraft, schemaOf: ParamsSchema): DraftResult
     body,
   };
   if (draft.conditions.length > 0) flow.conditions = draft.conditions;
+  if (Object.keys(draft.params).length > 0) flow.params = copyJson(draft.params);
   if (Object.keys(draft.inputs).length > 0) flow.inputs = copyJson(draft.inputs);
   if (Object.keys(draft.outputs).length > 0) flow.outputs = copyJson(draft.outputs);
   if (draft.editor !== undefined) flow.editor = draft.editor;

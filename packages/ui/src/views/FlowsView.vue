@@ -181,6 +181,36 @@ function time(ms: number | undefined): string {
         </tr>
       </tbody>
     </table>
+    <template v-if="flows.instances.length > 0">
+      <h3>Instances</h3>
+      <p class="muted">
+        Each runs its template's steps with its own params. Edit them through the API for now.
+      </p>
+      <table data-testid="instances">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Template</th>
+            <th>Runs</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="i in flows.instances"
+            :key="i.id"
+            :data-flow="i.slug"
+          >
+            <td>{{ i.name }}</td>
+            <td>
+              <a :href="hrefOf({ tab: 'flows', flow: i.template })">{{ flows.name(i.template) }}</a>
+            </td>
+            <td class="muted">
+              {{ i.forEach ? "One per item" : "Once" }}{{ i.enabled ? "" : " · disabled" }}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </template>
   </section>
 </template>
 

@@ -73,10 +73,14 @@ fn videohub() -> Manifest {
     .unwrap()
 }
 
-fn fixtures(dir: &str) -> Vec<PathBuf> {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+fn fixture_dir(dir: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("fixtures/flows")
-        .join(dir);
+        .join(dir)
+}
+
+fn fixtures(dir: &str) -> Vec<PathBuf> {
+    let dir = fixture_dir(dir);
     let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
         .unwrap()
         .map(|e| e.unwrap().path())
@@ -116,9 +120,11 @@ fn check(json: &Value) -> (Value, Value) {
     let evaluator = QuickJs::default();
     let mut not_callable = recall_flow();
     not_callable.triggers = vec![flow::Trigger::Api {}];
+    let template = Flow::parse(&read(&fixture_dir("").join("template-route.json"))).unwrap();
     let flows: BTreeMap<String, Flow> = [
         (RECALL.to_owned(), recall_flow()),
         (NOT_CALLABLE.to_owned(), not_callable),
+        (template.id.clone(), template),
     ]
     .into();
     // `lastPick` is writable and `isLive` computed (dataflow §6).
@@ -148,6 +154,24 @@ fn valid_flows_validate_cleanly_and_round_trip() {
         let json = read(&path);
         let name = path.display();
         let flow = Flow::parse(&json).unwrap_or_else(|e| panic!("{name}: {e:?}"));
+        assert_eq!(
+            serde_json::to_value(&flow).unwrap(),
+            json,
+            "{name} round-trip"
+        );
+        assert_eq!(check(&json), (json!([]), json!([])), "{name}");
+    }
+}
+
+/// Instances of `template-route.json` (composition spec §9): as stored,
+/// with only their identity, bindings and `forEach`.
+#[test]
+fn instances_validate_cleanly_and_round_trip() {
+    for path in fixtures("instances") {
+        let json = read(&path);
+        let name = path.display();
+        let flow = Flow::parse(&json).unwrap_or_else(|e| panic!("{name}: {e:?}"));
+        assert!(flow.is_instance(), "{name}");
         assert_eq!(
             serde_json::to_value(&flow).unwrap(),
             json,

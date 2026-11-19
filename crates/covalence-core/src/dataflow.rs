@@ -86,6 +86,9 @@ pub struct CellDef {
     /// A helper's control (surfaces §4.3): its events carry it, and it
     /// pauses `follow` while the control is touched.
     pub control: Option<ControlContext>,
+    /// Names in scope that aren't state: a `forEach` item's `item`,
+    /// `index` and `key`, for its params (composition §4).
+    pub values: Vec<(String, Value)>,
 }
 
 /// The control a helper belongs to.
@@ -113,6 +116,7 @@ impl CellDef {
             journal: JournalMode::Full,
             to: Vec::new(),
             control: None,
+            values: Vec::new(),
         }
     }
 }
@@ -1074,7 +1078,10 @@ impl Turn<'_> {
     /// A stateless cell.
     fn compute(&mut self, id: &str, def: &CellDef) -> Option<StatePath> {
         let aliases = self.inner.aliases.clone();
-        let scope = Scope::new(&self.state, &aliases);
+        let scope = Scope {
+            values: &def.values,
+            ..Scope::new(&self.state, &aliases)
+        };
         let outcome = def.source.evaluate(&scope, &self.inner.evaluator);
         let (value, problem) = match (outcome.value, def.source.fallback()) {
             (Ok(Some(v)), _) => (Some(Some(v)), None),
@@ -1107,7 +1114,10 @@ impl Turn<'_> {
     ) -> Option<StatePath> {
         let d = r.definition();
         let aliases = self.inner.aliases.clone();
-        let scope = Scope::new(&self.state, &aliases);
+        let scope = Scope {
+            values: &def.values,
+            ..Scope::new(&self.state, &aliases)
+        };
         let evaluator = &self.inner.evaluator;
         let mut eval = Eval::new(&scope, evaluator as &dyn Evaluator);
         let mut failed: Option<CellProblem> = None;
@@ -1530,7 +1540,8 @@ impl Turn<'_> {
         for (i, sink) in to.iter().enumerate() {
             match sink {
                 Sink::Set { set } => {
-                    let at = set.state_path();
+                    // Checked on save: a `set` sink writes `vars.<name>`.
+                    let Some(at) = set.state_path() else { continue };
                     let ops = vec![JournalOp::Set {
                         path: at.clone(),
                         value: value.clone(),

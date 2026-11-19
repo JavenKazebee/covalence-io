@@ -14,7 +14,7 @@ Users build bigger things out of smaller ones, and reuse them by giving them par
 
 **Instances take parameters, not overrides.** An instance can't change, add to or remove anything inside its template. Where copies may differ, the template says so with a param, which can hold a whole component or flow (§1.2). If one copy has to differ anywhere else, "Detach" turns it into a plain entity with no link back. That keeps "what does this do?" answerable from one place.
 
-**Markers.** Everything here is **(M9)** ([M9](../milestones/m9-composition.md)) unless marked **(Later)**.
+**Markers.** Everything here is **(M9)** ([M9](../milestones/m9-composition.md)) unless marked **(Later)**. Built so far, for flows (§9): params as cells and in scope (§1), flow params (§1.2), `forEach` (§4), the instance chain, its filters, validation and Detach (§5), and batches. Layers, composites and components as templates, owned flows (§2), nesting (§3) and component params aren't yet.
 
 ---
 
@@ -45,7 +45,7 @@ interface InstanceFields {            // on a layer, a connection, a placement, 
 - **An entity is a template or an instance, never both.** A template can't derive from another template (`templateIsInstance`). It can contain instances (§3).
 - **A template is usable itself where its kind can be** (a layer is shown, a composite connects, a flow runs), with its params' defaults. One with a `required` param and no default is **abstract**: it can only be used through instances, and using it directly is `unboundParam`. A component is always abstract, since it needs controls.
 - **Params are sources** ([dataflow §1](dataflow.md)), evaluated reactively in the placer's scope, so an instance can follow state: `camera: {ref: {root: "vars", path: ["selectedCam"]}}`. A param's value is state at `<home>.params.<name>`, where `<home>` is the instance's home (§1.1).
-- **(Proposed) Edits that span a template and its instances are saved together** as one batch, and cells keep their values through an edit when they still fit ([state spec §7.6](state-and-event-log.md#76-editing-a-running-show-proposed-kept-state-settled-in-m8)).
+- **Edits that span a template and its instances are saved together** as one batch, and cells keep their values through an edit when they still fit ([state spec §7.6](state-and-event-log.md#76-editing-a-running-show)).
 - **Editing a template changes every instance at once.** A change an instance can no longer satisfy (a new required param, a type an existing binding doesn't match, a slot that no longer fits) is refused with `badInstance`, listing the instances.
 - **One module, `covalence_core::compose`,** binds, validates and evaluates instances of every kind. The UI shows one "instance of X, with these params" panel for all of them.
 
@@ -155,7 +155,8 @@ type ForEach = (
 - **Per-item instances live at `<home>.items[<key>]`** (§1.1), so a reorder doesn't reset them, and other state can read them by key.
 - **They follow the list.** An added item creates an instance, with its cells starting from `init`. A removed item ends one: its cells are dropped, and its owned flows' runs are cancelled with `removed`. Both are journaled, `instance.added` and `instance.removed` with `{instance}`, and `cause` → the patch or the domain change that changed the list.
 - **They're never saved.** The entity is the one instance with `forEach`. Its items come from state each time it's loaded.
-- **At most 256 items.** Extra items aren't instanced, and the instance reports `tooMany`. The cap guards the turn budget (dataflow §5) against a list bound to the wrong thing, such as a media server's 10,000 clips; no real rig is near it.
+- **Each key once.** An item whose key repeats an earlier one's isn't instanced.
+- **At most 256 items.** Extra items aren't instanced, and the instance reports `tooMany`: how many there are is state at `<home>.tooMany`, gone again once the list fits. The cap guards the turn budget (dataflow §5) against a list bound to the wrong thing, such as a media server's 10,000 clips; no real rig is near it.
 - **Per kind:**
   - **A composite with `forEach`** makes each item a target (§6.4).
   - **A layer with `forEach`** is one layer per item, each navigated by `{layer, item: key}` ([core actions §3.1](core-actions.md)).
@@ -174,7 +175,7 @@ type ForEach = (
   ```
 
   Runs, steps, actions, cells' patches and events made inside an instance all carry it, and an event's `trigger.instance` is it. It replaces the separate `placement` field, the `<component>/<flow>` run identity and the layer-as-instance of [§11.1](#111-reuse-is-by-parameters-never-by-copying-or-overriding).
-- **The chain holds IDs, never names or values,** so a rename doesn't rewrite history and every entry stays small. The server resolves names when it answers, from the entities as they are now, or from the op log for one since deleted.
+- **The chain holds IDs, never names or values,** so a rename doesn't rewrite history and every entry stays small. The server resolves names when it answers: each link of an entry from `GET /journal` and `why` has `name` and `templateName` from the entities as they are now. **(M9)** One since deleted is named from the op log.
 - **A run records the params it started with:** `run.started` has `params`, the owner instance's bound values at that moment (state spec §2.2). Everything a run does points back to its start, so `why` on an action shows "Tally key, camera = Cam B, in Cameras[camB]", even after the param has moved on and past the memory window. An entry outside a run (a cell's patch, a control event) shows its instances, and their param values only while the patches that set them are still in memory.
 - **Filtering:** `GET /journal` and `GET /runs` take `instance=<id>`, which matches an entry with that instance anywhere in its chain, so "Cameras" gives every camera and "Cam B" gives everything inside it; `key=<key>` narrows to one item of a `forEach` instance; and `template=<id>` matches any instance of that template, at any depth. The timeline and the runs list offer both.
 - **A composite's history is the journal filtered by its instance.** It has no run history or traffic view of its own; its actions' runs and the real devices' traffic are already there.
@@ -183,7 +184,8 @@ type ForEach = (
   - `unknownTemplate`, `templateIsInstance`, `recursiveTemplate`, `tooDeep`.
   - `unboundParam`: an abstract template used directly.
   - `tooMany` is reported at run time, not at save.
-- **Detach** works the same for every kind. It turns an instance into a plain entity with its template's body copied in and its params left as they were bound, as sources. A `forEach` instance detaches to one plain entity per current item, with each item's value written in as a literal. The editor warns that they won't follow the list anymore. Detach is one-way.
+- **Detach** works the same for every kind. It turns an instance into a plain entity with its template's body copied in and its params left as they were bound, as sources: the template's params become the entity's own, each defaulting to the instance's binding, so the body reads `params` as before. A `forEach` instance detaches to one plain entity per current item, with each item's value written in as a literal (an expression that reads `item` is wrapped in a function that's given it). The editor warns that they won't follow the list anymore. Detach is one-way: for a flow, `POST /flows/{id}/detach` answers `{flows}`.
+- **A template with instances can't be deleted** (`409`, naming them). Detach or delete them first.
 
 ---
 
@@ -426,11 +428,12 @@ bindings:
 
 ## 9. Flow templates
 
-- **A flow with `params` is a template.** Its instances are flows with `template` and `params`, and their own `slug`, `enabled` and `owner`. Triggers, conditions, concurrency and steps come from the template.
+- **A flow with `params` is a template.** Its instances are flows with `template` and `params`, and their own `slug`, `enabled` and `owner`. Triggers, conditions, concurrency, inputs, outputs and steps come from the template; an instance that has any of its own is `invalid`. A template with no required param runs by itself too, with its defaults; an abstract one only runs through its instances.
+- **An instance's params are cells** at `flow.<slug>.params.<name>`, and its steps, triggers and conditions read them as `params`. `run.started` records them.
 - **`params` and `inputs` are different** (§2.1): params are bound once per instance and follow state, inputs are bound per run.
-- **A flow instance with `forEach`** is one flow per item: `template: recorderWatchdog`, `forEach: {targets: {plugin: "io.covalence.recsim"}}`, `params: {recorder: {expr: "item"}}` watches every recorder, including ones added during the show.
+- **A flow instance with `forEach`** is one flow per item: `template: recorderWatchdog`, `forEach: {targets: {plugin: "io.covalence.recsim"}}`, `params: {recorder: {ref: {scope: "item", path: []}}}` watches every recorder, including ones added during the show. A target item is `{conn}`, keyed by the connection's ID. Each item runs as the flow `<instance ID>[<key>]` (the key as in a state path's brackets), at `flow.<slug>.items[<key>]`: `POST /flows/{that}/run` starts it.
 - **Each instance has its own runs** and its own concurrency. `flow.<slug>.items[<key>]:failed` is one recorder's watchdog failing, and `flow.<slug>.items.*:failed` (dataflow §2) is any of them.
-- **A `call` step names a flow,** not an instance. Calling a flow template binds its `inputs`. Its `params` take their defaults, and calling an abstract one is `unboundParam`.
+- **A `call` step names a flow,** or `{param}` for the flow a `flow` param holds (§1.2). Calling a flow template binds its `inputs`. Its `params` take their defaults, and calling an abstract one is `unboundParam`. A `forEach` instance is a flow per item, so a call can't name it (`notCallable`).
 
 ---
 
@@ -448,7 +451,7 @@ bindings:
 
 ## 11. Decisions
 
-Why composition works this way, and what was rejected. This is one proposed design, accepted when M9's Phase 0 closes. Keep these notes when the sections above change.
+Why composition works this way, and what was rejected. Keep these notes when the sections above change.
 
 ### 11.1 Reuse is by parameters, never by copying or overriding
 - **Decided:** templates declare `params`, instances bind them (§1), and instances can't change, add to or remove anything in their template. Detach is the way out. `params` is always the own container's: nothing is inherited, and a value passes down one visible binding at a time, like arguments into a function call (§3).
@@ -498,7 +501,14 @@ Why composition works this way, and what was rejected. This is one proposed desi
   - *Source params:* a source isn't a template yet (§10, question 4).
   - *A second template for the copy that differs:* two templates to keep in step by hand, which is the drift §11.1 exists to stop.
 
-### 11.6 The instance chain in the journal
+### 11.6 Deleting a template
+- **Decided:** a template with instances can't be deleted; the answer names them (§5).
+- **Why:** an instance without its template has no body, so it would stop doing anything, and the show would find out when a camera stopped working.
+- **Rejected:**
+  - *Deleting the instances with it,* as a layer takes its bindings: one delete would take out every camera.
+  - *Detaching them automatically:* copies appear that nobody asked for, and nothing says they were ever the same.
+
+### 11.7 The instance chain in the journal
 - **Decided:** entries carry the chain as IDs; `run.started` records the params a run started with; the journal and the runs list filter by instance (at any depth, and by item) and by template; the server resolves names when it answers (§5).
 - **Why:** "why did this fire?" has to say which camera it was, and params can follow state, so their value now isn't their value then. A run is where actions come from and it's kept on disk, so recording params once per run answers the question that matters at the cost of one field.
 - **Rejected:**

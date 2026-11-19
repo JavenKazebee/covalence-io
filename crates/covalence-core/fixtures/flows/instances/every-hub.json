@@ -1,0 +1,12 @@
+{
+  "id": "01JC00000000000000000000IB",
+  "name": "Every hub",
+  "slug": "everyHub",
+  "enabled": true,
+  "template": "01JC00000000000000000000TA",
+  "params": {
+    "hub": { "ref": { "path": [], "scope": "item" } },
+    "output": { "expr": "index + 1" }
+  },
+  "forEach": { "targets": { "plugin": "io.covalence.videohub" } }
+}

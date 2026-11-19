@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 pub mod binding;
 pub mod clock;
+pub mod compose;
 pub mod core_conn;
 pub mod dataflow;
 pub mod engine;

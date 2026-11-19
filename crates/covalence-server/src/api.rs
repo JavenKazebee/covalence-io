@@ -11,7 +11,7 @@ use axum::{Json, Router};
 use covalence_core::core_conn;
 use covalence_core::gate::Verdict;
 use covalence_core::host::{HostPhase, HostStatus};
-use covalence_core::journal::{Entry, Origin, Seq};
+use covalence_core::journal::{Origin, Seq};
 use covalence_core::state::{Leaf, Quality, StatePath};
 use covalence_core::{ActionRequest, CoreError, text_path};
 use covalence_protocol::connection::ConnMode;
@@ -39,6 +39,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/cells/problems", get(cell_problems))
         .route("/ws", get(crate::ws::upgrade))
         .merge(crate::flows::routes())
+        .merge(crate::batch::routes())
         .merge(crate::surfaces::routes())
         .merge(crate::devices::routes())
         .merge(crate::entity::routes::<covalence_core::variable::Variable>())
@@ -83,6 +84,7 @@ pub(crate) fn saved<T: Serialize>(
         Err(SaveError::NotFound) => {
             ApiError::new(StatusCode::NOT_FOUND, format!("no such {kind}")).into_response()
         }
+        Err(SaveError::Conflict(why)) => ApiError::new(StatusCode::CONFLICT, why).into_response(),
         Err(SaveError::Store(e)) => ApiError::internal(e).into_response(),
         Err(SaveError::Journal(e)) => ApiError::internal(e).into_response(),
     }
@@ -363,7 +365,12 @@ async fn request_action(
 struct JournalQuery {
     from: Option<Seq>,
     limit: Option<usize>,
+    #[serde(flatten)]
+    filter: crate::flows::InstanceFilter,
 }
+
+/// The most entries a filtered `GET /journal` reads looking for matches.
+const MAX_JOURNAL_SCAN: usize = 100_000;
 
 /// Entries from `from` on. Read from the store, past the memory window,
 /// they have gaps where derived entries were, and the answer says so with
@@ -378,8 +385,32 @@ async fn journal(
         .min(MAX_JOURNAL_LIMIT);
     let journal = &app.core.shared().journal;
     let from = query.from.unwrap_or(1);
-    let entries = journal.range(from, limit).map_err(ApiError::internal)?;
-    let body = Json(entries.iter().map(|e| Entry::clone(e)).collect::<Vec<_>>());
+    let entries = if query.filter.is_empty() {
+        journal.range(from, limit).map_err(ApiError::internal)?
+    } else {
+        // Filtered: read on until `limit` match or the journal ends.
+        let mut out = Vec::new();
+        let mut next = from;
+        let mut scanned = 0;
+        while out.len() < limit && scanned < MAX_JOURNAL_SCAN {
+            let page = journal.range(next, 1_000).map_err(ApiError::internal)?;
+            let Some(last) = page.last() else { break };
+            next = last.seq + 1;
+            scanned += page.len();
+            out.extend(
+                page.into_iter()
+                    .filter(|e| query.filter.matches(e.instance.as_deref()))
+                    .take(limit - out.len()),
+            );
+        }
+        out
+    };
+    let body = Json(
+        entries
+            .iter()
+            .map(|e| app.with_names(e))
+            .collect::<Vec<_>>(),
+    );
     Ok(if journal.derived_dropped(from) {
         ([("covalence-derived-dropped", "true")], body).into_response()
     } else {
@@ -399,7 +430,10 @@ async fn cell_problems(State(app): State<Arc<App>>) -> Json<Vec<serde_json::Valu
     )
 }
 
-async fn why(State(app): State<Arc<App>>, Path(seq): Path<Seq>) -> ApiResult<Json<Vec<Entry>>> {
+async fn why(
+    State(app): State<Arc<App>>,
+    Path(seq): Path<Seq>,
+) -> ApiResult<Json<Vec<serde_json::Value>>> {
     let chain = app
         .core
         .shared()
@@ -412,5 +446,5 @@ async fn why(State(app): State<Arc<App>>, Path(seq): Path<Seq>) -> ApiResult<Jso
             format!("no journal entry {seq}"),
         ));
     }
-    Ok(Json(chain.iter().map(|e| Entry::clone(e)).collect()))
+    Ok(Json(chain.iter().map(|e| app.with_names(e)).collect()))
 }

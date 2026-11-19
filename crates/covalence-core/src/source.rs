@@ -47,20 +47,51 @@ pub enum Source<T> {
     },
 }
 
-/// A state path in ID form: a connection's, or a reserved root's.
+/// A state path in ID form: a connection's, or a reserved root's; or a
+/// name in scope where it's evaluated (dataflow §8).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Ref {
     Conn { conn: ConnId, path: Path },
     Root { root: Root, path: Path },
+    Scope { scope: ScopeName, path: Path },
 }
 
 impl Ref {
-    pub fn state_path(&self) -> StatePath {
+    /// The path it names, for a connection's or a root's. A scope ref has
+    /// one only where it's evaluated: see [`Ref::resolve`].
+    pub fn state_path(&self) -> Option<StatePath> {
         match self {
-            Ref::Conn { conn, path } => StatePath::new(conn.clone(), path.clone()),
-            Ref::Root { root, path } => StatePath::new(root.as_str(), path.clone()),
+            Ref::Conn { conn, path } => Some(StatePath::new(conn.clone(), path.clone())),
+            Ref::Root { root, path } => Some(StatePath::new(root.as_str(), path.clone())),
+            Ref::Scope { .. } => None,
         }
+    }
+
+    /// What it names in `scope`: a state path, or a value that isn't state.
+    /// `None` for a scope name that isn't there.
+    pub fn resolve(&self, scope: &Scope<'_>) -> Option<Resolved> {
+        let Ref::Scope { scope: name, path } = self else {
+            return self.state_path().map(Resolved::Path);
+        };
+        let name = name.as_str();
+        if let Some((_, at)) = scope.named.iter().find(|(n, _)| n == name) {
+            let mut at = at.clone();
+            at.path.extend(path.iter().cloned());
+            return Some(Resolved::Path(at));
+        }
+        let (_, value) = scope.values.iter().find(|(n, _)| n == name)?;
+        let mut json = to_json(value);
+        for segment in path {
+            json = match (segment, json) {
+                (PathSegment::Key(k), Json::Object(mut m)) => m.remove(k).unwrap_or(Json::Null),
+                (PathSegment::Index(i), Json::Array(mut a)) if (*i as usize) < a.len() => {
+                    a.swap_remove(*i as usize)
+                }
+                _ => return Some(Resolved::Value(None)),
+            };
+        }
+        Some(Resolved::Value((!json.is_null()).then_some(json)))
     }
 
     /// The text form, `vh.outputs[1].source`, with a connection's alias.
@@ -69,6 +100,38 @@ impl Ref {
         match self {
             Ref::Conn { conn, path } => Some(text_path::format(aliases.get(conn)?, path)),
             Ref::Root { root, path } => Some(text_path::format(root.as_str(), path)),
+            Ref::Scope { scope, path } => Some(text_path::format(scope.as_str(), path)),
+        }
+    }
+}
+
+/// What a ref names where it's evaluated.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Resolved {
+    Path(StatePath),
+    /// A scope value's part: `undefined` when it has none there.
+    Value(Option<Json>),
+}
+
+/// Names a `{scope}` ref can take (dataflow §8).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ScopeName {
+    /// The own instance's parameters, in a template's body.
+    Params,
+    /// Where it's being evaluated: a layer field's surface.
+    #[serde(rename = "self")]
+    This,
+    /// A `forEach` instance's item, while its params are bound.
+    Item,
+}
+
+impl ScopeName {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ScopeName::Params => "params",
+            ScopeName::This => "self",
+            ScopeName::Item => "item",
         }
     }
 }
@@ -313,12 +376,21 @@ impl<'a> Eval<'a> {
             Source::Literal(v) => Ok(Some(
                 serde_json::to_value(v).expect("a literal encodes as JSON"),
             )),
-            Source::Ref { at, .. } => {
-                let path = at.state_path();
-                let value = self.scope.state.value(&path).as_ref().map(to_json);
-                self.reads.insert(path);
-                Ok(value)
-            }
+            Source::Ref { at, .. } => match at.resolve(self.scope) {
+                Some(Resolved::Path(path)) => {
+                    let value = self.scope.state.value(&path).as_ref().map(to_json);
+                    self.reads.insert(path);
+                    Ok(value)
+                }
+                Some(Resolved::Value(value)) => Ok(value),
+                None => Err(ExprError::new(
+                    crate::expr::ExprCode::Error,
+                    format!(
+                        "{} isn't in scope here",
+                        at.text(&BTreeMap::new()).unwrap_or_default()
+                    ),
+                )),
+            },
             Source::Expr { expr, .. } => {
                 let evaluation = self.evaluator.evaluate(expr, self.scope);
                 self.reads.extend(evaluation.reads.paths);

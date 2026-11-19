@@ -280,7 +280,7 @@ A **cell** is a source with a home in the state tree. It's how a computed or acc
 - **Where it runs (M8 Phase 2).** The graph settles inside the state tree's turn: a writer's patch and the cells it moves are published as one dirty set, so bindings, triggers and `waitUntil` never see a cell lag its input. Events, wakes and edits start turns of their own.
 
 ### 5.4 Kept state through edits
-How [state spec §7.6](state-and-event-log.md#76-editing-a-running-show-proposed-kept-state-settled-in-m8)'s rule applies to cells. It's the same rule when a persisted variable is restored after a restart.
+How [state spec §7.6](state-and-event-log.md#76-editing-a-running-show)'s rule applies to cells. It's the same rule when a persisted variable is restored after a restart.
 
 - **A cell is identified by its entity, never by its path:** a variable by its ID, and a helper by its control binding's ID and its key in `helpers`. Renaming a variable's slug, or moving a binding to another control or layer, keeps the cell. Renaming a helper's key, or deleting and recreating its binding, makes a new one.
 - **The cell keeps its value and state** when both of these hold after the edit:
@@ -358,7 +358,8 @@ What an expression or `{scope}` ref can name depends on where it's evaluated. **
 | `item`, `index`, `count`, `key` | a control group | the item the control shows (surfaces §6) |
 | `item`, `index`, `key` | an instance's `params` and placement fields, when it has `forEach` | the item this instance is for ([composition §4](composition.md)). Not inside the body |
 
-- **`self` in a layer's fields** is a name in expressions for `surface.<slug>` of the surface being resolved, and reads through it are tracked at their real paths. A connection alias can't be `self`. The `{scope: "self"}` ref form arrives with the other scope names (M9); until then a ref names `{root: "surface", path: [<slug>, …]}`.
+- **`self` in a layer's fields** is a name in expressions for `surface.<slug>` of the surface being resolved, and reads through it are tracked at their real paths. A connection alias can't be `self`.
+- **`{ref: {scope, path}}`** names one of these where it's in scope: `params`, `self` or `item`. `params` and `self` are state, read and tracked at their real paths (`params` at the instance's home, composition §1.1); `item`, `index` and `key` are values, not state, so an expression reading them re-evaluates when the list does. A scope ref where its name isn't in scope is `notInScope` on save, and naming a param that isn't declared is `unknownParam`.
 - **`params` replaces the `layer.params.<name>` shorthand** of [bindings §6](bindings.md), which collided with a layer whose slug is `params`. The absolute path is `layer.<slug>.params.<name>`.
 - **Placing binds parameters in the placer's scope.** A component placed on a layer gets `params: {camera: {ref: {scope: "params", path: ["camera"]}}}`, which reads the layer's `camera`; inside the component, `params.camera` is its own. The same holds at every level of nesting, and for every template kind ([composition §11.2](composition.md#112-one-template-primitive-for-four-kinds)).
 

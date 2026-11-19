@@ -1,0 +1,60 @@
+{
+  "flow": {
+    "name": "No params",
+    "slug": "noParams",
+    "enabled": true,
+    "triggers": [
+      {
+        "kind": "api"
+      }
+    ],
+    "concurrency": "parallel",
+    "body": [
+      {
+        "id": "a",
+        "kind": "set",
+        "path": "local.x",
+        "value": "1"
+      },
+      {
+        "id": "b",
+        "kind": "wait",
+        "for": {
+          "ref": {
+            "path": [
+              "delay"
+            ],
+            "scope": "params"
+          }
+        }
+      },
+      {
+        "id": "c",
+        "kind": "call",
+        "flow": {
+          "param": "then"
+        }
+      }
+    ]
+  },
+  "errors": [
+    {
+      "path": [
+        "body",
+        1,
+        "for",
+        "ref"
+      ],
+      "code": "notInScope"
+    },
+    {
+      "path": [
+        "body",
+        2,
+        "flow"
+      ],
+      "code": "unknownParam"
+    }
+  ],
+  "warnings": []
+}

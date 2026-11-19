@@ -1,0 +1,59 @@
+{
+  "flow": {
+    "name": "Route B",
+    "slug": "routeB",
+    "enabled": true,
+    "template": "01JC00000000000000000000TA",
+    "params": {
+      "output": "two",
+      "colour": "red",
+      "then": {
+        "expr": "vars.next"
+      },
+      "hub2": {
+        "ref": {
+          "path": [],
+          "scope": "item"
+        }
+      }
+    }
+  },
+  "errors": [
+    {
+      "path": [
+        "params",
+        "colour"
+      ],
+      "code": "unknownParam"
+    },
+    {
+      "path": [
+        "params",
+        "hub2"
+      ],
+      "code": "unknownParam"
+    },
+    {
+      "path": [
+        "params",
+        "output"
+      ],
+      "code": "badInstance"
+    },
+    {
+      "path": [
+        "params",
+        "then"
+      ],
+      "code": "templateNotLiteral"
+    },
+    {
+      "path": [
+        "params",
+        "hub"
+      ],
+      "code": "badInstance"
+    }
+  ],
+  "warnings": []
+}

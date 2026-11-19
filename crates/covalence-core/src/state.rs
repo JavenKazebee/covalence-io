@@ -45,7 +45,13 @@ impl StatePath {
         self.conn == ancestor.conn && self.path.starts_with(&ancestor.path)
     }
 
-    fn child(&self, segment: PathSegment) -> Self {
+    /// The path one key below.
+    pub fn key(&self, key: &str) -> Self {
+        self.child(PathSegment::Key(key.to_owned()))
+    }
+
+    /// The path one segment below.
+    pub fn child(&self, segment: PathSegment) -> Self {
         let mut path = self.path.clone();
         path.push(segment);
         StatePath::new(self.conn.clone(), path)

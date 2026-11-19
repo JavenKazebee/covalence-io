@@ -8,7 +8,9 @@ import {
   paramProblems,
   problemsAt,
   toDraft,
+  isInstance,
   type Flow,
+  type FlowInstance,
   type ParamsSchema,
   type Problem,
   describeTrigger,
@@ -22,6 +24,10 @@ const fixtures = import.meta.glob<Flow>("../../../../crates/covalence-core/fixtu
   eager: true,
   import: "default",
 });
+const instanceFixtures = import.meta.glob<FlowInstance>(
+  "../../../../crates/covalence-core/fixtures/flows/instances/*.json",
+  { eager: true, import: "default" },
+);
 const problemFixtures = import.meta.glob<{ flow: Flow; errors: Problem[]; warnings: Problem[] }>(
   "../../../../crates/covalence-core/fixtures/flows/problems/*.json",
   { eager: true, import: "default" },
@@ -40,6 +46,12 @@ describe("flow model", () => {
   it("has the shared fixtures", () => {
     expect(Object.keys(fixtures).length).toBeGreaterThanOrEqual(2);
     expect(Object.keys(problemFixtures).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("tells instances from flows", () => {
+    expect(Object.keys(instanceFixtures).length).toBeGreaterThanOrEqual(1);
+    for (const instance of Object.values(instanceFixtures)) expect(isInstance(instance)).toBe(true);
+    for (const flow of Object.values(fixtures)) expect(isInstance(flow)).toBe(false);
   });
 
   it.each(Object.entries(fixtures))("round-trips %s through the editor unchanged", (_, flow) => {

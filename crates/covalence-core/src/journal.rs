@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
 use crate::clock;
+use crate::compose::InstanceChain;
 use crate::flow::{Concurrency, FlowId};
 use crate::state::{ConnId, Quality, StatePath};
 
@@ -51,6 +52,9 @@ pub struct Entry {
     pub input_cause: Option<Seq>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run: Option<String>,
+    /// The instances it was made inside, outermost first (composition spec §5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance: Option<InstanceChain>,
     #[serde(flatten)]
     pub record: Record,
 }
@@ -73,7 +77,7 @@ fn is_derived(origin: &Origin, record: &Record) -> bool {
         }
     );
     match record {
-        Record::TriggerMatched(_) => true,
+        Record::TriggerMatched(_) | Record::InstanceAdded(_) | Record::InstanceRemoved(_) => true,
         Record::StatePatch(_) => dataflow,
         Record::Event(event) => dataflow || event.surface.is_some(),
         _ => false,
@@ -165,6 +169,12 @@ pub enum Record {
     RunStep(RunStepRecord),
     #[serde(rename = "run.finished")]
     RunFinished(RunFinishedRecord),
+    /// A per-item instance created with its list (composition spec §4).
+    #[serde(rename = "instance.added")]
+    InstanceAdded(InstanceRecord),
+    /// A per-item instance ended with its list.
+    #[serde(rename = "instance.removed")]
+    InstanceRemoved(InstanceRecord),
 }
 
 impl Record {
@@ -183,6 +193,8 @@ impl Record {
             Record::RunStarted(_) => "run.started",
             Record::RunStep(_) => "run.step",
             Record::RunFinished(_) => "run.finished",
+            Record::InstanceAdded(_) => "instance.added",
+            Record::InstanceRemoved(_) => "instance.removed",
         }
     }
 }
@@ -362,6 +374,15 @@ pub struct RunStartedRecord {
     pub run: String,
     pub mode: Concurrency,
     pub inputs: Object,
+    /// The instance's params when the run started (composition spec §5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params: Option<Object>,
+}
+
+/// An instance made or ended with its list.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InstanceRecord {
+    pub instance: InstanceChain,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -480,6 +501,7 @@ pub struct NewEntry {
     pub origin: Origin,
     pub cause: Option<Seq>,
     pub run: Option<String>,
+    pub instance: Option<InstanceChain>,
     pub record: Record,
 }
 
@@ -489,6 +511,7 @@ impl NewEntry {
             origin,
             cause: None,
             run: None,
+            instance: None,
             record,
         }
     }
@@ -500,6 +523,11 @@ impl NewEntry {
 
     pub fn run(mut self, run: impl Into<Option<String>>) -> Self {
         self.run = run.into();
+        self
+    }
+
+    pub fn instance(mut self, instance: Option<InstanceChain>) -> Self {
+        self.instance = instance.filter(|c| !c.is_empty());
         self
     }
 }
@@ -625,6 +653,7 @@ impl Journal {
             cause: new.cause,
             input_cause,
             run: new.run,
+            instance: new.instance,
             record: new.record,
         };
         if let Some(store) = &inner.store {
@@ -740,6 +769,11 @@ fn to_row(entry: &Entry) -> Result<JournalRow, JournalError> {
         run: entry.run.clone(),
         kind: entry.record.kind().to_owned(),
         data: bytes,
+        instance: entry
+            .instance
+            .as_ref()
+            .map(|c| serde_json::to_string(c).map_err(|e| encode(&e)))
+            .transpose()?,
     })
 }
 
@@ -764,6 +798,12 @@ fn from_row(row: &JournalRow) -> Result<Entry, JournalError> {
         cause: row.cause,
         input_cause: row.input_cause,
         run: row.run.clone(),
+        instance: row
+            .instance
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()
+            .map_err(|e| decode(e.to_string()))?,
         record,
     })
 }

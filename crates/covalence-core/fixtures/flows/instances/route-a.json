@@ -1,0 +1,11 @@
+{
+  "id": "01JC00000000000000000000IA",
+  "name": "Route A",
+  "slug": "routeA",
+  "enabled": true,
+  "template": "01JC00000000000000000000TA",
+  "params": {
+    "hub": { "conn": "01JBZ7P0D3F5G7H9J1K3L5M7N9" },
+    "output": { "expr": "vars.lastPick" }
+  }
+}

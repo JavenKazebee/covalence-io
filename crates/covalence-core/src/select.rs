@@ -684,7 +684,9 @@ pub struct PathRef(pub Ref);
 
 impl PathRef {
     pub fn state_path(&self) -> StatePath {
-        self.0.state_path()
+        self.0
+            .state_path()
+            .expect("a selector's path is a connection's or a root's")
     }
 }
 
@@ -714,9 +716,12 @@ impl<'de> Deserialize<'de> for PathRef {
                 })?;
                 Ok(PathRef(Ref::Root { root, path }))
             }
-            other => serde_json::from_value(other)
-                .map(PathRef)
-                .map_err(|_| D::Error::custom("a path is text such as \"sys\", or {conn, path}")),
+            other => match serde_json::from_value(other) {
+                Ok(Ref::Scope { .. }) | Err(_) => Err(D::Error::custom(
+                    "a path is text such as \"sys\", or {conn, path}",
+                )),
+                Ok(r) => Ok(PathRef(r)),
+            },
         }
     }
 }
@@ -880,7 +885,7 @@ impl Selector<Paths> {
             Selector::Expr(e) => items(expr_value(e, eval)?)
                 .iter()
                 .filter_map(|v| ref_from(v, aliases))
-                .any(|r| &r.state_path() == path)
+                .any(|r| r.state_path().as_ref() == Some(path))
                 .then(Vec::new),
             Selector::Form(form) => Pattern::parse(&form.pattern)
                 .ok()

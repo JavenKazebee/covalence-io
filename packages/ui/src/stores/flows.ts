@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { computed, ref, shallowRef } from "vue";
 import { api } from "../api";
-import type { Flow, FlowDraft, Saved } from "../flows/model";
+import { isInstance, type Flow, type FlowDraft, type FlowInstance, type Saved } from "../flows/model";
 
 /**
  * Flows over HTTP. They aren't on the WebSocket, so this refreshes after its
@@ -10,6 +10,8 @@ import type { Flow, FlowDraft, Saved } from "../flows/model";
 export const useFlowsStore = defineStore("flows", () => {
   // Replaced whole on each refresh; shallow, as their sources nest deeply.
   const flows = shallowRef<Flow[]>([]);
+  /** Instances of flow templates (composition §9), which run their template's steps. */
+  const instances = shallowRef<FlowInstance[]>([]);
   const loaded = ref(false);
   const error = ref<string | null>(null);
   /** A draft for the next new flow to start from, e.g. a key's "When pressed". Taken once. */
@@ -17,7 +19,9 @@ export const useFlowsStore = defineStore("flows", () => {
 
   async function refresh() {
     try {
-      flows.value = (await api.flows()).sort((a, b) => a.name.localeCompare(b.name));
+      const all = (await api.flows()).sort((a, b) => a.name.localeCompare(b.name));
+      flows.value = all.filter((f): f is Flow => !isInstance(f));
+      instances.value = all.filter(isInstance);
       error.value = null;
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e);
@@ -47,10 +51,10 @@ export const useFlowsStore = defineStore("flows", () => {
     return byId.value.get(id);
   }
 
-  /** A flow's name, or its ID if it isn't known. */
+  /** A flow's name, an instance's included, or its ID if it isn't known. */
   function name(id: string): string {
-    return byId.value.get(id)?.name ?? id;
+    return byId.value.get(id)?.name ?? instances.value.find((i) => i.id === id)?.name ?? id;
   }
 
-  return { flows, loaded, error, prefill, refresh, save, remove, get, name };
+  return { flows, instances, loaded, error, prefill, refresh, save, remove, get, name };
 });

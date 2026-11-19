@@ -1,0 +1,30 @@
+{
+  "id": "01JC00000000000000000000TA",
+  "name": "Route output",
+  "slug": "routeOutput",
+  "enabled": true,
+  "params": {
+    "hub": { "constraint": { "plugin": "io.covalence.videohub" }, "kind": "target", "required": true },
+    "output": { "default": 1, "minimum": 0, "type": "integer" },
+    "then": { "default": "01JC00000000000000000000CA", "kind": "flow" }
+  },
+  "triggers": [{ "kind": "api" }, { "kind": "call" }],
+  "concurrency": "parallel",
+  "failover": "abort",
+  "body": [
+    {
+      "action": "route",
+      "constraint": { "plugin": "io.covalence.videohub" },
+      "id": "route",
+      "kind": "action",
+      "params": { "input": 3, "output": { "ref": { "path": ["output"], "scope": "params" } } },
+      "target": { "ref": { "path": ["hub"], "scope": "params" } }
+    },
+    {
+      "flow": { "param": "then" },
+      "id": "recall",
+      "inputs": { "camera": { "expr": "params.output" } },
+      "kind": "call"
+    }
+  ]
+}

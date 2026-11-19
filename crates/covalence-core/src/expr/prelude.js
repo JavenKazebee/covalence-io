@@ -125,7 +125,7 @@
     return p === undefined ? undefined : JSON.stringify(p);
   };
 
-  return function setup(read, keys, roots, trigger, input, local, steps) {
+  return function setup(read, keys, roots, trigger, input, names) {
     // A read-only view of a state node. Children are cached, so the same path
     // gives the same object within one evaluation.
     const node = (id) => {
@@ -169,8 +169,13 @@
 
     constant("trigger", trigger === undefined ? undefined : parse(trigger));
     constant("input", input === undefined ? undefined : parse(input));
-    constant("local", parse(local));
-    constant("steps", parse(steps));
+    const { local, steps, values } = JSON.parse(names);
+    constant("local", freezeAll(local));
+    constant("steps", freezeAll(steps));
+    // Values named where it's evaluated, such as a `forEach` item (dataflow §8).
+    for (const [name, value] of Object.entries(values)) {
+      if (!(name in g)) constant(name, freezeAll(value));
+    }
     // An alias that is already a global name (`Math`, `clamp`, `steps`) is
     // left out rather than hiding the global.
     for (const [name, id] of Object.entries(JSON.parse(roots))) {

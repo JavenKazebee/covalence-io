@@ -281,8 +281,19 @@ fn setup<'js>(
 
     let map_json = |m: &BTreeMap<String, Value>| {
         serde_json::Value::Object(m.iter().map(|(k, v)| (k.clone(), to_json(v))).collect())
-            .to_string()
     };
+    // One argument for the rest, as a call takes at most seven.
+    let names = serde_json::json!({
+        "local": map_json(scope.local),
+        "steps": map_json(scope.steps),
+        "values": serde_json::Value::Object(
+            scope
+                .values
+                .iter()
+                .map(|(k, v)| (k.clone(), to_json(v)))
+                .collect(),
+        ),
+    });
     setup
         .call((
             read,
@@ -290,8 +301,7 @@ fn setup<'js>(
             serde_json::Value::Object(roots).to_string(),
             scope.trigger.map(|v| to_json(v).to_string()),
             scope.input.map(|v| to_json(v).to_string()),
-            map_json(scope.local),
-            map_json(scope.steps),
+            names.to_string(),
         ))
         .map_err(fail)
 }

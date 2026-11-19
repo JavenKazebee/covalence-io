@@ -1,7 +1,7 @@
 // The HTTP API, as listed in crates/covalence-server/src/lib.rs.
 
 import type { ControlBinding, Preview, RuntimeProblem, SavedBinding } from "./bindings/model";
-import type { Evaluated, FireResult, Flow, Problem, RunInfo, Saved } from "./flows/model";
+import type { AnyFlow, Evaluated, FireResult, Flow, Problem, RunInfo, Saved } from "./flows/model";
 import type { HostStatus, JournalEntry } from "./live/protocol";
 import type { ControlDef, Layer, SavedLayer, SavedSurface, Surface } from "./surfaces/model";
 import type { CellProblem, SavedVariable, Variable } from "./variables/model";
@@ -212,7 +212,7 @@ export const api = {
   journal: (from: number, limit: number) =>
     call<JournalEntry[]>("GET", `/journal?from=${from}&limit=${limit}`),
   why: (seq: number) => call<JournalEntry[]>("GET", `/journal/${seq}/why`),
-  flows: () => call<Flow[]>("GET", "/flows"),
+  flows: () => call<AnyFlow[]>("GET", "/flows"),
   createFlow: (flow: Flow) => call<Saved>("POST", "/flows", flow),
   updateFlow: (flow: Flow) => call<Saved>("PUT", `/flows/${encodeURIComponent(flow.id)}`, flow),
   deleteFlow: (id: string) => call<null>("DELETE", `/flows/${encodeURIComponent(id)}`),

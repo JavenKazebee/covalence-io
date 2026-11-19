@@ -135,6 +135,10 @@ pub struct Scope<'a> {
     /// Names for state paths where it's evaluated (dataflow §8): `self` in
     /// a layer's fields is the surface being resolved.
     pub named: &'a [(String, StatePath)],
+    /// Names for values that aren't state where it's evaluated (dataflow
+    /// §8): `item`, `index` and `key` while a `forEach` instance's params
+    /// are bound.
+    pub values: &'a [(String, Value)],
 }
 
 impl<'a> Scope<'a> {
@@ -150,6 +154,7 @@ impl<'a> Scope<'a> {
             steps: &EMPTY,
             cancel: None,
             named: &[],
+            values: &[],
         }
     }
 }

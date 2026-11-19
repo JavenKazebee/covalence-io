@@ -12,6 +12,7 @@ use std::time::Duration as StdDuration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::compose::ForEach;
 use crate::param::ParamDef;
 use crate::select::{Controls, Paths, Selector, Targets};
 use crate::source::Source;
@@ -35,38 +36,246 @@ pub type FlowId = String;
 /// JavaScript expression source (spec §8.7).
 pub type Expr = String;
 
+/// A flow: a plain one, a template (it declares `params`), or an instance
+/// of a template (composition §9), which has only its own identity,
+/// `enabled`, its params' bindings and `forEach`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(try_from = "Wire", into = "Wire")]
 pub struct Flow {
     /// A ULID, assigned by the server. Empty in a create request.
-    #[serde(default)]
     pub id: FlowId,
     pub name: String,
     /// For state paths: `flow.<slug>.running`. Derived from `name` when empty.
-    #[serde(default)]
     pub slug: String,
     pub enabled: bool,
+    /// An instance's template. Its triggers, conditions, concurrency,
+    /// inputs, outputs and steps are the template's.
+    pub template: Option<FlowId>,
+    /// A template's params: `params.<name>` in its steps (composition §1).
+    pub params: BTreeMap<String, ParamDef>,
+    /// An instance's bindings of its template's params, as `params` on the wire.
+    pub bindings: BTreeMap<String, Source<serde_json::Value>>,
+    /// An instance's items: one flow per item (composition §4).
+    pub for_each: Option<ForEach>,
     /// Any one starts the flow.
-    #[serde(default)]
     pub triggers: Vec<Trigger>,
     /// Expressions that must all be truthy when a trigger matches (spec §8.2).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub conditions: Vec<Expr>,
+    /// An instance's is its template's; it has none of its own.
     pub concurrency: Concurrency,
-    #[serde(default)]
     pub failover: Failover,
     /// Bound each time the flow starts: by a `call` step, the API, or
     /// defaults (spec §8.1). `input.<name>` in expressions.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub inputs: BTreeMap<String, ParamDef>,
     /// What a `stop` step hands back to a caller: a state schema node each.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub outputs: BTreeMap<String, serde_json::Map<String, serde_json::Value>>,
-    #[serde(default)]
     pub body: Vec<Step>,
     /// View-only metadata (spec §6). Stored as-is; the runtime never reads it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub editor: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+impl Flow {
+    /// An instance of a template.
+    pub fn is_instance(&self) -> bool {
+        self.template.is_some()
+    }
+
+    /// A template: it declares params, and isn't an instance.
+    pub fn is_template(&self) -> bool {
+        self.template.is_none() && !self.params.is_empty()
+    }
+
+    /// An abstract template: a required param with no default, so it only
+    /// runs through instances (composition §1).
+    pub fn is_abstract(&self) -> bool {
+        self.template.is_none() && self.params.values().any(ParamDef::needs_value)
+    }
+
+    /// What an instance runs: the template's triggers, conditions,
+    /// concurrency, inputs, outputs and steps, with the instance's identity
+    /// and `enabled` (composition §9).
+    pub fn instance_of(&self, template: &Flow) -> Flow {
+        Flow {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            slug: self.slug.clone(),
+            enabled: self.enabled,
+            template: self.template.clone(),
+            params: template.params.clone(),
+            bindings: self.bindings.clone(),
+            for_each: self.for_each.clone(),
+            editor: self.editor.clone(),
+            ..template.clone()
+        }
+    }
+}
+
+/// A flow as it's stored and sent. An instance's `params` are bindings,
+/// and a template's are definitions, so both go through here.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Wire {
+    #[serde(default)]
+    id: FlowId,
+    name: String,
+    #[serde(default)]
+    slug: String,
+    enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    template: Option<FlowId>,
+    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    params: serde_json::Map<String, serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    for_each: Option<ForEach>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    triggers: Option<Vec<Trigger>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    conditions: Vec<Expr>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    concurrency: Option<Concurrency>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    failover: Option<Failover>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    inputs: BTreeMap<String, ParamDef>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    outputs: BTreeMap<String, serde_json::Map<String, serde_json::Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    body: Option<Vec<Step>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    editor: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+/// Why a flow's shape is wrong, with where.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShapeError {
+    pub path: covalence_protocol::state::Path,
+    pub message: String,
+}
+
+impl fmt::Display for ShapeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl TryFrom<Wire> for Flow {
+    type Error = ShapeError;
+
+    fn try_from(w: Wire) -> Result<Self, ShapeError> {
+        use covalence_protocol::state::PathSegment::Key;
+        let at = |k: &str| vec![Key(k.to_owned())];
+        let instance = w.template.is_some();
+        if instance {
+            let own = [
+                ("triggers", w.triggers.is_some()),
+                ("conditions", !w.conditions.is_empty()),
+                ("concurrency", w.concurrency.is_some()),
+                ("failover", w.failover.is_some()),
+                ("inputs", !w.inputs.is_empty()),
+                ("outputs", !w.outputs.is_empty()),
+                ("body", w.body.is_some()),
+            ];
+            if let Some((field, _)) = own.iter().find(|(_, has)| *has) {
+                return Err(ShapeError {
+                    path: at(field),
+                    message: format!(
+                        "an instance takes its {field} from its template; it has only its identity, `enabled`, `params` and `forEach`"
+                    ),
+                });
+            }
+        } else if w.for_each.is_some() {
+            return Err(ShapeError {
+                path: at("forEach"),
+                message: "only an instance of a template has `forEach`".into(),
+            });
+        }
+        let mut params = BTreeMap::new();
+        let mut bindings = BTreeMap::new();
+        for (name, json) in w.params {
+            let mut path = at("params");
+            path.push(Key(name.clone()));
+            let fail = |message: String| ShapeError {
+                path: path.clone(),
+                message,
+            };
+            if instance {
+                bindings.insert(name, Source::from_json(json).map_err(fail)?);
+            } else {
+                let def: ParamDef =
+                    serde_json::from_value(json).map_err(|e| fail(e.to_string()))?;
+                params.insert(name, def);
+            }
+        }
+        let concurrency = match (instance, w.concurrency) {
+            (_, Some(c)) => c,
+            // Never read: an instance runs with its template's.
+            (true, None) => Concurrency::Parallel,
+            (false, None) => {
+                return Err(ShapeError {
+                    path: Vec::new(),
+                    message: "missing field `concurrency`".into(),
+                });
+            }
+        };
+        Ok(Flow {
+            id: w.id,
+            name: w.name,
+            slug: w.slug,
+            enabled: w.enabled,
+            template: w.template,
+            params,
+            bindings,
+            for_each: w.for_each,
+            triggers: w.triggers.unwrap_or_default(),
+            conditions: w.conditions,
+            concurrency,
+            failover: w.failover.unwrap_or_default(),
+            inputs: w.inputs,
+            outputs: w.outputs,
+            body: w.body.unwrap_or_default(),
+            editor: w.editor,
+        })
+    }
+}
+
+impl From<Flow> for Wire {
+    fn from(f: Flow) -> Wire {
+        let instance = f.template.is_some();
+        let params = if instance {
+            f.bindings
+                .iter()
+                .map(|(k, s)| (k.clone(), s.to_json().expect("a source encodes as JSON")))
+                .collect()
+        } else {
+            f.params
+                .iter()
+                .map(|(k, d)| {
+                    (
+                        k.clone(),
+                        serde_json::to_value(d).expect("a param encodes as JSON"),
+                    )
+                })
+                .collect()
+        };
+        let own = |b: bool| (!instance).then_some(b);
+        Wire {
+            id: f.id,
+            name: f.name,
+            slug: f.slug,
+            enabled: f.enabled,
+            template: f.template,
+            params,
+            for_each: f.for_each,
+            triggers: own(true).map(|_| f.triggers),
+            conditions: f.conditions,
+            concurrency: own(true).map(|_| f.concurrency),
+            failover: own(true).map(|_| f.failover),
+            inputs: f.inputs,
+            outputs: f.outputs,
+            body: own(true).map(|_| f.body),
+            editor: f.editor,
+        }
+    }
 }
 
 /// What happens when a trigger fires while a run is active (spec §1).
@@ -284,7 +493,7 @@ pub enum StepKind {
     /// Starts another flow through its `call` trigger, and with `wait`
     /// (the default) waits for it and takes its outputs (spec §8.3).
     Call {
-        flow: FlowId,
+        flow: FlowRef,
         /// Each a source, evaluated once when the step starts.
         inputs: BTreeMap<String, Source<serde_json::Value>>,
         wait: Option<bool>,
@@ -296,6 +505,30 @@ pub enum StepKind {
         /// A failed run's message.
         error: Option<Expr>,
     },
+}
+
+/// The flow a `call` step starts: by ID, or the one a param of kind
+/// `flow` holds (composition §1.2).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged, deny_unknown_fields)]
+pub enum FlowRef {
+    Id(FlowId),
+    Param { param: String },
+}
+
+impl FlowRef {
+    pub fn id(&self) -> Option<&str> {
+        match self {
+            FlowRef::Id(id) => Some(id),
+            FlowRef::Param { .. } => None,
+        }
+    }
+}
+
+impl From<&str> for FlowRef {
+    fn from(id: &str) -> Self {
+        FlowRef::Id(id.to_owned())
+    }
 }
 
 /// How a `stop` step ends its run.
@@ -425,7 +658,7 @@ enum WireStep {
         timeout: Option<Duration>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         on_error: Option<OnError>,
-        flow: FlowId,
+        flow: FlowRef,
         #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
         inputs: BTreeMap<String, Source<serde_json::Value>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]

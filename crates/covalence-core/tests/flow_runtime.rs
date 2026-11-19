@@ -1539,6 +1539,7 @@ async fn a_state_trigger_reads_a_cell_in_the_turn_of_its_input() {
             journal: JournalMode::Full,
             to: Vec::new(),
             control: None,
+            values: Vec::new(),
         },
         None,
     );
