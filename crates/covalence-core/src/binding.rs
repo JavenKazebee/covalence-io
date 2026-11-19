@@ -24,16 +24,18 @@ use crate::transform::{MapTo, Transform};
 
 pub mod worker;
 
-/// Entity type in the store.
-pub const ENTITY: &str = "control_binding";
-
-/// The bindings of one control on one layer (bindings spec §1).
+/// The bindings of one control (bindings spec §1), in a component
+/// (composition spec §7.1).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ControlBinding {
-    /// A ULID, assigned by the server.
+    /// Unique in its component. In the running core, `<component>/<id>`
+    /// ([`crate::component::binding_id`]).
     #[serde(default)]
     pub id: String,
+    /// The component it's in. Not stored: a component's bindings are
+    /// embedded in it, and the component fills this in.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub layer: LayerId,
     pub control: String,
     #[serde(default)]

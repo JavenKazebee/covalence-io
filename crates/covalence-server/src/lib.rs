@@ -28,9 +28,9 @@
 //! | `GET /devices?plugin`        | HID and serial devices, who holds each, and offers (see `devices`) |
 //! | `GET /connections/{id}/traffic` | Each of the connection's transport handles and its recent traffic |
 //!
-//! Surfaces, layers and control bindings are in surfaces spec §9 and
-//! bindings spec §2. Every entity type has the flows' five routes, from one
-//! generic implementation (`entity`), with `{surface | layer | binding,
+//! Surfaces and components are in surfaces spec §9, composition spec §7
+//! and bindings spec §2. Every entity type has the flows' five routes, from
+//! one generic implementation (`entity`), with `{surface | component,
 //! warnings}` in place of `{flow, warnings}`. Deleting an entity deletes or
 //! clears whatever refers to it, as each reference says.
 //!
@@ -38,15 +38,13 @@
 //! |-------------------------------------|---------------------------------------------------|
 //! | `GET, POST /surfaces`               | Surfaces                                          |
 //! | `GET, PUT, DELETE /surfaces/{id}`   | One surface. Deleting it detaches it              |
-//! | `POST /surfaces/{id}/current`       | Navigates `main`: `{group?, layer: id \| null}`, once it's drawn |
+//! | `POST /surfaces/{id}/current`       | Navigates `main`: `{group?, component: id \| null}`, once it's drawn |
 //! | `GET /surfaces/{id}/controls`       | The controls it last attached with                |
 //! | `GET /surface/{id}`                 | The web surface's WebSocket (see `web_surface`)    |
-//! | `GET, POST /layers`                 | Layers                                            |
-//! | `GET, PUT, DELETE /layers/{id}`     | One layer. Deleting it deletes its bindings       |
-//! | `GET, POST /control-bindings?layer` | Control bindings, of one layer with `layer`       |
-//! | `GET, PUT, DELETE /control-bindings/{id}` | One binding                                 |
-//! | `GET /control-bindings/problems`    | Each failing binding property's last error        |
-//! | `POST /control-bindings/preview`    | `{binding, size?}` → `{look, props, image}`, the key as it would be drawn |
+//! | `GET, POST /components?shown`       | Components, with their bindings; only shown ones with `shown=true` |
+//! | `GET, PUT, DELETE /components/{id}` | One component                                     |
+//! | `GET /components/problems`          | Each failing `show` field's and binding property's last error |
+//! | `POST /components/preview`          | `{binding, size?}` → `{look, props, image}`, the key as it would be drawn |
 //! | `GET, POST /variables`              | Variables (dataflow spec §6)                      |
 //! | `GET, PUT, DELETE /variables/{id}`  | One variable. Deleting a computed one removes its value |
 //!
@@ -60,6 +58,7 @@ use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::time::Duration;
 
 use covalence_core::binding::{self, ControlBinding};
+use covalence_core::component::Component;
 use covalence_core::dataflow::Dataflow;
 use covalence_core::engine::{ActionOutcome, ActionRequest, Actions};
 use covalence_core::expr::{self, QuickJs};
@@ -71,7 +70,7 @@ use covalence_core::select::TargetView;
 use covalence_core::state::ConnId;
 use covalence_core::surface::gesture::Timing;
 use covalence_core::surface::render::Renderer;
-use covalence_core::surface::{self, Layer, LayerId, Surface, SurfaceId, Surfaces};
+use covalence_core::surface::{self, LayerId, Surface, SurfaceId, Surfaces};
 use covalence_core::variable::Variable;
 use covalence_core::{Core, CoreError, Shared};
 use covalence_protocol::connection::{ConnCreate, ConnMode};
@@ -290,7 +289,9 @@ pub struct App {
     /// Compiles and evaluates expressions, for the runtime and validation.
     evaluator: Arc<QuickJs>,
     surface_entities: RwLock<BTreeMap<SurfaceId, Surface>>,
-    layers: RwLock<BTreeMap<LayerId, Layer>>,
+    components: RwLock<BTreeMap<String, Component>>,
+    /// Every component's bindings as the running core has them, by
+    /// `<component>/<binding>` (composition spec §7.1).
     bindings: RwLock<BTreeMap<String, ControlBinding>>,
     /// Attaches surfaces and draws the bindings of the layers they show.
     surfaces: Surfaces,
@@ -349,8 +350,12 @@ impl App {
         // here (flow spec §8.4).
         let flows = load_kind::<Flow>(&store)?;
         let surface_entities = load_kind::<Surface>(&store)?;
-        let layers = load_kind::<Layer>(&store)?;
-        let bindings = load_kind::<ControlBinding>(&store)?;
+        let components = load_kind::<Component>(&store)?;
+        let bindings: BTreeMap<String, ControlBinding> = components
+            .values()
+            .flat_map(Component::runtime_bindings)
+            .map(|b| (b.id.clone(), b))
+            .collect();
         let variables = load_kind::<Variable>(&store)?;
         // Variables come back before any trigger is armed (dataflow §6):
         // persisted values first, so reducers resume from them, then cells.
@@ -377,18 +382,18 @@ impl App {
             }
         }
         for b in bindings.values() {
-            if let Some(layer) = layers.get(&b.layer) {
+            if let Some(component) = components.get(&b.layer) {
                 dataflow.replace(
                     &binding::helper_cell_id(&b.id, ""),
-                    helper_cells(b, &layer.slug, &shown_on, &surface_entities, None),
+                    helper_cells(b, &component.slug, &shown_on, &surface_entities, None),
                     None,
                 );
             }
         }
         let surfaces = Surfaces::new(core.shared().clone(), Timing::default());
         surfaces.set_aliases(alias_map(&conns));
-        for layer in layers.values() {
-            surfaces.set_layer(layer.clone())?;
+        for layer in components.values().filter_map(Component::shown) {
+            surfaces.set_layer(layer)?;
         }
         for surface in surface_entities.values() {
             surfaces.set_surface(surface.clone())?;
@@ -452,7 +457,7 @@ impl App {
                 runtime,
                 evaluator,
                 surface_entities: RwLock::new(surface_entities),
-                layers: RwLock::new(layers),
+                components: RwLock::new(components),
                 bindings: RwLock::new(bindings),
                 surfaces,
                 binding_evaluator: QuickJs::new(expr::Limits {
@@ -518,15 +523,8 @@ impl App {
         expr::Evaluator::evaluate(self.evaluator.as_ref(), source, &scope)
     }
 
-    /// Makes a binding's helper cells match it (surfaces §4.3).
-    pub(crate) fn sync_helpers(&self, b: &ControlBinding) {
-        let slug = read(&self.layers).get(&b.layer).map(|l| l.slug.clone());
-        if let Some(slug) = slug {
-            self.sync_helpers_on(b, &slug);
-        }
-    }
-
-    /// [`sync_helpers`](Self::sync_helpers) for a layer with this slug.
+    /// Makes a binding's helper cells match it (surfaces §4.3), for a
+    /// component with this slug.
     pub(crate) fn sync_helpers_on(&self, b: &ControlBinding, layer_slug: &str) {
         self.sync_helpers_with(b, layer_slug, None);
     }
@@ -556,7 +554,7 @@ impl App {
             .cloned()
             .collect();
         for b in bindings {
-            let slug = read(&self.layers).get(&b.layer).map(|l| l.slug.clone());
+            let slug = read(&self.components).get(&b.layer).map(|l| l.slug.clone());
             if let Some(slug) = slug {
                 self.sync_helpers_with(&b, &slug, renamed);
             }

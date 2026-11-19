@@ -106,7 +106,7 @@ The shapes above, with these rules, which the native evaluator and the compiled 
 
 ### 2.2 The editor's preview (M5)
 
-`POST /control-bindings/preview` takes `{binding, size?}`, a control binding saved or not, and evaluates it once against live state exactly as the binding worker would (§3), with the same 10 ms limit for `expr`. It never writes or journals.
+`POST /components/preview` (M5–M8: `/control-bindings/preview`) takes `{binding, size?}`, a control binding saved or not, and evaluates it once against live state exactly as the binding worker would (§3), with the same 10 ms limit for `expr`. It never writes or journals.
 
 ```ts
 {

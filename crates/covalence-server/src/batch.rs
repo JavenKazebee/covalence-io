@@ -28,9 +28,9 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Json, Router};
-use covalence_core::binding::ControlBinding;
+use covalence_core::component::Component;
 use covalence_core::flow::{Code, Flow, Problem};
-use covalence_core::surface::{Layer, Surface};
+use covalence_core::surface::Surface;
 use covalence_core::variable::Variable;
 use covalence_protocol::state::PathSegment;
 use serde::Deserialize;
@@ -203,8 +203,7 @@ where
 /// Every type a batch can change.
 const KINDS: &[&dyn Batched] = &[
     &Of::<Surface>(PhantomData),
-    &Of::<Layer>(PhantomData),
-    &Of::<ControlBinding>(PhantomData),
+    &Of::<Component>(PhantomData),
     &Of::<Flow>(PhantomData),
     &Of::<Variable>(PhantomData),
 ];

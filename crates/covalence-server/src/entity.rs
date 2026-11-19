@@ -26,9 +26,9 @@ use axum::http::StatusCode;
 use axum::response::Response;
 use axum::routing::get;
 use axum::{Json, Router};
-use covalence_core::binding::ControlBinding;
+use covalence_core::component::Component;
 use covalence_core::flow::{Flow, Problem, Report};
-use covalence_core::surface::{Layer, Surface};
+use covalence_core::surface::Surface;
 use covalence_core::variable::Variable;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -115,7 +115,7 @@ pub struct Ref {
 /// What happens to an entity when one it refers to is deleted.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OnDelete {
-    /// It's deleted too: a binding goes with its layer.
+    /// It's deleted too.
     Cascade,
     /// The reference is cleared: a surface whose start layer goes has none.
     Clear,
@@ -140,8 +140,7 @@ impl Ref {
 /// Every entity type, so a delete can find what refers to the entity.
 const KINDS: &[&dyn Referrers] = &[
     &Of::<Surface>(PhantomData),
-    &Of::<Layer>(PhantomData),
-    &Of::<ControlBinding>(PhantomData),
+    &Of::<Component>(PhantomData),
     &Of::<Flow>(PhantomData),
     &Of::<Variable>(PhantomData),
 ];

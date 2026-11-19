@@ -7,6 +7,10 @@
 //! `trigger.layer` is `trigger.component`, a surface's `startLayer` is
 //! `startComponent`, and a helper's `scope: "layer"` is `"component"`.
 //!
+//! Each stored layer, with its control bindings, becomes a component: its
+//! `on`, `when`, `level`, `rank` and `cascade` move under `show`, and its
+//! bindings are embedded without their `layer`.
+//!
 //! Stored entities are rewritten as JSON, by shape, and written back in one
 //! transaction. Expressions are rewritten where they name one of those by a
 //! dotted name; a path built at run time isn't found, so each rewritten
@@ -24,35 +28,113 @@ const EXPR_KEYS: &[&str] = &[
 ];
 
 /// Rewrites every stored entity that needs it, in one transaction, and
-/// returns a warning per rewritten expression.
+/// returns a warning per rewritten expression or dropped binding.
 pub(crate) fn migrate(store: &Store) -> Result<Vec<String>, covalence_store::StoreError> {
     let mut warnings = Vec::new();
-    let mut changed: Vec<(&str, String, String)> = Vec::new();
+    // (type, ID) → its new body, or `None` to delete it.
+    let mut writes: Vec<(&str, String, Option<String>)> = Vec::new();
+    let mut layers: Vec<(String, Value)> = Vec::new();
+    let mut bindings: Vec<(String, Value)> = Vec::new();
     for &kind in KINDS {
         for row in store.entities(kind)? {
             let Ok(mut json) = serde_json::from_str::<Value>(&row.body) else {
                 continue;
             };
             let mut rewritten = Vec::new();
-            if rewrite(&mut json, &mut Vec::new(), &mut rewritten) {
-                for (at, before, after) in rewritten {
-                    warnings.push(format!(
-                        "{kind} {} at {at}: rewrote {before:?} as {after:?}",
-                        row.id
-                    ));
-                }
-                changed.push((kind, row.id, json.to_string()));
+            let changed = rewrite(&mut json, &mut Vec::new(), &mut rewritten);
+            for (at, before, after) in rewritten {
+                warnings.push(format!(
+                    "{kind} {} at {at}: rewrote {before:?} as {after:?}",
+                    row.id
+                ));
+            }
+            match kind {
+                LAYER => layers.push((row.id, json)),
+                BINDING => bindings.push((row.id, json)),
+                _ if changed => writes.push((kind, row.id, Some(json.to_string()))),
+                _ => {}
             }
         }
     }
-    if !changed.is_empty() {
-        let writes: Vec<(&str, &str, Option<&str>)> = changed
+    for (id, body) in components(&layers, &bindings, &mut warnings) {
+        writes.push((COMPONENT, id, Some(body.to_string())));
+    }
+    for (id, _) in &layers {
+        writes.push((LAYER, id.clone(), None));
+    }
+    for (id, _) in &bindings {
+        writes.push((BINDING, id.clone(), None));
+    }
+    if !writes.is_empty() {
+        let writes: Vec<(&str, &str, Option<&str>)> = writes
             .iter()
-            .map(|(kind, id, body)| (*kind, id.as_str(), Some(body.as_str())))
+            .map(|(kind, id, body)| (*kind, id.as_str(), body.as_deref()))
             .collect();
         store.write_entities(&writes)?;
     }
     Ok(warnings)
+}
+
+const LAYER: &str = "layer";
+const BINDING: &str = "control_binding";
+const COMPONENT: &str = "component";
+
+/// Each layer as a component, with its bindings embedded in ID order. A
+/// binding whose layer is gone is dropped, with a warning.
+fn components(
+    layers: &[(String, Value)],
+    bindings: &[(String, Value)],
+    warnings: &mut Vec<String>,
+) -> Vec<(String, Value)> {
+    let mut out: Vec<(String, Value)> = layers
+        .iter()
+        .map(|(id, layer)| {
+            let mut component = Map::new();
+            let mut show = Map::new();
+            if let Value::Object(fields) = layer {
+                for (k, v) in fields {
+                    if ["on", "when", "level", "rank", "cascade"].contains(&k.as_str()) {
+                        show.insert(k.clone(), v.clone());
+                    } else {
+                        component.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+            component.insert("bindings".into(), Value::Array(Vec::new()));
+            component.insert("show".into(), Value::Object(show));
+            (id.clone(), Value::Object(component))
+        })
+        .collect();
+    let mut sorted: Vec<&(String, Value)> = bindings.iter().collect();
+    sorted.sort_by(|a, b| a.0.cmp(&b.0));
+    for (id, binding) in sorted {
+        let layer = binding.get("layer").and_then(Value::as_str).unwrap_or("");
+        match out.iter_mut().find(|(l, _)| l == layer) {
+            Some((_, component)) => {
+                let mut b = binding.clone();
+                if let Value::Object(fields) = &mut b {
+                    fields.remove("layer");
+                }
+                if let Some(Value::Array(list)) = component.get_mut("bindings") {
+                    list.push(b);
+                }
+            }
+            None => warnings.push(format!(
+                "control_binding {id}: dropped, since its layer {layer:?} is gone"
+            )),
+        }
+    }
+    for (_, component) in &mut out {
+        if let Value::Object(fields) = component
+            && fields
+                .get("bindings")
+                .and_then(Value::as_array)
+                .is_some_and(Vec::is_empty)
+        {
+            fields.remove("bindings");
+        }
+    }
+    out
 }
 
 type Rewritten = Vec<(String, String, String)>;
@@ -402,6 +484,61 @@ mod tests {
             !rewrite(&mut again, &mut Vec::new(), &mut Vec::new()),
             "idempotent"
         );
+    }
+
+    #[test]
+    fn layers_and_their_bindings_become_components() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .put_entity(
+                "layer",
+                "L",
+                &json!({ "id": "L", "name": "Shift", "slug": "shift", "controls": [{ "id": "k0" }],
+                    "level": "over", "cascade": "through", "when": { "while": { "expr": "layer.cams.controls.k0.on" } } })
+                .to_string(),
+            )
+            .unwrap();
+        store
+            .put_entity(
+                "layer",
+                "P",
+                &json!({ "id": "P", "name": "Page", "slug": "page", "controls": [] }).to_string(),
+            )
+            .unwrap();
+        for (id, layer) in [("B2", "L"), ("B1", "L"), ("B9", "gone")] {
+            let body = json!({ "id": id, "layer": layer, "control": "k0", "props": { "label": id },
+                "helpers": { "t": { "use": "toggle", "scope": "layer" } } });
+            store
+                .put_entity("control_binding", id, &body.to_string())
+                .unwrap();
+        }
+        let warnings = migrate(&store).unwrap();
+        assert_eq!(
+            warnings.len(),
+            2,
+            "an expression and a dropped binding: {warnings:?}"
+        );
+        let component = |id: &str| -> Value {
+            serde_json::from_str(&store.entity("component", id).unwrap().unwrap().body).unwrap()
+        };
+        assert_eq!(
+            component("L"),
+            json!({ "id": "L", "name": "Shift", "slug": "shift", "controls": [{ "id": "k0" }],
+                "bindings": [
+                    { "id": "B1", "control": "k0", "props": { "label": "B1" }, "helpers": { "t": { "use": "toggle", "scope": "component" } } },
+                    { "id": "B2", "control": "k0", "props": { "label": "B2" }, "helpers": { "t": { "use": "toggle", "scope": "component" } } }
+                ],
+                "show": { "level": "over", "cascade": "through", "when": { "while": { "expr": "component.cams.controls.k0.on" } } } })
+        );
+        assert_eq!(
+            component("P"),
+            json!({ "id": "P", "name": "Page", "slug": "page", "controls": [], "show": {} })
+        );
+        assert!(store.entities("layer").unwrap().is_empty());
+        assert!(store.entities("control_binding").unwrap().is_empty());
+        // Each parses as the core reads it.
+        covalence_core::component::Component::parse(&component("L")).unwrap();
+        assert!(migrate(&store).unwrap().is_empty(), "nothing left to do");
     }
 
     #[test]

@@ -50,7 +50,6 @@ use gesture::{Change, Detected, Recogniser, Timing};
 
 /// Entity types in the store.
 pub const SURFACE_ENTITY: &str = "surface";
-pub const LAYER_ENTITY: &str = "layer";
 /// The state root for surfaces: `{conn: "surface", path: [slug, ...]}`.
 pub const STATE_ROOT: &str = "surface";
 /// How many outputs wait for a slow transport before more are dropped.
@@ -195,7 +194,7 @@ pub struct Layer {
     pub name: String,
     #[serde(default)]
     pub slug: String,
-    pub controls: Vec<LayerControl>,
+    pub controls: Vec<ControlSpec>,
     /// The surfaces it may appear on; every surface when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on: Option<Selector<Entities>>,
@@ -225,7 +224,7 @@ pub enum Cascade {
 }
 
 impl Cascade {
-    fn is_replace(&self) -> bool {
+    pub(crate) fn is_replace(&self) -> bool {
         *self == Cascade::Replace
     }
 }
@@ -261,7 +260,7 @@ pub enum Level {
 }
 
 impl Level {
-    fn is_normal(&self) -> bool {
+    pub(crate) fn is_normal(&self) -> bool {
         *self == Level::Normal
     }
 
@@ -278,7 +277,7 @@ impl Level {
 /// A control a layer covers, and what it needs that control to do.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct LayerControl {
+pub struct ControlSpec {
     /// Matches a [`ControlDef::id`] on the surfaces it fits.
     pub id: String,
     /// Where the editor draws it.
@@ -291,7 +290,7 @@ pub struct LayerControl {
 }
 
 impl Layer {
-    pub fn control(&self, id: &str) -> Option<&LayerControl> {
+    pub fn control(&self, id: &str) -> Option<&ControlSpec> {
         self.controls.iter().find(|c| c.id == id)
     }
 }
@@ -502,8 +501,8 @@ impl ControlDef {
     }
 
     /// What a layer that lists this control copies from it.
-    pub fn to_layer_control(&self) -> LayerControl {
-        LayerControl {
+    pub fn to_control_spec(&self) -> ControlSpec {
+        ControlSpec {
             id: self.id.clone(),
             at: Some(self.at),
             inputs: self.inputs.iter().map(InputCap::kind).collect(),
@@ -2403,8 +2402,8 @@ mod tests {
             .collect()
     }
 
-    fn control(id: &str, outputs: Vec<OutputCapKind>) -> LayerControl {
-        LayerControl {
+    fn control(id: &str, outputs: Vec<OutputCapKind>) -> ControlSpec {
+        ControlSpec {
             id: id.into(),
             at: None,
             inputs: vec![InputCapKind::Momentary],
@@ -2412,7 +2411,7 @@ mod tests {
         }
     }
 
-    fn layer(controls: Vec<LayerControl>) -> Layer {
+    fn layer(controls: Vec<ControlSpec>) -> Layer {
         Layer {
             id: "l".into(),
             name: "Cams".into(),

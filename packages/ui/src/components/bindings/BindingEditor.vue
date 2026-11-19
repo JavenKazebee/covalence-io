@@ -102,7 +102,7 @@ async function save() {
   saving.value = true;
   try {
     if (empty.value) {
-      if (props.stored !== undefined) await api.deleteBinding(props.stored.id);
+      if (props.stored !== undefined) await api.deleteBinding(props.stored);
       draft.value = newDraft(props.layer.id, props.control);
       problems.value = [];
       savedNote.value = "Unbound.";

@@ -1,11 +1,9 @@
 {
   "binding": {
-    "layer": "01JBZ7P0D3F5G7H9J1K3L5M7PZ",
     "control": "k0",
     "props": { "label": { "ref": { "conn": "01JBZ7P0D3F5G7H9J1K3L5M7XX", "path": ["name"] } } }
   },
   "errors": [
-    { "path": ["layer"], "code": "unknownLayer" },
     { "path": ["props", "label", "ref", "conn"], "code": "unknownConnection" }
   ]
 }

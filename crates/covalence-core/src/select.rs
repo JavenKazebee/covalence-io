@@ -401,8 +401,8 @@ impl From<&crate::surface::ControlDef> for ControlView {
     }
 }
 
-impl From<&crate::surface::LayerControl> for ControlView {
-    fn from(c: &crate::surface::LayerControl) -> Self {
+impl From<&crate::surface::ControlSpec> for ControlView {
+    fn from(c: &crate::surface::ControlSpec) -> Self {
         ControlView {
             id: c.id.clone(),
             at: c.at,

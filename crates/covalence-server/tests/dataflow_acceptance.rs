@@ -76,13 +76,13 @@ fn layout() -> VirtualLayout {
     serde_json::from_value(json!({ "encoders": 1, "faders": 1 })).unwrap()
 }
 
-/// A layer of all the deck's controls, as "New layer" copies them.
+/// A page of all the deck's controls, as "New page" copies them.
 fn deck_layer(name: &str) -> Value {
     let controls: Vec<Value> = virtual_controls(Some(&layout()))
         .iter()
-        .map(|c| serde_json::to_value(c.to_layer_control()).unwrap())
+        .map(|c| serde_json::to_value(c.to_control_spec()).unwrap())
         .collect();
-    json!({ "name": name, "controls": controls })
+    Server::page(name, json!(controls))
 }
 
 async fn deck(server: &Server, start: &str) -> Value {
@@ -188,7 +188,7 @@ impl Deck {
 /// A binding's image as the editor's preview draws it.
 async fn image_of(server: &Server, binding: Value) -> String {
     let (status, body) = server
-        .post("/control-bindings/preview", json!({ "binding": binding }))
+        .post("/components/preview", json!({ "binding": binding }))
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     body["image"].as_str().unwrap().to_owned()
@@ -256,7 +256,7 @@ async fn a_computed_variable_is_a_read_only_cell_that_why_passes_through() {
     assert_eq!(body["errors"][0]["code"], "readOnly", "{body}");
 
     // A binding reads it.
-    let layer = create(&server, "/layers", "layer", deck_layer("Cameras")).await;
+    let layer = create(&server, "/components", "component", deck_layer("Cameras")).await;
     let tally = json!({
         "layer": id(&layer), "control": "k0",
         "props": { "background": { "use": "rules",
@@ -353,31 +353,24 @@ async fn an_encoder_and_a_motor_fader_keep_in_step_with_a_volume() {
     let server = Server::start_with(&[SHOW]);
     let addr = server.listen().await;
     let vh = show(&server, "vh").await;
-    let layer = create(&server, "/layers", "layer", deck_layer("Mix")).await;
+    let layer = create(&server, "/components", "component", deck_layer("Mix")).await;
     let surface = deck(&server, id(&layer)).await;
     let volume = json!({ "ref": { "conn": vh, "path": ["volume"] } });
     let to = json!([{ "action": { "target": { "conn": vh }, "action": "setVolume", "param": "level", "rateLimit": "50ms" } }]);
-    create(
-        &server,
-        "/control-bindings",
-        "binding",
-        json!({
-            "layer": id(&layer), "control": "e0",
+    server.bind(id(&layer), json!({ "control": "e0",
             "helpers": { "vol": { "use": "position", "max": 1, "step": 0.0625, "follow": volume, "to": to } },
         }),
     )
     .await;
-    create(
-        &server,
-        "/control-bindings",
-        "binding",
-        json!({
-            "layer": id(&layer), "control": "f0",
-            "props": { "value": volume },
-            "helpers": { "level": { "use": "absolute", "follow": volume, "to": to } },
-        }),
-    )
-    .await;
+    server
+        .bind(
+            id(&layer),
+            json!({ "control": "f0",
+                "props": { "value": volume },
+                "helpers": { "level": { "use": "absolute", "follow": volume, "to": to } },
+            }),
+        )
+        .await;
     let mut deck = Deck::attach(&server, &addr, id(&surface)).await;
 
     // The motor fader goes to the volume, and sending it sends nothing back.
@@ -492,19 +485,14 @@ async fn an_encoder_and_a_motor_fader_keep_in_step_with_a_volume() {
 async fn an_encoder_pages_a_deck_through_navigate() {
     let server = Server::start();
     let addr = server.listen().await;
-    let cams = create(&server, "/layers", "layer", deck_layer("Cameras")).await;
-    let audio = create(&server, "/layers", "layer", deck_layer("Audio")).await;
-    let lights = create(&server, "/layers", "layer", deck_layer("Lights")).await;
+    let cams = create(&server, "/components", "component", deck_layer("Cameras")).await;
+    let audio = create(&server, "/components", "component", deck_layer("Audio")).await;
+    let lights = create(&server, "/components", "component", deck_layer("Lights")).await;
     let surface = deck(&server, id(&cams)).await;
     let pages = json!([id(&cams), id(&audio), id(&lights)]);
     // The same encoder binding on each page, so it keeps paging.
     for layer in [&cams, &audio, &lights] {
-        create(
-            &server,
-            "/control-bindings",
-            "binding",
-            json!({
-                "layer": id(layer), "control": "e0",
+        server.bind(id(layer), json!({ "control": "e0",
                 "helpers": { "page": { "use": "select", "items": pages, "scope": "surface",
                     "to": [{ "action": { "target": "core", "action": "navigate", "param": "component",
                                          "params": { "surface": id(&surface) } } }] } },
@@ -532,7 +520,7 @@ async fn an_encoder_pages_a_deck_through_navigate() {
 async fn a_shift_layer_takes_three_keys_while_held_and_a_latching_one_on_a_toggle() {
     let server = Server::start();
     let addr = server.listen().await;
-    let cams = create(&server, "/layers", "layer", deck_layer("Cameras")).await;
+    let cams = create(&server, "/components", "component", deck_layer("Cameras")).await;
     let three: Vec<Value> = deck_layer("")["controls"]
         .as_array()
         .unwrap()
@@ -542,22 +530,18 @@ async fn a_shift_layer_takes_three_keys_while_held_and_a_latching_one_on_a_toggl
         .collect();
     let shift = create(
         &server,
-        "/layers",
-        "layer",
-        json!({ "name": "Shift", "controls": three, "level": "over",
-                "when": { "while": { "expr": "self.controls.k14.pressed" } } }),
+        "/components",
+        "component",
+        json!({ "name": "Shift", "controls": three, "show": { "level": "over",
+                "when": { "while": { "expr": "self.controls.k14.pressed" } } } }),
     )
     .await;
     let surface = deck(&server, id(&cams)).await;
     for (layer, text) in [(&cams, "Cam"), (&shift, "Wide")] {
         for k in ["k2", "k3", "k4"] {
-            create(
-                &server,
-                "/control-bindings",
-                "binding",
-                labelled(id(layer), k, &format!("{text} {k}")),
-            )
-            .await;
+            server
+                .bind(id(layer), labelled(id(layer), k, &format!("{text} {k}")))
+                .await;
         }
     }
     let cam3 = image_of(&server, labelled(id(&cams), "k3", "Cam k3")).await;
@@ -590,21 +574,18 @@ async fn a_shift_layer_takes_three_keys_while_held_and_a_latching_one_on_a_toggl
     }
 
     // Latching: the shift reads a toggle on k14 instead.
-    let (status, body) = server
-        .put(
-            &format!("/layers/{}", id(&shift)),
-            json!({ "name": "Shift", "controls": shift["controls"], "level": "over",
-                    "when": { "while": { "ref": { "root": "component", "path": ["cameras", "controls", "k14", "latched"] } } } }),
+    let uri = format!("/components/{}", id(&shift));
+    let mut latching = server.get(&uri).await;
+    latching["show"] = json!({ "level": "over",
+        "when": { "while": { "ref": { "root": "component", "path": ["cameras", "controls", "k14", "latched"] } } } });
+    let (status, body) = server.put(&uri, latching).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    server
+        .bind(
+            id(&cams),
+            json!({ "control": "k14", "helpers": { "latched": { "use": "toggle" } } }),
         )
         .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    create(
-        &server,
-        "/control-bindings",
-        "binding",
-        json!({ "layer": id(&cams), "control": "k14", "helpers": { "latched": { "use": "toggle" } } }),
-    )
-    .await;
     for wide in [true, false] {
         deck.input("k14", "down", None, false).await;
         deck.input("k14", "up", None, false).await;
@@ -635,12 +616,12 @@ async fn a_chain_of_three_cells_redraws_a_key_within_the_budget() {
         )
         .await;
     }
-    let layer = create(&server, "/layers", "layer", deck_layer("Cameras")).await;
+    let layer = create(&server, "/components", "component", deck_layer("Cameras")).await;
     let label = |layer: &str| {
         json!({ "layer": layer, "control": "k0",
                 "props": { "label": { "use": "format", "format": "auto", "input": { "ref": { "root": "vars", "path": ["c"] } } } } })
     };
-    create(&server, "/control-bindings", "binding", label(id(&layer))).await;
+    server.bind(id(&layer), label(id(&layer))).await;
     let surface = deck(&server, id(&layer)).await;
     let mut deck = Deck::attach(&server, &addr, id(&surface)).await;
 

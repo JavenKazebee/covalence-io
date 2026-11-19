@@ -1,6 +1,5 @@
 {
   "binding": {
-    "layer": "01JBZ7P0D3F5G7H9J1K3L5M7PA",
     "control": "k9",
     "props": {
       "background": { "use": "format", "input": { "ref": { "root": "vars", "path": ["x"] } }, "format": "upper" },

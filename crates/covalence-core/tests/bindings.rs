@@ -59,9 +59,16 @@ fn check(json: &Json) -> Json {
         taken: &taken,
         evaluator: &evaluator,
     };
+    // Each is a binding in the fixtures' 15-key component (composition spec §7.1).
     match ControlBinding::parse(json) {
         Err(errors) => summary(&errors),
-        Ok(b) => summary(&binding::validate(&b, &ctx).errors),
+        Ok(b) => {
+            let placed = ControlBinding {
+                layer: LAYER.to_owned(),
+                ..b
+            };
+            summary(&binding::validate(&placed, &ctx).errors)
+        }
     }
 }
 

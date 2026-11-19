@@ -880,7 +880,7 @@ impl<'a> Validation<'a> {
                     );
                     return;
                 };
-                let listed: Vec<&crate::surface::LayerControl> = match controls {
+                let listed: Vec<&crate::surface::ControlSpec> = match controls {
                     None => def.controls.iter().collect(),
                     Some(selector) => {
                         self.controls(selector, &join(at, &[key("controls")]), &|id| {
@@ -943,7 +943,7 @@ impl<'a> Validation<'a> {
     fn control_events(
         &mut self,
         names: &Names,
-        listed: &[&crate::surface::LayerControl],
+        listed: &[&crate::surface::ControlSpec],
         at: &Path,
     ) {
         for name in names.iter().filter(|n| *n != "*") {

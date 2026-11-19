@@ -19,8 +19,8 @@ use covalence_core::journal::{
 use covalence_core::state::StatePath;
 use covalence_core::surface::gesture::Timing;
 use covalence_core::surface::{
-    Attach, AttachError, ControlDef, Draw, ImageDef, Input, InputCap, InputCapKind, InputValue,
-    Layer, LayerControl, Link, Output, OutputCap, OutputCapKind, Placement, ShowError, Surface,
+    Attach, AttachError, ControlDef, ControlSpec, Draw, ImageDef, Input, InputCap, InputCapKind,
+    InputValue, Layer, Link, Output, OutputCap, OutputCapKind, Placement, ShowError, Surface,
     Surfaces,
 };
 use covalence_protocol::Value;
@@ -928,14 +928,14 @@ async fn a_state_trigger_on_two_keys_is_a_chord() {
 async fn a_layer_fits_by_capability_not_by_size() {
     let w = world();
     let _link = w.surfaces.attach(DECK, mixer()).unwrap();
-    let layer = |id: &str, slug: &str, controls: Vec<LayerControl>| Layer {
+    let layer = |id: &str, slug: &str, controls: Vec<ControlSpec>| Layer {
         id: id.into(),
         name: slug.into(),
         slug: slug.into(),
         controls,
         ..Layer::default()
     };
-    let control = |id: &str, inputs: Vec<InputCapKind>, outputs: Vec<OutputCapKind>| LayerControl {
+    let control = |id: &str, inputs: Vec<InputCapKind>, outputs: Vec<OutputCapKind>| ControlSpec {
         id: id.into(),
         at: None,
         inputs,
@@ -981,8 +981,8 @@ async fn a_layer_fits_by_capability_not_by_size() {
     let controls = w.surfaces.controls(DECK).unwrap();
     assert_eq!(controls.len(), 3);
     assert_eq!(
-        controls[1].to_layer_control(),
-        LayerControl {
+        controls[1].to_control_spec(),
+        ControlSpec {
             id: "dial".into(),
             at: Some(Placement::at(1, 0)),
             inputs: vec![InputCapKind::Relative, InputCapKind::Momentary],
@@ -1002,7 +1002,7 @@ async fn a_control_trigger_on_a_dial_gets_the_turn() {
             id: DIALS.into(),
             name: "Dials".into(),
             slug: "dials".into(),
-            controls: vec![LayerControl {
+            controls: vec![ControlSpec {
                 id: "dial".into(),
                 at: None,
                 inputs: vec![InputCapKind::Relative],

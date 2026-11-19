@@ -1,4 +1,4 @@
-//! Surfaces, layers and control bindings over HTTP, and
+//! Surfaces and components over HTTP, and
 //! the web surface's WebSocket, against the real server, the real Deno
 //! plugin host and two Videohubs in simulate mode. Needs `deno` on the PATH.
 
@@ -9,8 +9,8 @@ use std::time::Duration;
 use axum::http::{Method, StatusCode};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use covalence_core::binding::ControlBinding;
-use covalence_core::surface::{Layer, Surface};
+use covalence_core::component::Component;
+use covalence_core::surface::Surface;
 use covalence_server::{App, Config};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
@@ -62,9 +62,9 @@ fn id(entity: &Value) -> &str {
     entity["id"].as_str().unwrap()
 }
 
-/// A layer of the virtual deck's 15 keys.
+/// A page of the virtual deck's 15 keys.
 fn deck_layer(name: &str) -> Value {
-    json!({ "name": name, "controls": keys(15) })
+    Server::page(name, json!(keys(15)))
 }
 
 /// `k0` … `k<n - 1>`, 5 to a row, each `momentary` with an `image`.
@@ -80,23 +80,35 @@ fn keys(n: u32) -> Vec<Value> {
 }
 
 /// The label of `control`, from a connection's value.
-fn label_of(layer: &str, control: &str, conn: &str) -> Value {
+fn label_of(control: &str, conn: &str) -> Value {
     json!({
-        "layer": layer, "control": control,
+        "control": control,
         "props": { "label": { "ref": { "conn": conn, "path": ["outputs", 1, "source"] } } },
     })
 }
 
+/// Puts a component back with `edit` made to it.
+async fn edit(
+    server: &Server,
+    component: &str,
+    edit: impl FnOnce(&mut Value),
+) -> (StatusCode, Value) {
+    let uri = format!("/components/{component}");
+    let mut c = server.get(&uri).await;
+    edit(&mut c);
+    server.put(&uri, c).await
+}
+
 #[tokio::test(flavor = "multi_thread")]
-async fn surfaces_layers_and_bindings_are_validated_and_stored() {
+async fn surfaces_components_and_bindings_are_validated_and_stored() {
     let server = Server::start();
 
-    // Layers: a slug from the name, and each control listed once.
-    let cams = create(&server, "/layers", "layer", deck_layer("Cameras")).await;
+    // Components: a slug from the name, and each control listed once.
+    let cams = create(&server, "/components", "component", deck_layer("Cameras")).await;
     assert_eq!(cams["slug"], "cameras");
     let mut twice = deck_layer("Bad");
     twice["controls"][1]["id"] = json!("k0");
-    let (status, body) = server.post("/layers", twice).await;
+    let (status, body) = server.post("/components", twice).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(
         codes(&body),
@@ -104,17 +116,37 @@ async fn surfaces_layers_and_bindings_are_validated_and_stored() {
     );
     let (status, body) = server
         .post(
-            "/layers",
+            "/components",
             json!({ "name": "Cams", "slug": "cameras", "controls": keys(15) }),
         )
         .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(codes(&body), [(json!(["slug"]), "duplicateSlug".into())]);
-    let (status, body) = server.post("/layers", json!({ "name": "x" })).await;
+    let (status, body) = server.post("/components", json!({ "name": "x" })).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(codes(&body)[0].1, "invalid", "{body}");
+    let (status, body) = server
+        .post(
+            "/components",
+            json!({ "name": "Key", "controls": [{ "id": "key" }],
+            "show": { "when": { "nav": "pop over" } } }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        codes(&body),
+        [(json!(["show", "when", "nav"]), "invalid".into())]
+    );
+    // One that isn't shown is only used inside others.
+    let key = create(
+        &server,
+        "/components",
+        "component",
+        json!({ "name": "Key", "controls": [{ "id": "key", "outputs": ["image"] }] }),
+    )
+    .await;
 
-    // Surfaces: a start layer that exists.
+    // Surfaces: a start that exists and is shown.
     let deck = create(
         &server,
         "/surfaces",
@@ -123,113 +155,87 @@ async fn surfaces_layers_and_bindings_are_validated_and_stored() {
     )
     .await;
     assert_eq!(deck["slug"], "fohDeck");
-    let (status, body) = server
-        .post(
-            "/surfaces",
-            json!({ "name": "Other", "model": "virtual.deck15", "startComponent": "nope" }),
-        )
-        .await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(
-        codes(&body),
-        [(json!(["startComponent"]), "unknownComponent".into())]
-    );
-
-    // Bindings: on a layer, on one of its controls, one per control.
-    let k14 = create(
-        &server,
-        "/control-bindings",
-        "binding",
-        json!({
-            "layer": id(&cams), "control": "k14",
-            "props": { "label": { "expr": "'Hi'" } },
-        }),
-    )
-    .await;
-    for (control, code) in [("k14", "duplicateControl"), ("k15", "unknownControl")] {
+    for start in ["nope", id(&key)] {
         let (status, body) = server
             .post(
-                "/control-bindings",
-                json!({ "layer": id(&cams), "control": control, "props": {} }),
+                "/surfaces",
+                json!({ "name": "Other", "model": "virtual.deck15", "startComponent": start }),
             )
             .await;
-        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{control}");
-        assert_eq!(codes(&body), [(json!(["control"]), code.into())]);
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(
+            codes(&body),
+            [(json!(["startComponent"]), "unknownComponent".into())]
+        );
     }
+
+    // Bindings: in a component, on one of its controls, one per control.
+    let k14 = server
+        .bind(
+            id(&cams),
+            json!({ "control": "k14", "props": { "label": { "expr": "'Hi'" } } }),
+        )
+        .await;
+    for (control, code) in [("k14", "duplicateControl"), ("k15", "unknownControl")] {
+        let (status, body) = edit(&server, id(&cams), |c| {
+            c["bindings"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({ "id": "x", "control": control, "props": {} }))
+        })
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{control}");
+        assert_eq!(
+            codes(&body),
+            [(json!(["bindings", 1, "control"]), code.into())]
+        );
+    }
+    let (status, body) = edit(&server, id(&cams), |c| {
+        c["bindings"].as_array_mut().unwrap().push(k14.clone())
+    })
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        codes(&body)[0],
+        (json!(["bindings", 1, "id"]), "invalid".into())
+    );
     let (status, body) = server
-        .post(
-            "/control-bindings",
-            json!({
-                "layer": id(&cams), "control": "k0",
-                "props": { "background": { "expr": "1 +", "fallback": "#000" } },
-            }),
+        .try_bind(
+            id(&cams),
+            json!({ "control": "k0", "props": { "background": { "expr": "1 +", "fallback": "#000" } } }),
         )
         .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(codes(&body)[0].1, "exprSyntax", "{body}");
 
-    let audio = create(&server, "/layers", "layer", deck_layer("Audio")).await;
-    let on_audio = create(
-        &server,
-        "/control-bindings",
-        "binding",
-        json!({ "layer": id(&audio), "control": "k0", "props": {} }),
-    )
+    let audio = create(&server, "/components", "component", deck_layer("Audio")).await;
+    server
+        .bind(id(&audio), json!({ "control": "k0", "props": {} }))
+        .await;
+    let stored = server.get(&format!("/components/{}", id(&cams))).await;
+    assert_eq!(stored["bindings"], json!([k14]));
+    assert!(stored["bindings"][0].get("layer").is_none(), "{stored}");
+    let shown = server.get("/components?shown=true").await;
+    assert_eq!(shown.as_array().unwrap().len(), 2, "{shown}");
+
+    // A component can't drop a bound control, or the output its binding drives.
+    let (status, body) = edit(&server, id(&cams), |c| c["controls"] = json!(keys(4))).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        codes(&body),
+        [(json!(["bindings", 0, "control"]), "unknownControl".into())]
+    );
+    let (status, body) = edit(&server, id(&cams), |c| {
+        c["controls"][14]["outputs"] = json!([])
+    })
     .await;
-    let listed = server
-        .get(&format!("/control-bindings?layer={}", id(&cams)))
-        .await;
-    assert_eq!(listed, json!([k14]));
-    assert_eq!(
-        server
-            .get("/control-bindings")
-            .await
-            .as_array()
-            .unwrap()
-            .len(),
-        2
-    );
-
-    // A layer can't drop a bound control, or the output its binding drives.
-    let (status, body) = server
-        .put(
-            &format!("/layers/{}", id(&cams)),
-            json!({ "name": "Cameras", "controls": keys(4) }),
-        )
-        .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(
         codes(&body),
-        [(json!(["controls"]), "unknownControl".into())]
-    );
-    let mut dark = deck_layer("Cameras");
-    dark["controls"][14]["outputs"] = json!([]);
-    let (status, body) = server
-        .put(&format!("/layers/{}", id(&cams)), dark.clone())
-        .await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(codes(&body), [(json!(["controls"]), "noOutput".into())]);
-    // And a binding needs its control's output.
-    dark["controls"][14]["outputs"] = json!(["image"]);
-    dark["controls"][13]["outputs"] = json!([]);
-    let (status, body) = server.put(&format!("/layers/{}", id(&cams)), dark).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let (status, body) = server
-        .post(
-            "/control-bindings",
-            json!({
-                "layer": id(&cams), "control": "k13",
-                "props": { "label": { "expr": "'Hi'" } },
-            }),
-        )
-        .await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(
-        codes(&body),
-        [(json!(["props", "label"]), "noOutput".into())]
+        [(json!(["bindings", 0, "props", "label"]), "noOutput".into())]
     );
 
-    // Flows save `control` triggers, checked against layers.
+    // Flows save event triggers, checked against components.
     let control_flow = |layer: &str| {
         json!({
             "name": "On press",
@@ -244,7 +250,7 @@ async fn surfaces_layers_and_bindings_are_validated_and_stored() {
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(codes(&body)[0].1, "unknownComponent", "{body}");
 
-    // Navigating: state, unknown layers, other groups, and nothing.
+    // Navigating: state, unknown components, other groups, and nothing.
     let show = format!("/surfaces/{}/current", id(&deck));
     let (status, body) = server.post(&show, json!({ "component": id(&audio) })).await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -253,9 +259,11 @@ async fn surfaces_layers_and_bindings_are_validated_and_stored() {
         Some(json!("audio"))
     );
     assert_eq!(body["group"], "main");
-    let (status, body) = server.post(&show, json!({ "component": "nope" })).await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(body["code"], "unknownComponent");
+    for nope in ["nope", id(&key)] {
+        let (status, body) = server.post(&show, json!({ "component": nope })).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(body["code"], "unknownComponent");
+    }
     let (status, body) = server
         .post(
             &show,
@@ -293,16 +301,15 @@ async fn surfaces_layers_and_bindings_are_validated_and_stored() {
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
-    // Deleting a layer deletes its bindings and clears start layers.
+    // Deleting a component clears start components.
     assert_eq!(
-        server.delete(&format!("/layers/{}", id(&cams))).await,
+        server.delete(&format!("/components/{}", id(&cams))).await,
         StatusCode::NO_CONTENT
     );
-    assert_eq!(server.get("/control-bindings").await, json!([on_audio]));
     let deck = server.get(&format!("/surfaces/{}", id(&deck))).await;
     assert!(deck.get("startComponent").is_none(), "{deck}");
     assert_eq!(
-        server.delete(&format!("/layers/{}", id(&cams))).await,
+        server.delete(&format!("/components/{}", id(&cams))).await,
         StatusCode::NOT_FOUND
     );
 
@@ -318,7 +325,7 @@ async fn surfaces_layers_and_bindings_are_validated_and_stored() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn surfaces_layers_and_bindings_survive_a_restart() {
+async fn surfaces_components_and_bindings_survive_a_restart() {
     let data = tempfile::tempdir().unwrap();
     let start = || {
         App::start(Config {
@@ -332,10 +339,10 @@ async fn surfaces_layers_and_bindings_survive_a_restart() {
     };
 
     let app = start();
-    let (layer, _) = app
-        .save::<Layer>(&deck_layer("Cameras"), None)
-        .await
-        .unwrap();
+    let mut cameras = deck_layer("Cameras");
+    cameras["bindings"] =
+        json!([{ "id": "b", "control": "k0", "props": { "label": { "expr": "'Hi'" } } }]);
+    let (layer, _) = app.save::<Component>(&cameras, None).await.unwrap();
     let (surface, _) = app
         .save::<Surface>(
             &json!({ "name": "FOH deck", "model": "virtual.deck15", "startComponent": layer.id }),
@@ -343,17 +350,10 @@ async fn surfaces_layers_and_bindings_survive_a_restart() {
         )
         .await
         .unwrap();
-    let (binding, _) = app
-        .save::<ControlBinding>(
-            &json!({ "layer": layer.id, "control": "k0", "props": { "label": { "expr": "'Hi'" } } }),
-            None,
-        )
-        .await
-        .unwrap();
     // What surfaces show is kept: one moved off its start layer, and one with
     // no start layer, shown something while detached.
     let (lights, _) = app
-        .save::<Layer>(&deck_layer("Lights"), None)
+        .save::<Component>(&deck_layer("Lights"), None)
         .await
         .unwrap();
     let (side, _) = app
@@ -410,7 +410,7 @@ async fn surfaces_layers_and_bindings_survive_a_restart() {
         "input state isn't restored"
     );
     assert_eq!(
-        app.layers(),
+        app.components(),
         BTreeMap::from([
             (layer.id.clone(), layer.clone()),
             (lights.id.clone(), lights.clone())
@@ -447,12 +447,9 @@ async fn surfaces_layers_and_bindings_survive_a_restart() {
     assert_eq!(app.surfaces().shown(&side.id), Some(layer.id.clone()));
     assert_eq!(current("sideDeck"), Some("cameras".into()));
     drop(side_link);
-    assert_eq!(
-        app.control_bindings(),
-        BTreeMap::from([(binding.id.clone(), binding)])
-    );
-    // Layers reach the core, which validates against them.
-    assert_eq!(app.surfaces().layers()[&layer.id], layer);
+    // Shown components reach the core, which resolves them.
+    assert_eq!(app.surfaces().layers()[&layer.id], layer.shown().unwrap());
+    assert_eq!(app.components()[&layer.id].bindings.len(), 1);
     app.shutdown().await;
 }
 
@@ -460,12 +457,11 @@ async fn surfaces_layers_and_bindings_survive_a_restart() {
 async fn bindings_preview_with_their_look_and_image() {
     let server = Server::start();
     let vh = videohub(&server, "vh").await;
-    let layer = create(&server, "/layers", "layer", deck_layer("Cameras")).await;
 
     let preview =
-        |binding: Value| server.post("/control-bindings/preview", json!({ "binding": binding }));
+        |binding: Value| server.post("/components/preview", json!({ "binding": binding }));
     let (status, body) = preview(json!({
-        "layer": id(&layer), "control": "k0",
+        "control": "k0",
         "props": {
             "label": { "use": "template", "parts": ["Out 1: ", { "ref": { "conn": vh, "path": ["outputs", 1, "source"] } }] },
             "background": {
@@ -505,7 +501,7 @@ async fn bindings_preview_with_their_look_and_image() {
 
     // A `map` picks from a list of colours: source 1 of 0–12 is the first.
     let (status, body) = preview(json!({
-        "layer": id(&layer), "control": "k1",
+        "control": "k1",
         "props": {
             "label": { "ref": { "conn": vh, "path": ["outputs", 1, "source"] } },
             "background": {
@@ -522,8 +518,8 @@ async fn bindings_preview_with_their_look_and_image() {
 
     let (status, body) = server
         .post(
-            "/control-bindings/preview",
-            json!({ "binding": { "layer": id(&layer), "control": "k0", "props": {} }, "size": 72 }),
+            "/components/preview",
+            json!({ "binding": { "control": "k0", "props": {} }, "size": 72 }),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -532,10 +528,8 @@ async fn bindings_preview_with_their_look_and_image() {
     assert_eq!(png_size(&png), (72, 72));
 
     // A binding that doesn't parse is a 422, as on save.
-    let (status, body) = preview(
-        json!({ "layer": id(&layer), "control": "k0", "props": { "label": { "use": "nope" } } }),
-    )
-    .await;
+    let (status, body) =
+        preview(json!({ "control": "k0", "props": { "label": { "use": "nope" } } })).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
     assert_eq!(codes(&body)[0].0, json!(["props", "label"]));
 
@@ -638,7 +632,7 @@ async fn closed(ws: &mut Socket) -> (CloseCode, String) {
 /// A binding's previewed label and base64 image.
 async fn previewed(server: &Server, binding: &Value) -> (Value, String) {
     let (status, body) = server
-        .post("/control-bindings/preview", json!({ "binding": binding }))
+        .post("/components/preview", json!({ "binding": binding }))
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     (
@@ -654,7 +648,7 @@ async fn a_web_surface_presses_routes_and_redraws() {
     let vh = videohub(&server, "vh").await;
     let vh2 = videohub(&server, "vh2").await;
 
-    let layer = create(&server, "/layers", "layer", deck_layer("Cameras")).await;
+    let layer = create(&server, "/components", "component", deck_layer("Cameras")).await;
     let deck = create(
         &server,
         "/surfaces",
@@ -662,15 +656,8 @@ async fn a_web_surface_presses_routes_and_redraws() {
         json!({ "name": "FOH deck", "model": "virtual.deck15", "startComponent": id(&layer) }),
     )
     .await;
-    let k0 = label_of(id(&layer), "k0", &vh);
-    create(&server, "/control-bindings", "binding", k0.clone()).await;
-    create(
-        &server,
-        "/control-bindings",
-        "binding",
-        label_of(id(&layer), "k2", &vh2),
-    )
-    .await;
+    let k0 = server.bind(id(&layer), label_of("k0", &vh)).await;
+    server.bind(id(&layer), label_of("k2", &vh2)).await;
     let (status, body) = server
         .post(
             "/flows",
@@ -767,26 +754,13 @@ async fn a_web_surface_presses_routes_and_redraws() {
     // Editing a binding while shown redraws its key before the API answers.
     let mut edited = k0.clone();
     edited["props"]["background"] = json!({ "expr": "'#0000ff'" });
-    let k0_id = server
-        .get(&format!("/control-bindings?layer={}", id(&layer)))
-        .await
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|b| b["control"] == "k0")
-        .unwrap()["id"]
-        .as_str()
-        .unwrap()
-        .to_owned();
-    let (status, body) = server
-        .put(&format!("/control-bindings/{k0_id}"), edited)
-        .await;
+    let (status, body) = server.try_bind(id(&layer), edited).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let (control, _) = next_draw(&mut ws, "fohDeck").await;
     assert_eq!(control, "k0");
 
-    // Switching to a layer with nothing bound blanks the bound keys.
-    let empty = create(&server, "/layers", "layer", deck_layer("Empty")).await;
+    // Switching to a page with nothing bound blanks the bound keys.
+    let empty = create(&server, "/components", "component", deck_layer("Empty")).await;
     let (status, body) = server
         .post(
             &format!("/surfaces/{}/current", id(&deck)),
@@ -805,7 +779,7 @@ async fn a_web_surface_presses_routes_and_redraws() {
         Some(json!("empty"))
     );
 
-    // What the deck attached with, for "New layer".
+    // What the deck attached with, for "New page".
     let controls = server
         .get(&format!("/surfaces/{}/controls", id(&deck)))
         .await;
@@ -813,12 +787,12 @@ async fn a_web_surface_presses_routes_and_redraws() {
     assert_eq!(controls[7]["at"], json!({ "x": 2, "y": 1 }));
     assert_eq!(controls[7]["inputs"], json!([{ "kind": "momentary" }]));
 
-    // A layer with keys the deck lacks doesn't fit.
+    // A page with keys the deck lacks doesn't fit.
     let wide = create(
         &server,
-        "/layers",
-        "layer",
-        json!({ "name": "Wide", "controls": keys(16) }),
+        "/components",
+        "component",
+        Server::page("Wide", json!(keys(16))),
     )
     .await;
     let (status, body) = server
@@ -846,7 +820,7 @@ async fn a_web_surface_presses_routes_and_redraws() {
 async fn a_web_surface_must_attach_as_itself() {
     let server = Server::start();
     let addr = server.listen().await;
-    let layer = create(&server, "/layers", "layer", deck_layer("Cameras")).await;
+    let layer = create(&server, "/components", "component", deck_layer("Cameras")).await;
     let deck = create(
         &server,
         "/surfaces",
@@ -943,8 +917,8 @@ async fn flows_drive_the_deck_and_other_flows_through_core() {
     // Rehearsal: device actions would be suppressed; core's are internal.
     server.app.core().set_simulate(true);
 
-    let cams = create(&server, "/layers", "layer", deck_layer("Cameras")).await;
-    let audio = create(&server, "/layers", "layer", deck_layer("Audio")).await;
+    let cams = create(&server, "/components", "component", deck_layer("Cameras")).await;
+    let audio = create(&server, "/components", "component", deck_layer("Audio")).await;
     let deck = create(
         &server,
         "/surfaces",
@@ -1121,7 +1095,7 @@ async fn flows_drive_the_deck_and_other_flows_through_core() {
 #[tokio::test(flavor = "multi_thread")]
 async fn surface_scoped_helpers_live_on_the_surfaces_that_showed_their_layer() {
     let server = Server::start();
-    let cams = create(&server, "/layers", "layer", deck_layer("Cams")).await;
+    let cams = create(&server, "/components", "component", deck_layer("Cams")).await;
     let deck = create(
         &server,
         "/surfaces",
@@ -1129,16 +1103,15 @@ async fn surface_scoped_helpers_live_on_the_surfaces_that_showed_their_layer() {
         json!({ "name": "Deck", "model": "virtual.deck15" }),
     )
     .await;
-    create(
-        &server,
-        "/control-bindings",
-        "binding",
-        json!({
-            "layer": id(&cams), "control": "k3",
-            "helpers": { "latched": { "use": "toggle", "scope": "surface" } },
-        }),
-    )
-    .await;
+    server
+        .bind(
+            id(&cams),
+            json!({
+                "control": "k3",
+                "helpers": { "latched": { "use": "toggle", "scope": "surface" } },
+            }),
+        )
+        .await;
     let latched = |slug: &str| format!("surface.{slug}.controls.k3.helpers.latched");
     assert_eq!(server.value(&latched("deck")).await, None);
 

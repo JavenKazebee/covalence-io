@@ -405,17 +405,17 @@ async fn deck_layer(server: &Server) -> String {
         })
         .collect();
     let (status, layer) = server
-        .post("/layers", json!({ "name": "Cams", "controls": controls }))
+        .post("/components", Server::page("Cams", json!(controls)))
         .await;
     assert_eq!(status.as_u16(), 201, "{layer}");
-    let layer = layer["layer"]["id"].as_str().unwrap().to_owned();
+    let layer = layer["component"]["id"].as_str().unwrap().to_owned();
     let (status, binding) = server
-        .post(
-            "/control-bindings",
-            json!({ "layer": layer, "control": "k3", "props": { "label": { "expr": "'Hi'" } } }),
+        .try_bind(
+            &layer,
+            json!({ "control": "k3", "props": { "label": { "expr": "'Hi'" } } }),
         )
         .await;
-    assert_eq!(status.as_u16(), 201, "{binding}");
+    assert_eq!(status.as_u16(), 200, "{binding}");
     layer
 }
 

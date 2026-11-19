@@ -160,3 +160,60 @@ impl Server {
         self.call(Method::DELETE, uri, None).await.0
     }
 }
+
+/// Components' bindings (composition spec §7.1).
+impl Server {
+    /// A page of these controls: a component shown in `main`.
+    pub fn page(name: &str, controls: Value) -> Value {
+        serde_json::json!({ "name": name, "controls": controls, "show": {} })
+    }
+
+    /// Adds a binding to a component, or replaces the one on its control,
+    /// by putting the component back with it. A binding with no `id` gets
+    /// one. Answers the `PUT`'s status and body.
+    pub async fn try_bind(&self, component: &str, mut binding: Value) -> (StatusCode, Value) {
+        let uri = format!("/components/{component}");
+        let mut c = self.get(&uri).await;
+        assert!(c.get("id").is_some(), "no component {component}: {c}");
+        let bindings = c
+            .as_object_mut()
+            .unwrap()
+            .entry("bindings")
+            .or_insert_with(|| Value::Array(Vec::new()))
+            .as_array_mut()
+            .unwrap();
+        let on = binding["control"].clone();
+        let existing = bindings.iter().position(|b| b["control"] == on);
+        if binding.get("id").is_none() {
+            let id = match existing {
+                Some(i) => bindings[i]["id"].clone(),
+                None => Value::String(format!("b{}", bindings.len() + 1)),
+            };
+            binding["id"] = id;
+        }
+        match existing {
+            Some(i) => bindings[i] = binding,
+            None => bindings.push(binding),
+        }
+        self.put(&uri, c).await
+    }
+
+    /// [`try_bind`](Self::try_bind), which must succeed: the binding as
+    /// stored.
+    pub async fn bind(&self, component: &str, binding: Value) -> Value {
+        let on = binding["control"].clone();
+        let (status, body) = self.try_bind(component, binding).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "binding {on} on {component}: {body}"
+        );
+        body["component"]["bindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|b| b["control"] == on)
+            .cloned()
+            .unwrap()
+    }
+}

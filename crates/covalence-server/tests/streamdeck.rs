@@ -41,18 +41,18 @@ async fn layer(server: &Server) -> String {
         })
         .collect();
     let (status, layer) = server
-        .post("/layers", json!({ "name": "Main", "controls": controls }))
+        .post("/components", Server::page("Main", json!(controls)))
         .await;
     assert_eq!(status.as_u16(), 201, "{layer}");
-    let id = layer["layer"]["id"].as_str().unwrap().to_owned();
+    let id = layer["component"]["id"].as_str().unwrap().to_owned();
     for (control, label) in [("k0", "'Cam 1'"), ("k7", "'Cam 2'")] {
         let (status, binding) = server
-            .post(
-                "/control-bindings",
-                json!({ "layer": id, "control": control, "props": { "label": { "expr": label } } }),
+            .try_bind(
+                &id,
+                json!({ "control": control, "props": { "label": { "expr": label } } }),
             )
             .await;
-        assert_eq!(status.as_u16(), 201, "{binding}");
+        assert_eq!(status.as_u16(), 200, "{binding}");
     }
     id
 }
@@ -510,15 +510,12 @@ async fn bench_budgets_with_the_plugin_host_in_the_path() {
         })
         .collect();
     let (_, layer) = server
-        .post("/layers", json!({ "name": "Bench", "controls": keys }))
+        .post("/components", Server::page("Bench", json!(keys)))
         .await;
-    let layer = layer["layer"]["id"].as_str().unwrap().to_owned();
+    let layer = layer["component"]["id"].as_str().unwrap().to_owned();
     for i in 0..15 {
         let (status, body) = server
-            .post(
-                "/control-bindings",
-                json!({
-                    "layer": layer, "control": format!("k{i}"),
+            .try_bind(&layer, json!({ "control": format!("k{i}"),
                     "props": {
                         "label": { "expr": format!("`Cam {i}: ${{mmss((vars.n ?? 0) + {i})}}`") },
                         "background": { "expr": format!("(vars.n ?? 0) % 2 ? hsl({i} * 20, 70, 40) : \"#202020\"") },
@@ -526,7 +523,7 @@ async fn bench_budgets_with_the_plugin_host_in_the_path() {
                 }),
             )
             .await;
-        assert_eq!(status.as_u16(), 201, "{body}");
+        assert_eq!(status.as_u16(), 200, "{body}");
     }
     let (status, flow) = server
         .post(

@@ -55,7 +55,7 @@ const loadedFor = ref<string | null>(null);
 async function load() {
   const id = props.id;
   try {
-    const [b, r] = await Promise.all([api.bindings(id), api.bindingProblems()]);
+    const [b, r] = await Promise.all([api.bindings(id), api.bindingProblems(id)]);
     if (id !== props.id) return;
     bindings.value = b;
     runtime.value = r;
@@ -73,7 +73,7 @@ onMounted(() => void Promise.all([flows.refresh(), catalog.refresh()]));
 // Evaluation errors come and go with state; the editor checks now and then.
 const problemTimer = setInterval(async () => {
   try {
-    runtime.value = await api.bindingProblems();
+    runtime.value = await api.bindingProblems(props.id);
   } catch {
     // Kept as they were; the next try may work.
   }

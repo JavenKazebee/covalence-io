@@ -1,4 +1,4 @@
 {
-  "binding": { "layer": "01JBZ7P0D3F5G7H9J1K3L5M7PA", "control": "k14", "props": {} },
+  "binding": { "control": "k14", "props": {} },
   "errors": [{ "path": ["control"], "code": "duplicateControl" }]
 }

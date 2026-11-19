@@ -744,7 +744,7 @@ async fn a_value_binding_sets_a_level_and_records_what_was_sent() {
             id: MIX.into(),
             name: "mix".into(),
             slug: "mix".into(),
-            controls: controls.iter().map(ControlDef::to_layer_control).collect(),
+            controls: controls.iter().map(ControlDef::to_control_spec).collect(),
             ..Default::default()
         })
         .unwrap();
