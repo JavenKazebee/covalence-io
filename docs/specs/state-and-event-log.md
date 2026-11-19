@@ -172,7 +172,7 @@ Ordering is defined **only** by `seq` within a log. `ts` is for display.
 | `state.patch` | `{ops: [{path, value} \| {path, delete: true}], deviceTs?}` | Paths stored in ID form. From a plugin action: `cause` → the `action.requested` entry ([plugin protocol](plugin-protocol.md) §6 `call`). **(Now)** From control input: origin the surface, and `deviceTs` the host's clock |
 | `state.quality` | `{subtree, quality}` | Marks a subtree stale or good |
 | `trigger.matched` | `{flow, trigger, blocked?, reason?}` | `cause` → the event, input event or patch. `reason` says why it was blocked ([flow spec](flows.md) §8.5) |
-| `run.started` | `{flow, run, mode, inputs}` | |
+| `run.started` | `{flow, run, mode, inputs, params?}` | **(M9)** `params`: the owner instance's bound values when the run started, for a run inside an instance ([composition §5](composition.md#5-identity-validation-and-detach)) |
 | `run.step` | `{run, step, status: started\|done\|failed\|skipped, detail?}` | |
 | `run.checkpoint` | `{run, step, locals}` | For `resume` on failover |
 | `run.finished` | `{run, status: ok\|failed\|cancelled\|aborted, error?}` | |

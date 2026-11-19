@@ -333,7 +333,7 @@ Common fields: `id`, `kind`, `name?`, `enabled?`, `timeout?`, `onError?`. `retry
 | `waitUntil` **(M4)** | `until: Expr`, `timeout?` | `{value}` | Evaluated when the step starts, and done straight away if truthy (level, not edge). Otherwise re-evaluated whenever its read set changes, until truthy. `timeout` fails it with `timeout` |
 | `set` **(M4)** | `path: "local.<name>" \| "vars.<name>"`, `value: Expr` | none | `<name>` is one segment, `[A-Za-z_][A-Za-z0-9_]*`. See below |
 | `branch` **(M4)** | `arms: {when: Expr, steps: Step[]}[]`, `else?: Step[]` | `{status}` | See below |
-| `call` | `flow` (an ID), `inputs?: {[name]: Source}`, `wait?: boolean` (default `true`) | The callee's outputs (`{}` if it hands back none), or `{run}` without `wait` | See below |
+| `call` | `flow` (an ID, or **(M9)** `{param}`: [composition §1.2](composition.md#12-params-that-hold-a-component-or-a-flow)), `inputs?: {[name]: Source}`, `wait?: boolean` (default `true`) | The callee's outputs (`{}` if it hands back none), or `{run}` without `wait` | See below |
 | `stop` | `status?: "ok" \| "failed"` (default `ok`), `outputs?: {[name]: Source}`, `error?: Expr` | none: the run ends | See below |
 
 - **Durations** match `^(\d+h)?(\d+m)?(\d+s)?(\d+ms)?$`, are not empty, and are greater than zero: `500ms`, `2s`, `1m30s`. A literal `wait` must be greater than zero. An expression may give zero, which doesn't wait.
@@ -502,7 +502,7 @@ JSON throughout. Validation failures are `422 {errors, warnings}` (§8.4). Succe
 | `PUT /flows/{id}` | a whole `Flow` | `200 {flow, warnings}`. Replaces it; active runs keep their copy |
 | `DELETE /flows/{id}` | | `204`. Cancels its runs and deletes `flow.<slug>` |
 | `POST /flows/{id}/run` | `{inputs?}`, or no body | `200 {matched, status: started \| queued \| blocked, run?, reason?}`. `409` if the flow is disabled or has no `api` trigger. `422 {error}` if the inputs don't fit the flow's (§8.2) |
-| `GET /runs?flow=<id>` | | `Run[]`, newest first: active, queued, then recent (§8.5) |
+| `GET /runs?flow=<id>` | | `Run[]`, newest first: active, queued, then recent (§8.5). **(M9)** Also `instance`, `key` and `template`, as for the journal ([composition §5](composition.md#5-identity-validation-and-detach)) |
 | `GET /runs/{run}` | | `Run`, or `404` once it has aged out |
 | `POST /runs/{run}/cancel` | | `202 {run, status}`. `409` if it has already finished |
 | `POST /expressions/evaluate` **(M4)** | `{source, trigger?}` | `200 {value?, error?, reads}`. See below |
@@ -520,6 +520,8 @@ interface Run {
   position?: string[];          // while running
   error?: { code: string; message: string };
   outputs?: { [name: string]: Value };   // what a `stop` step handed back
+  instance?: InstanceChain;     // (M9) the instances it ran inside (composition §5)
+  params?: { [name: string]: Value };    // (M9) their bound values when it started
 }
 ```
 

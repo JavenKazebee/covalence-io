@@ -12,7 +12,7 @@ Users build bigger things out of smaller ones, and reuse them by giving them par
 | **Component** | a reusable control: "Tally key" | a **placement** on a layer's controls | slots, bindings, helpers, parts, owned flows | §8 |
 | **Flow** | a flow with `params`: "Recorder watchdog" | a flow | steps | §9 |
 
-**Instances take parameters, not overrides.** An instance can't change, add to or remove anything inside its template. If one copy really has to differ, "Detach" turns it into a plain entity with no link back. That keeps "what does this do?" answerable from one place.
+**Instances take parameters, not overrides.** An instance can't change, add to or remove anything inside its template. Where copies may differ, the template says so with a param, which can hold a whole component or flow (§1.2). If one copy has to differ anywhere else, "Detach" turns it into a plain entity with no link back. That keeps "what does this do?" answerable from one place.
 
 **Markers.** Everything here is **(M9)** ([M9](../milestones/m9-composition.md)) unless marked **(Later)**.
 
@@ -21,7 +21,7 @@ Users build bigger things out of smaller ones, and reuse them by giving them par
 ## 1. Templates and instances
 
 ```ts
-interface ParamDef extends StateSchemaNode {   // type, kind (a target with a constraint…), description
+interface ParamDef extends StateSchemaNode {   // type, kind (a target with a constraint, a component, a flow…), description
   default?: Source<Value>;            // used by the template itself, and by instances that don't bind it
   required?: boolean;                 // no default and required: the template is abstract
 }
@@ -60,6 +60,31 @@ Each instance has a home in the state tree. Its params, cells and owned flows' s
 | Placement | `layer.<layer slug>.parts.<slug>` | in a control group: `layer.<layer slug>.groups.<group>.items[<key>]` |
 | Flow | `flow.<slug>` | `flow.<slug>.items[<key>]` |
 | A nested instance (§3) | `<container's home>.parts.<slug>` | `<container's home>.parts.<slug>.items[<key>]` |
+
+### 1.2 Params that hold a component or a flow
+A template can declare where its instances may differ by more than a value: a param of `kind: "component"` or `kind: "flow"` holds a template, and the body uses it wherever it would name one.
+
+```yaml
+name: Camera strip
+params:
+  camera:    { kind: target, constraint: { template: <Camera's ID> }, required: true }
+  recordKey: { kind: component, default: <Record key's ID> }
+parts:
+  rec:
+    template: { param: recordKey }
+    params: { camera: { ref: { scope: params, path: [camera] } } }
+    slots: { key: rec }
+```
+
+Cam C's strip binds `recordKey` to another component. It keeps every later fix to "Camera strip", and only its record key differs.
+
+- **Where a body names a component or a flow, it can name a param instead:** `{param: <name>}` as a part's or a placement's `template`, a control group's `use.template`, or a `call` step's `flow`.
+- **The binding is an ID, given as a literal.** It doesn't follow state: `{expr: …}` or `{ref: …}` is `templateNotLiteral`. Changing which component a key is made of rebuilds its cells and flows, so it's an edit, not a value that moves during the show.
+- **What's chosen must fit where it's used,** checked on save for every instance at every depth (`badInstance`):
+  - a component: it has the slots the part or placement maps, with the capabilities they need (`doesNotFit`); every param the use binds is one it declares, of a matching type (`unknownParam`, `badParam`); and its required params are all bound (`unboundParam`)
+  - a flow: it has a `call` trigger, and the `call` step's inputs fit its `inputs`, as for any call (flows §8.3)
+- **The instance chain names the template that was chosen** (§5), so `why` shows "Special record key, in Camera strip, camera = Cam C".
+- **`recursiveTemplate` and `tooDeep` follow the bindings,** so a component can't reach itself through a param either.
 
 ---
 
@@ -130,7 +155,7 @@ type ForEach = (
 - **Per-item instances live at `<home>.items[<key>]`** (§1.1), so a reorder doesn't reset them, and other state can read them by key.
 - **They follow the list.** An added item creates an instance, with its cells starting from `init`. A removed item ends one: its cells are dropped, and its owned flows' runs are cancelled with `removed`. Both are journaled, `instance.added` and `instance.removed` with `{instance}`, and `cause` → the patch or the domain change that changed the list.
 - **They're never saved.** The entity is the one instance with `forEach`. Its items come from state each time it's loaded.
-- **At most 256 items.** Extra items aren't instanced, and the instance reports `tooMany`.
+- **At most 256 items.** Extra items aren't instanced, and the instance reports `tooMany`. The cap guards the turn budget (dataflow §5) against a list bound to the wrong thing, such as a media server's 10,000 clips; no real rig is near it.
 - **Per kind:**
   - **A composite with `forEach`** makes each item a target (§6.4).
   - **A layer with `forEach`** is one layer per item, each navigated by `{layer, item: key}` ([core actions §3.1](core-actions.md)).
@@ -148,7 +173,11 @@ type ForEach = (
   type InstanceChain = { template: string; instance: string; key?: PathSegment }[];   // outermost first
   ```
 
-  Runs, steps, actions, cells' patches and events made inside an instance all carry it, and an event's `trigger.instance` is it. It replaces the separate `placement` field, the `<component>/<flow>` run identity and the layer-as-instance of [§11.1](#111-reuse-is-by-parameters-never-by-copying-or-overriding). The timeline filters by it, and `why` shows it: "Tally key, camera = Cam B, in Cameras[camB]".
+  Runs, steps, actions, cells' patches and events made inside an instance all carry it, and an event's `trigger.instance` is it. It replaces the separate `placement` field, the `<component>/<flow>` run identity and the layer-as-instance of [§11.1](#111-reuse-is-by-parameters-never-by-copying-or-overriding).
+- **The chain holds IDs, never names or values,** so a rename doesn't rewrite history and every entry stays small. The server resolves names when it answers, from the entities as they are now, or from the op log for one since deleted.
+- **A run records the params it started with:** `run.started` has `params`, the owner instance's bound values at that moment (state spec §2.2). Everything a run does points back to its start, so `why` on an action shows "Tally key, camera = Cam B, in Cameras[camB]", even after the param has moved on and past the memory window. An entry outside a run (a cell's patch, a control event) shows its instances, and their param values only while the patches that set them are still in memory.
+- **Filtering:** `GET /journal` and `GET /runs` take `instance=<id>`, which matches an entry with that instance anywhere in its chain, so "Cameras" gives every camera and "Cam B" gives everything inside it; `key=<key>` narrows to one item of a `forEach` instance; and `template=<id>` matches any instance of that template, at any depth. The timeline and the runs list offer both.
+- **A composite's history is the journal filtered by its instance.** It has no run history or traffic view of its own; its actions' runs and the real devices' traffic are already there.
 - **Validation** (errors block saving):
   - `badInstance`: a required param unbound, a binding whose type doesn't match the `ParamDef`, a placement whose controls don't fit its slots. When a template is saved, every instance of it at every depth is checked, and the error lists the ones that fail.
   - `unknownTemplate`, `templateIsInstance`, `recursiveTemplate`, `tooDeep`.
@@ -214,7 +243,10 @@ interface CompositeEvent {
 - Each event is re-emitted at the instance's home, `<alias>:<id>` (or `<alias>.items[<key>]:<id>`), with `cause` → the event it came from. `trigger` is in scope in `filter` and `payload`.
 
 ### 6.4 Composites per item
-- **Each item of a composite with `forEach` is a target,** with its state at `<alias>.items[<key>]`. A target is a connection with nothing within it (plugin protocol §13.9), so each item is a connection of its own; how it's identified and listed is open (§10).
+- **Each item of a composite with `forEach` is a target,** with its state at `<alias>.items[<key>]`. A target is a connection with nothing within it (plugin protocol §13.9), so each item is a connection of its own:
+  - **Its ID is derived:** `<instance ID>[<key>]`, the key in the state path's text form (state spec §1.1). It's the same for as long as the item's key is, and across restarts, so a variable or a journal entry that holds it keeps meaning the same camera.
+  - **Its alias is its home,** `cams.items["Cam A"]`, which is what the editor shows and what `target(t).alias` reads.
+  - **It's listed with the connections,** in `GET /connections`, with `item: {instance, key}`. It can't be edited, disabled or deleted itself: change the instance, or the list.
 - **Each item is an instance of the template,** so `{template}` selects each item as it does a single instance (§6.5).
 - **Actions and events are per item:** an action on an item's target runs with that item's `params`, and an item's events carry its key in `instance`.
 
@@ -406,11 +438,11 @@ bindings:
 
 1. ~~Should components nest?~~ Decided: yes, as `parts`, with params bound in the outer component's scope.
 2. ~~Should an instance be allowed to add bindings to controls its template leaves unbound?~~ Decided: no. A layer stacked over it does that.
-3. Do composites need their own run history and traffic view in the UI, or is the journal, filtered by `instance`, enough?
+3. ~~Do composites need their own run history and traffic view in the UI, or is the journal, filtered by `instance`, enough?~~ Decided: the journal filtered by `instance` (§5).
 4. Should surfaces, control groups, variables and sources become template kinds? A **source template** (a `Source` with `params`) would let a configured chain, such as "audio taper with a dead zone" or "seconds remaining → `MM:SS`, amber under 60 s", be named and reused without writing a project transform in JS. Or are layers, composites, components and flows enough until real projects ask?
-5. Is 256 the right `forEach` limit, or should it follow the turn budget, as dataflow open question 4 asks for cell depth?
-6. **Params that hold a template.** Should a `ParamDef` be able to hold a component, a flow or a source, so a template declares where it can vary? A camera strip with a `recordKey: component` param, defaulting to the standard one, lets one camera differ without Detach, which today is the only way out and cuts the instance off from every later fix to its template.
-7. **How a `forEach` composite's items are targets** (§6.4). A target is a connection, so each item is one: is its ID derived from the instance and the item's key, is it listed with the connections, and what does its alias read as (`cams.items["Cam A"]`)? Settled with the template primitive.
+5. ~~Is 256 the right `forEach` limit, or should it follow the turn budget, as dataflow open question 4 asks for cell depth?~~ Decided: a fixed 256 (§11.3).
+6. ~~**Params that hold a template.** Should a `ParamDef` be able to hold a component, a flow or a source, so a template declares where it can vary?~~ Decided: a component or a flow (§1.2). A source waits on source templates (question 4).
+7. ~~**How a `forEach` composite's items are targets** (§6.4).~~ Decided: each is a connection with an ID derived from the instance and the key, its home as its alias, listed with the connections (§6.4, §11.4).
 
 ---
 
@@ -440,6 +472,9 @@ Why composition works this way, and what was rejected. This is one proposed desi
 - **Decided:** `forEach` makes one instance per item of a list or target selector (§4), keyed so a reorder doesn't reset them, created and removed with the list and journaled with `cause`, at most 256. Each item of a composite with `forEach` is a target. A control group is the `forEach` of placements.
 - **Why:** lists that change while the show runs were handled in one place only (control groups). A composite per camera, a layer per deck or a watchdog flow per recorder would otherwise need a copy per item. Per-item instances are never saved: the entity is the one `forEach` instance and its items come from state, so the core still never edits the project.
 - **Rejected:** per-item copies made by the editor; copies don't follow the list while the show runs.
+- **The cap is a fixed 256.** It's there so a list bound to the wrong thing (10,000 clips rather than 6 cameras) reports `tooMany` and the show keeps running, rather than every turn stalling while thousands of instances are built.
+  - *A cap set per instance:* a setting nobody needs until a real rig is over 256, and it can be added then.
+  - *A cap from the turn budget:* stopping where the budget runs out would make the same project build a different number of items on a Pi and on a Mac.
 
 ### 11.4 Composite connections
 - **Decided:** a composite is a connection (plugin `core.composite`) defined in the project, with params, state as cells, actions that run a flow or forward to another target, and re-emitted events (§6). A composite template is the contract that a constraint names (§6.5). Nothing downstream knows it's composite. Causation runs through it, so `why` reaches the real device, and its actions are `internal` while the actions they cause are gated themselves.
@@ -450,3 +485,23 @@ Why composition works this way, and what was rejected. This is one proposed desi
   - *Standalone interface implementations* (an entity mapping a connection onto an interface): moot without device interfaces; a composite does the mapping.
   - *Targets spanning several connections* (`{conn: [a, b]}`): every place that resolves a target would merge state and route actions.
   - *Layer parameters only:* every layer, binding and flow repeats the wiring, and nothing can select "a camera" as one thing.
+- **Each item of a `forEach` composite is a connection** (§6.4), with an ID derived from the instance and the key, its home as its alias, and a read-only entry in the connections list. Targets stay `{conn}` everywhere, so the gate, the journal, constraints and the editor don't learn a second kind.
+  - *Items as `{conn, key}` targets:* the shape plugin protocol §13.9 rejected for plugins, for the same reasons.
+  - *A random ID per item:* it would change on every restart, since items are never saved (§4), so a stored target would stop pointing at its camera.
+
+### 11.5 Params that hold a component or a flow
+- **Decided:** a param can be `kind: "component"` or `kind: "flow"`, bound to a template's ID as a literal, and a body names it with `{param}` wherever it would name a component or a flow (§1.2). What's chosen is checked against where it's used, for every instance, on save.
+- **Why:** reuse by params left Detach as the only way for one copy to differ, and Detach cuts it off from every later fix (§11.1). One camera with a different recorder shouldn't cost that. The template's author declares which parts may be swapped, so "what does this do?" is still answered by the template and the instance's params.
+- **Rejected:**
+  - *Overriding a part in one instance:* the overrides §11.1 rejects, one part at a time.
+  - *Bindings that follow state:* a key would change what it's made of mid-show, rebuilding its cells and flows on a value change, and it couldn't be checked on save.
+  - *Source params:* a source isn't a template yet (§10, question 4).
+  - *A second template for the copy that differs:* two templates to keep in step by hand, which is the drift §11.1 exists to stop.
+
+### 11.6 The instance chain in the journal
+- **Decided:** entries carry the chain as IDs; `run.started` records the params a run started with; the journal and the runs list filter by instance (at any depth, and by item) and by template; the server resolves names when it answers (§5).
+- **Why:** "why did this fire?" has to say which camera it was, and params can follow state, so their value now isn't their value then. A run is where actions come from and it's kept on disk, so recording params once per run answers the question that matters at the cost of one field.
+- **Rejected:**
+  - *IDs only, with params read back from state history:* params are cells, kept only in memory (state spec §2.4), so on a Pi the answer would be gone within the hour.
+  - *Params on every entry made inside an instance:* every cell patch and event made heavier, for entries whose question is rarely "with which params?".
+  - *Names in the chain:* a rename would leave history naming something that no longer exists, and every entry grows.

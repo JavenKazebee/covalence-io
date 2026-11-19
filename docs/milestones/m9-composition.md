@@ -17,6 +17,7 @@ Users build bigger things out of smaller ones, and reuse them by parameters, nev
 - [ ] A composite template "Camera" with three instances, one per camera. Editing the template changes all three, and a change that breaks an instance's params is refused, naming it.
 - [ ] One "Cameras" composite instance with `forEach` over a list in `vars`. Each item is a target at `cams.items[<key>]`, accepted by `{template: <Camera>}`. Adding an item to the list adds a camera, journaled `instance.added`; removing one ends it, and its owned flow's active run is cancelled with `removed`.
 - [ ] A layer template "Camera control" with a `camera` param, instanced per camera. One flow owned by the template handles a key on every instance with that instance's `params.camera`. A free-standing flow on the same key gets `trigger.instance` but no `params`.
+- [ ] A "Camera strip" with a `recordKey` component param, placed for three cameras with one bound to a different record key: that strip's record key is the other component, a fix to the strip reaches all three, and a record key whose slots don't fit is refused with `badInstance`.
 - [ ] A "Tally key" component, placed four times on a layer with a different camera each, draws each key's tally, and its owned flow selects that key's camera. The key editor shows "Tally key, camera = Cam B".
 - [ ] A "Camera strip" component with a "Tally key" part, placed on a layer template's instance. The part's tally follows the strip's camera, which follows the layer instance's. `why` on its owned flow's action shows the chain: layer instance, placement, part. A component that contains itself can't be saved (`recursiveTemplate`).
 - [ ] A control group places the "Tally key" component per camera in a live list.
@@ -34,7 +35,8 @@ Users build bigger things out of smaller ones, and reuse them by parameters, nev
 - [x] A target is a connection and nothing within it: `core`'s surfaces and flows became `surface` and `flow` parameters ([core actions §2](../specs/core-actions.md#2-surfaces-and-flows-are-parameters)), and plugins don't declare collections ([plugin protocol §13.9](../specs/plugin-protocol.md#139-dynamic-targets-proposed)).
 - [x] Dynamic targets for plugins ([plugin protocol §13.9](../specs/plugin-protocol.md#139-dynamic-targets-proposed)): a step's target can follow state with a `{plugin}` constraint, checked against the plugin's manifest on save and against the connection's plugin when the step runs. The step editor offers "the <plugin> in a variable".
 - [x] **Edits across entities** ([state spec §7.6](../specs/state-and-event-log.md#76-editing-a-running-show-proposed-kept-state-settled-in-m8)): edits stay live, and one that spans entities is saved as a batch, validated as a whole and applied all or nothing; runs record the revision they started on.
-- [ ] The `instance` chain's API shape: how the timeline, `why` and the runs list show and filter it.
+- [x] The `instance` chain's API shape ([composition §5](../specs/composition.md#5-identity-validation-and-detach)): IDs in the chain, names resolved on read, params recorded on `run.started`, and filters by instance, item and template on the journal and the runs list.
+- [x] The open questions the template primitive depends on: a fixed cap of 256 items, each `forEach` composite item a connection with a derived ID, and params that hold a component or a flow ([composition §1.2](../specs/composition.md#12-params-that-hold-a-component-or-a-flow)).
 - [ ] Accept the composition design ([composition §11](../specs/composition.md#11-decisions)) and live edits ([state spec §7.6](../specs/state-and-event-log.md#76-editing-a-running-show-proposed-kept-state-settled-in-m8)): drop "proposed" from their headings.
 
 ### Phase 1: Flow inputs and outputs (Rust)
@@ -47,7 +49,8 @@ Users build bigger things out of smaller ones, and reuse them by parameters, nev
 - [ ] Nesting: instances inside a template's body, `recursiveTemplate`, `tooDeep`.
 - [ ] Batches: `POST /batch`, the `batch` op, validation of the result as a whole, one timeline entry and one undo.
 - [ ] `forEach`: per-item instances at `<home>.items[<key>]`, created and ended with the list, `instance.added` and `instance.removed`, cancellation with `removed`, `tooMany`.
-- [ ] The `instance` chain on journal entries and `trigger.instance`.
+- [ ] The `instance` chain on journal entries and `trigger.instance`, `params` on `run.started`, and the `instance`, `key` and `template` filters on `GET /journal` and `GET /runs`.
+- [ ] Params that hold a component or a flow: `{param}` where a body names a template, literal bindings, and the fit checks.
 - [ ] "Detach", for every kind.
 
 ### Phase 3: Template kinds (Rust)
