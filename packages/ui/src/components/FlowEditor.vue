@@ -130,7 +130,7 @@ function addTrigger(kind: "api" | "call" | "event" | "state") {
   // A key's press is the usual start; a connection's events otherwise.
   const layer = surfaces.layers[0];
   if (layer !== undefined) {
-    draft.value.triggers.push({ kind: "event", from: { layer: layer.id, controls: layer.controls[0]?.id ?? "k0" }, event: "press" });
+    draft.value.triggers.push({ kind: "event", from: { component: layer.id, controls: layer.controls[0]?.id ?? "k0" }, event: "press" });
     return;
   }
   const conn = catalog.connections.find((c) => !c.builtIn);

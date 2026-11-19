@@ -2,7 +2,7 @@
   {
     "id": "navigate",
     "name": "Navigate",
-    "description": "Shows a layer on the surface, or nothing, and answers once the surface has been sent its outputs.",
+    "description": "Shows a component on the surface, or nothing, and answers once the surface has been sent its outputs.",
     "params": {
       "type": "object",
       "properties": {
@@ -15,7 +15,7 @@
           "type": "string",
           "default": "main"
         },
-        "layer": {
+        "component": {
           "type": [
             "string",
             "null"
@@ -24,14 +24,14 @@
       },
       "required": [
         "surface",
-        "layer"
+        "component"
       ],
       "additionalProperties": false
     },
     "result": {
       "type": "object",
       "properties": {
-        "layer": {
+        "component": {
           "type": [
             "string",
             "null"

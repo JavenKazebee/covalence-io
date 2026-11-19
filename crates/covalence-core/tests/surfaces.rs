@@ -62,7 +62,7 @@ fn world() -> World {
             slug: "fohDeck".into(),
             model: "virtual.deck15".into(),
             serial: None,
-            start_layer: Some(CAMS.into()),
+            start_component: Some(CAMS.into()),
             provider: None,
             virtual_layout: None,
         })
@@ -218,7 +218,7 @@ fn events(shared: &Shared) -> Vec<(Seq, Ev, Option<Seq>)> {
                 assert_eq!(ev.path.path.len(), 3, "{:?}", ev.path);
                 let g = Ev {
                     surface: ev.surface.clone().unwrap(),
-                    layer: ev.layer.clone(),
+                    layer: ev.component.clone(),
                     control: ev.control.clone().unwrap(),
                     event: serde_json::from_value(serde_json::json!(ev.event)).unwrap(),
                     delta: field("delta").and_then(|d| d.as_i64()),
@@ -693,7 +693,7 @@ async fn showing_a_layer_checks_it_fits() {
     }
     assert!(matches!(
         w.surfaces.show(DECK, Some("nope"), user.clone()),
-        Err(ShowError::UnknownLayer(_))
+        Err(ShowError::UnknownComponent(_))
     ));
     assert_eq!(current(&w.shared), Some("audio".into()));
 
@@ -733,7 +733,7 @@ async fn removing_a_layer_or_renaming_a_surface_updates_state() {
             slug: "foh".into(),
             model: "virtual.deck15".into(),
             serial: None,
-            start_layer: None,
+            start_component: None,
             provider: None,
             virtual_layout: None,
         })
@@ -768,7 +768,7 @@ async fn a_control_trigger_runs_its_flow_and_why_reaches_the_input_patch() {
         "enabled": true,
         "triggers": [{
             "kind": "event",
-            "from": { "layer": CAMS, "controls": "k4" },
+            "from": { "component": CAMS, "controls": "k4" },
             "event": "press",
         }],
         "concurrency": "parallel",
@@ -776,7 +776,7 @@ async fn a_control_trigger_runs_its_flow_and_why_reaches_the_input_patch() {
             "id": "note",
             "kind": "set",
             "path": "vars.pressed",
-            "value": "`${trigger.control} on ${trigger.layer}`",
+            "value": "`${trigger.control} on ${trigger.component}`",
         }],
     }))
     .unwrap();
@@ -837,7 +837,7 @@ async fn a_control_trigger_only_matches_its_layer() {
         "enabled": true,
         "triggers": [{
             "kind": "event",
-            "from": { "layer": AUDIO, "controls": "k0" },
+            "from": { "component": AUDIO, "controls": "k0" },
             "event": "double",
         }],
         "concurrency": "parallel",
@@ -1018,7 +1018,7 @@ async fn a_control_trigger_on_a_dial_gets_the_turn() {
         "enabled": true,
         "triggers": [{
             "kind": "event",
-            "from": { "layer": DIALS, "controls": "dial" },
+            "from": { "component": DIALS, "controls": "dial" },
             "event": "turn",
         }],
         "concurrency": "queue",

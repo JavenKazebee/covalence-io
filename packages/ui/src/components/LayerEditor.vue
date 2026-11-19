@@ -130,7 +130,7 @@ const live = useLiveState("surface");
 /** Surfaces where it's active now (surfaces spec §5.2). */
 const shownOn = computed(() =>
   surfaces.surfaces.filter((s) => {
-    const leaf = live.leaves.value.find((l) => l.path === `surface.${s.slug}.layers`);
+    const leaf = live.leaves.value.find((l) => l.path === `surface.${s.slug}.shown`);
     return layer.value !== undefined && Array.isArray(leaf?.value) && leaf.value.includes(layer.value.slug);
   }),
 );

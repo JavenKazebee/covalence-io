@@ -142,7 +142,7 @@ pub enum Root {
     Vars,
     Sys,
     Surface,
-    Layer,
+    Component,
     Flow,
 }
 
@@ -152,7 +152,7 @@ impl Root {
             Root::Vars => "vars",
             Root::Sys => "sys",
             Root::Surface => "surface",
-            Root::Layer => "layer",
+            Root::Component => "component",
             Root::Flow => "flow",
         }
     }

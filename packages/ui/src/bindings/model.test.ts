@@ -72,7 +72,7 @@ describe("binding model", () => {
     expect(sent).toEqual(binding);
     expect(Object.keys(sent.props)).toEqual(["label", "value"]);
     expect(isEmpty({ ...sent, props: {} })).toBe(false);
-    expect(helperPath("cams", "f0", "level", binding.helpers!.level!)).toBe("layer.cams.controls.f0.level");
+    expect(helperPath("cams", "f0", "level", binding.helpers!.level!)).toBe("component.cams.controls.f0.level");
     expect(helperPath("cams", "f0", "level", { use: "toggle", scope: "surface", as: "on" }, "deck")).toBe(
       "surface.deck.controls.f0.helpers.on",
     );

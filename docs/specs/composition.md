@@ -15,7 +15,7 @@ Users build bigger things out of smaller ones, and reuse them by giving them par
 
 **Instances take parameters, not overrides.** An instance can't change, add to or remove anything inside its template. Where copies may differ, the template says so with a param, which can hold a whole component or flow (§1.2). If one copy has to differ anywhere else, "Detach" turns it into a plain entity with no link back. That keeps "what does this do?" answerable from one place.
 
-**Markers.** Everything here is **(M9)** ([M9](../milestones/m9-composition.md)) unless marked **(Later)**. Built so far, for flows (§9): params as cells and in scope (§1), flow params (§1.2), `forEach` (§4), the instance chain, its filters, validation and Detach (§5), and batches. Composites and components as templates, owned flows (§2), nesting (§3) and component params aren't yet. Components replace the `layer` and `control_binding` entities that M5 and M8 built (§7.4); until that lands, the code has layers.
+**Markers.** Everything here is **(M9)** ([M9](../milestones/m9-composition.md)) unless marked **(Later)**. Built so far, for flows (§9): params as cells and in scope (§1), flow params (§1.2), `forEach` (§4), the instance chain, its filters, validation and Detach (§5), and batches. Composites and components as templates, owned flows (§2), nesting (§3) and component params aren't yet. Components replace the `layer` and `control_binding` entities that M5 and M8 built (§7.4). The renamed state, events and navigation are built, and stored projects are migrated to them; the entities themselves still have layers.
 
 ---
 
@@ -384,8 +384,8 @@ Components replace the `layer` and `control_binding` entities that M5 and M8 bui
 | `navigate {layer}`, `POST /surfaces/{id}/current {layer}` | `{component}` |
 | `/layers`, `/control-bindings` | `/components` (surfaces §9) |
 
-- **Refs and event sources are rewritten** by shape. Expressions that read the `layer` root or `trigger.layer` are rewritten with the parser the `resolutionCycle` check uses (surfaces §5.2); a name built at run time isn't found, and each expression rewritten is listed as a warning so it can be checked.
-- **The migration is one batch** (state spec §7.6), so a project loads as a whole or not at all.
+- **Refs, event sources and `navigate` params are rewritten** by shape. Expressions that read the `layer` root, `trigger.layer` or a resolution result are rewritten where they name it by a dotted name, as the `resolutionCycle` check reads them (surfaces §5.2); a name built at run time isn't found, and each expression rewritten is logged as a warning so it can be checked.
+- **The migration runs when the server starts,** before any entity is loaded, and writes every rewritten entity in one transaction, so a project is migrated as a whole or not at all. It's idempotent, and old journal entries are read with `layer` as `component`.
 
 ---
 

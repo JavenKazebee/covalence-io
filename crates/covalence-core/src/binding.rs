@@ -122,9 +122,11 @@ pub struct Helper {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum HelperScope {
-    /// `layer.<slug>.controls.<id>.<name>`, shared by every surface.
+    /// `component.<slug>.controls.<id>.<name>`, shared by every surface.
+    /// Stored before M9 as `"layer"`.
     #[default]
-    Layer,
+    #[serde(alias = "layer")]
+    Component,
     /// `surface.<slug>.controls.<id>.helpers.<name>`, one per surface.
     Surface,
 }
@@ -193,7 +195,7 @@ impl Serialize for Helper {
         if let Some(n) = &self.name {
             map.insert("as".into(), Json::String(n.clone()));
         }
-        if self.scope != HelperScope::Layer {
+        if self.scope != HelperScope::Component {
             map.insert(
                 "scope".into(),
                 serde_json::to_value(self.scope).map_err(S::Error::custom)?,
@@ -331,19 +333,19 @@ fn at(base: &[PathSegment], more: &[PathSegment]) -> Path {
 }
 
 impl ControlBinding {
-    /// Its layer-scoped helpers' cells, for a layer with this slug
-    /// (surfaces §4.3): `layer.<slug>.controls.<id>.<name>`, whose `on`
+    /// Its component-scoped helpers' cells, for a layer with this slug
+    /// (surfaces §4.3): `component.<slug>.controls.<id>.<name>`, whose `on`
     /// defaults to the control's events on the layer.
     pub fn helper_cells(&self, layer_slug: &str) -> Vec<crate::dataflow::CellDef> {
         use crate::flow::EventSource;
         use crate::select::Selector;
         self.helpers
             .iter()
-            .filter(|(_, h)| h.scope == HelperScope::Layer)
+            .filter(|(_, h)| h.scope == HelperScope::Component)
             .map(|(k, h)| {
                 let name = h.name.clone().unwrap_or_else(|| k.clone());
                 let home = StatePath::new(
-                    "layer",
+                    crate::source::Root::Component.as_str(),
                     vec![
                         key(layer_slug),
                         key("controls"),
@@ -351,8 +353,8 @@ impl ControlBinding {
                         key(&name),
                     ],
                 );
-                let from = EventSource::Layer {
-                    layer: self.layer.clone(),
+                let from = EventSource::Component {
+                    component: self.layer.clone(),
                     controls: Some(Selector::One(self.control.clone())),
                 };
                 self.helper_cell(helper_cell_id(&self.id, k), h, home, from, None)

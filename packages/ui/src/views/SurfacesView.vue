@@ -54,7 +54,7 @@ async function createDeck() {
       name: deckName.value.trim() || "Virtual deck",
       slug: "",
       model: VIRTUAL_DECK,
-      ...(fits === undefined ? {} : { startLayer: fits.id }),
+      ...(fits === undefined ? {} : { startComponent: fits.id }),
     });
     deckName.value = "";
     navigate({ tab: "surfaces", surface: saved.surface.id });

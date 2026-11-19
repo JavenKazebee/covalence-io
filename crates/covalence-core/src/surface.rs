@@ -89,7 +89,7 @@ pub struct Surface {
     pub serial: Option<String>,
     /// Shown when the surface first attaches.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub start_layer: Option<LayerId>,
+    pub start_component: Option<LayerId>,
     /// The connection whose device this is, for a surface a plugin provides
     /// (plugin protocol §8).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -601,9 +601,9 @@ pub enum AttachError {
 pub enum ShowError {
     #[error("no surface {0}")]
     UnknownSurface(SurfaceId),
-    #[error("no layer {0}")]
-    UnknownLayer(LayerId),
-    #[error("layer {layer} doesn't fit: the surface lacks {}", missing.join(", "))]
+    #[error("no shown component {0}")]
+    UnknownComponent(LayerId),
+    #[error("component {layer} doesn't fit: the surface lacks {}", missing.join(", "))]
     DoesNotFit {
         layer: LayerId,
         missing: Vec<String>,
@@ -1009,7 +1009,7 @@ impl Surfaces {
             let layer = book
                 .layers
                 .get(id)
-                .ok_or_else(|| ShowError::UnknownLayer(id.to_owned()))?;
+                .ok_or_else(|| ShowError::UnknownComponent(id.to_owned()))?;
             if let Some(attached) = book.attached.get(surface) {
                 let missing = missing(layer, &attached.attach.controls);
                 if !missing.is_empty() {
@@ -1046,7 +1046,7 @@ impl Surfaces {
         // The layer it showed last, or its start layer the first time.
         let layer = match book.shown.get(surface) {
             Some(layer) => layer.clone(),
-            None => entity.start_layer.clone(),
+            None => entity.start_component.clone(),
         }
         .filter(|p| {
             book.layers
@@ -1245,13 +1245,13 @@ pub fn validate_surface(
             }
         }
     }
-    if let Some(layer) = &surface.start_layer
+    if let Some(layer) = &surface.start_component
         && !layers.contains_key(layer)
     {
         errors.push(Problem::new(
-            vec![key("startLayer")],
-            Code::UnknownLayer,
-            format!("no layer {layer:?}"),
+            vec![key("startComponent")],
+            Code::UnknownComponent,
+            format!("no shown component {layer:?}"),
         ));
     }
     Report {
@@ -1459,8 +1459,8 @@ fn resolution_cycle(at: Vec<PathSegment>) -> Problem {
 /// result: `layers`, or `controls.<id>.layer`.
 fn reads_resolution<'a>(mut rest: impl Iterator<Item = &'a str>) -> bool {
     match rest.next() {
-        Some("layers") => true,
-        Some("controls") => rest.nth(1) == Some("layer"),
+        Some("shown") => true,
+        Some("controls") => rest.nth(1) == Some("component"),
         _ => false,
     }
 }
@@ -1979,7 +1979,7 @@ impl Task {
                 self.origin_and_cause().0,
                 Record::Event(EventRecord {
                     surface: Some(self.surface.clone()),
-                    layer: layer.map(str::to_owned),
+                    component: layer.map(str::to_owned),
                     control: Some(control.clone()),
                     ..EventRecord::at(
                         StatePath::new(
@@ -2222,7 +2222,7 @@ impl Inner {
                 // Helpers and resolution keep theirs (surfaces spec §11.4, §5.2).
                 .filter(|path| {
                     path.path.get(3) != Some(&key("helpers"))
-                        && !(path.path.len() == 4 && path.path[3] == key("layer"))
+                        && !(path.path.len() == 4 && path.path[3] == key("component"))
                 })
                 .map(|path| (path.clone(), None))
                 .collect()
@@ -2521,7 +2521,7 @@ mod tests {
             [(serde_json::json!(["on"]), "unknownSurface".into())]
         );
         assert_eq!(
-            with(serde_json::json!({ "when": { "while": { "expr": "self.layers.length > 1" } } })),
+            with(serde_json::json!({ "when": { "while": { "expr": "self.shown.length > 1" } } })),
             [(
                 serde_json::json!(["when", "while", "expr"]),
                 "resolutionCycle".into()
@@ -2529,7 +2529,7 @@ mod tests {
         );
         assert_eq!(
             with(
-                serde_json::json!({ "rank": { "expr": "surface.deck.controls['k3'].layer == 'cams' ? 1 : 0" } })
+                serde_json::json!({ "rank": { "expr": "surface.deck.controls['k3'].component == 'cams' ? 1 : 0" } })
             ),
             [(
                 serde_json::json!(["rank", "expr"]),
@@ -2538,7 +2538,7 @@ mod tests {
         );
         assert_eq!(
             with(
-                serde_json::json!({ "when": { "while": { "ref": { "root": "surface", "path": ["deck", "layers"] } } } })
+                serde_json::json!({ "when": { "while": { "ref": { "root": "surface", "path": ["deck", "shown"] } } } })
             ),
             [(
                 serde_json::json!(["when", "while", "ref"]),
@@ -2552,7 +2552,7 @@ mod tests {
         // Input state and a layer's own helpers are fine to read.
         assert!(
             with(serde_json::json!({
-                "when": { "while": { "expr": "self.controls.k3.layerName || layer.cams.controls.k3.on" } }
+                "when": { "while": { "expr": "self.controls.k3.layerName || component.cams.controls.k3.on" } }
             }))
             .is_empty()
         );
@@ -2566,7 +2566,7 @@ mod tests {
             slug: "deck".into(),
             model: model.into(),
             serial: None,
-            start_layer: None,
+            start_component: None,
             provider: None,
             virtual_layout: Some(serde_json::from_value(json).unwrap()),
         };

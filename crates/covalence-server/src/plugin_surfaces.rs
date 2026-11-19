@@ -208,7 +208,7 @@ impl App {
                     name,
                     model: attach.model.clone(),
                     serial: serial.map(str::to_owned),
-                    start_layer: None,
+                    start_component: None,
                     provider: Some(conn.to_owned()),
                     virtual_layout: None,
                 }

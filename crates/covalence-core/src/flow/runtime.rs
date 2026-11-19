@@ -713,10 +713,10 @@ fn source_roots(from: &EventSource) -> Option<Vec<String>> {
         EventSource::Path { path } => paths(path),
         EventSource::Target { .. } => None,
         // Control input is at the surface; a helper's events are at its
-        // cell under the layer (surfaces §4.3).
-        EventSource::Layer { .. } => Some(vec![
+        // cell under the component (surfaces §4.3).
+        EventSource::Component { .. } => Some(vec![
             crate::surface::STATE_ROOT.to_owned(),
-            "layer".to_owned(),
+            crate::source::Root::Component.as_str().to_owned(),
         ]),
         EventSource::Surface { .. } => Some(vec![crate::surface::STATE_ROOT.to_owned()]),
     }
@@ -916,7 +916,7 @@ impl Inner {
                 }
                 for (name, field) in [
                     ("surface", &event.surface),
-                    ("layer", &event.layer),
+                    ("component", &event.component),
                     ("control", &event.control),
                 ] {
                     if let Some(v) = field {
@@ -3259,9 +3259,11 @@ pub(crate) fn source_matches(
                 }
             }
         }
-        EventSource::Layer { layer, controls } => (event.layer.as_ref() == Some(layer)
-            && control_in(controls, eval))
-        .then_some((None, None)),
+        EventSource::Component {
+            component,
+            controls,
+        } => (event.component.as_ref() == Some(component) && control_in(controls, eval))
+            .then_some((None, None)),
         EventSource::Surface { surface, controls } => (event.surface.as_ref() == Some(surface)
             && control_in(controls, eval))
         .then_some((None, None)),

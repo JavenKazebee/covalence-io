@@ -33,13 +33,13 @@ export type TargetId = string | { conn: string };
 export type EventSource =
   | { path: Selector<PathId> }
   | { target: Selector<TargetId> }
-  | { layer: string; controls?: Selector<string> }
+  | { component: string; controls?: Selector<string> }
   | { surface: string; controls?: Selector<string> };
 
-export type EventSourceKind = "path" | "target" | "layer" | "surface";
+export type EventSourceKind = "path" | "target" | "component" | "surface";
 
 export function eventSourceKind(from: EventSource): EventSourceKind {
-  if ("layer" in from) return "layer";
+  if ("component" in from) return "component";
   if ("surface" in from) return "surface";
   if ("target" in from) return "target";
   return "path";
@@ -357,7 +357,7 @@ let nextKey = 1;
 
 /** Whether a trigger fires on this event of this control, as written (IDs and lists). */
 export function firesOn(trigger: Trigger, layer: string, control: string, event: ControlEvent): boolean {
-  if (trigger.kind !== "event" || !("layer" in trigger.from) || trigger.from.layer !== layer) return false;
+  if (trigger.kind !== "event" || !("component" in trigger.from) || trigger.from.component !== layer) return false;
   const names = eventNames(trigger.event);
   if (!names.includes(event) && !names.includes("*")) return false;
   const controls = idsOf(trigger.from.controls);
@@ -366,14 +366,14 @@ export function firesOn(trigger: Trigger, layer: string, control: string, event:
 
 /** The controls of `layer` that an event trigger names by ID. */
 export function controlsNamed(trigger: Trigger, layer: string): string[] {
-  if (trigger.kind !== "event" || !("layer" in trigger.from) || trigger.from.layer !== layer) return [];
+  if (trigger.kind !== "event" || !("component" in trigger.from) || trigger.from.component !== layer) return [];
   return idsOf(trigger.from.controls) ?? [];
 }
 
 /** A trigger on a press of a layer's control. */
 export const pressTrigger = (layer: string, control: string): Trigger => ({
   kind: "event",
-  from: { layer, controls: control },
+  from: { component: layer, controls: control },
   event: "press",
 });
 
@@ -709,7 +709,7 @@ export function describeSource(
   layerName: (layer: string) => string = (layer) => layer,
   surfaceName: (surface: string) => string = (surface) => surface,
 ): string {
-  if ("layer" in from) return `${layerName(from.layer)} ${selectorText(from.controls, (c) => c)}`;
+  if ("component" in from) return `${layerName(from.component)} ${selectorText(from.controls, (c) => c)}`;
   if ("surface" in from) return `${surfaceName(from.surface)} ${selectorText(from.controls, (c) => c)}`;
   if ("target" in from) {
     return selectorText(from.target, (t: TargetId) => alias(typeof t === "string" ? t : t.conn));

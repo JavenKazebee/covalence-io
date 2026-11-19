@@ -87,6 +87,7 @@ mod core_actions;
 mod devices;
 mod entity;
 mod flows;
+mod migrate;
 mod plugin_surfaces;
 mod surfaces;
 mod ui;
@@ -114,7 +115,15 @@ struct Shown {
 /// Roots that aliases may not take (state spec §1.1): the reserved roots,
 /// `core`, the core connection's alias (core actions §1), and `self`, a
 /// layer field's surface (dataflow §8).
-const RESERVED_ROOTS: &[&str] = &["vars", "sys", "surface", "layer", "flow", "core", "self"];
+const RESERVED_ROOTS: &[&str] = &[
+    "vars",
+    "sys",
+    "surface",
+    "component",
+    "flow",
+    "core",
+    "self",
+];
 
 /// A plugin the server makes available: `io.covalence.videohub@0.1.0=plugins/videohub/mod.ts`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -330,6 +339,11 @@ impl App {
             })
             .collect();
 
+        // Stored entities take the shapes the core reads now, before any
+        // is loaded (composition spec §7.4).
+        for warning in migrate::migrate(&store)? {
+            tracing::warn!("migrated: {warning}");
+        }
         let conns = load(&store, CONNECTION, |c: &Connection| c.id.clone())?;
         // Flows were validated when they were saved; they aren't checked again
         // here (flow spec §8.4).
@@ -628,9 +642,9 @@ impl App {
         roots.insert(STATE_ROOT.into(), STATE_ROOT.into());
         roots.insert(VARS_ROOT.into(), VARS_ROOT.into());
         roots.insert(surface::STATE_ROOT.into(), surface::STATE_ROOT.into());
-        // Layer-scoped helpers' values (surfaces spec §3).
-        let layer = covalence_core::source::Root::Layer.as_str();
-        roots.insert(layer.into(), layer.into());
+        // Component-scoped helpers' values (surfaces spec §3).
+        let component = covalence_core::source::Root::Component.as_str();
+        roots.insert(component.into(), component.into());
         roots
     }
 

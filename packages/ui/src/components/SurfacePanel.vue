@@ -99,7 +99,7 @@ async function save() {
   saveError.value = null;
   savedNote.value = null;
   const surface = { ...draft.value, name: draft.value.name.trim() };
-  if (!surface.startLayer) delete surface.startLayer;
+  if (!surface.startComponent) delete surface.startComponent;
   const v = surface.virtual;
   if (v !== undefined && !v.encoders && !v.faders && v.motor !== false) delete surface.virtual;
   try {
@@ -240,7 +240,7 @@ async function remove() {
           <label for="surface-start">Start layer</label>
           <select
             id="surface-start"
-            v-model="draft.startLayer"
+            v-model="draft.startComponent"
           >
             <option :value="undefined">
               None

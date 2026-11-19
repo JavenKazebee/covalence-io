@@ -331,14 +331,14 @@ pub enum EventSource {
     Path { path: Selector<Paths> },
     /// Connections, by ID, plugin or interface.
     Target { target: Selector<Targets> },
-    /// The controls a layer controls, on whichever surface. Absent
-    /// `controls` is every control of the layer.
-    Layer {
-        layer: LayerId,
+    /// The controls a component has, on whichever surface. Absent
+    /// `controls` is every control of the component.
+    Component {
+        component: LayerId,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         controls: Option<Selector<Controls>>,
     },
-    /// A surface's controls, whatever layer controls them.
+    /// A surface's controls, whatever component controls them.
     Surface {
         surface: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]

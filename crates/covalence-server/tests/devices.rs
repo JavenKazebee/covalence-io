@@ -466,7 +466,7 @@ async fn a_plugin_provides_a_surface() {
     let (status, shown) = server
         .post(
             &format!("/surfaces/{id}/current"),
-            json!({ "layer": layer }),
+            json!({ "component": layer }),
         )
         .await;
     assert_eq!(status.as_u16(), 200, "{shown}");

@@ -7,7 +7,7 @@ import { formatPath, splitPath, type Segment } from "../live/paths";
 /** Plain JSON, as a literal holds it. */
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 
-export const roots = ["vars", "sys", "surface", "layer", "flow"] as const;
+export const roots = ["vars", "sys", "surface", "component", "flow"] as const;
 export type Root = (typeof roots)[number];
 
 /** A state reference, stored by connection ID so renaming an alias breaks nothing. */

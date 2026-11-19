@@ -99,7 +99,7 @@ export const inputModeNames: Record<InputMode, string> = {
 export type Helper = {
   use: string;
   as?: string;
-  scope?: "layer" | "surface";
+  scope?: "component" | "surface";
   to?: Sink[];
   journal?: "full" | { sampled: string };
 } & { [option: string]: Json | Sink[] | undefined };
@@ -109,7 +109,7 @@ export function helperPath(layerSlug: string, control: string, key: string, help
   const name = helper.as ?? key;
   return helper.scope === "surface"
     ? `surface.${surfaceSlug ?? "*"}.controls.${control}.helpers.${name}`
-    : `layer.${layerSlug}.controls.${control}.${name}`;
+    : `component.${layerSlug}.controls.${control}.${name}`;
 }
 
 export interface SavedBinding {

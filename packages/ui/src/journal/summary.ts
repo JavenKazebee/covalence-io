@@ -99,7 +99,7 @@ function describeDataflowPatch(entry: JournalEntry, ctx: SummaryContext): string
     const p = under(op);
     return (
       op.path.conn === "surface" &&
-      ((p.length === 2 && p[1] === "layers") || (p.length === 4 && p[1] === "controls" && (p[3] === "layer" || p[3] === "look")))
+      ((p.length === 2 && p[1] === "shown") || (p.length === 4 && p[1] === "controls" && (p[3] === "component" || p[3] === "look")))
     );
   };
   if (ops.every(isResolution)) {
@@ -107,14 +107,14 @@ function describeDataflowPatch(entry: JournalEntry, ctx: SummaryContext): string
     const parts: string[] = [];
     for (const op of ops) {
       const p = under(op);
-      if (p[1] === "layers") {
+      if (p[1] === "shown") {
         const active = Array.isArray(op.value) ? op.value.map(String) : [];
-        parts.push(active.length === 0 ? "no layer active" : `active ${active.join(", ")}`);
+        parts.push(active.length === 0 ? "nothing shown" : `showing ${active.join(", ")}`);
       } else if (p[3] === "look") {
         const from = Object.entries((op.value ?? {}) as Record<string, unknown>).map(([prop, l]) => `${prop} from ${String(l)}`);
         parts.push(`${p[2]} ${from.length === 0 ? "unbound" : from.join(", ")}`);
       } else {
-        parts.push(op.value == null ? `${p[2]} on no layer` : `${p[2]} on ${String(op.value)}`);
+        parts.push(op.value == null ? `${p[2]} on nothing` : `${p[2]} on ${String(op.value)}`);
       }
     }
     return `${slug}: ${parts.join("; ")}`;
@@ -125,7 +125,7 @@ function describeDataflowPatch(entry: JournalEntry, ctx: SummaryContext): string
     return `${p[0]} ${p[2]} ${p[4] ?? "output"} sent ${json(one.value, 20)}`;
   }
   const isHelper = (op: (typeof ops)[number]) =>
-    (op.path.conn === "layer" && op.path.path[1] === "controls") || (op.path.conn === "surface" && op.path.path[3] === "helpers");
+    (op.path.conn === "component" && op.path.path[1] === "controls") || (op.path.conn === "surface" && op.path.path[3] === "helpers");
   const what = ops.every(isHelper) ? "helper" : "cell";
   const shown = ops
     .slice(0, 2)
@@ -174,7 +174,7 @@ export function describe(entry: JournalEntry, ctx: SummaryContext): string {
     case "event": {
       const payload = (d.payload ?? {}) as Data;
       if (d.control !== undefined) {
-        const layer = d.layer === undefined ? "" : ` on ${ctx.layerName?.(String(d.layer)) ?? String(d.layer)}`;
+        const layer = d.component === undefined ? "" : ` on ${ctx.layerName?.(String(d.component)) ?? String(d.component)}`;
         const delta =
           typeof payload.delta !== "number"
             ? ""

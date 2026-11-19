@@ -175,7 +175,7 @@ function coreDefaults(action: string): Record<string, Json> {
   const flow = flows.flows[0]?.id ?? "";
   switch (action) {
     case "navigate":
-      return { surface, layer: surfaces.layers[0]?.id ?? null };
+      return { surface, component: surfaces.layers[0]?.id ?? null };
     case "inject":
       return { surface, control: "k0", input: "down" };
     case "cancelRuns":
@@ -451,8 +451,8 @@ function toggleElse() {
             <label :for="`${prefix}-layer`">To layer</label>
             <select
               :id="`${prefix}-layer`"
-              :value="step.params.layer ?? ''"
-              @change="step.params.layer = ($event.target as HTMLSelectElement).value || null"
+              :value="step.params.component ?? ''"
+              @change="step.params.component = ($event.target as HTMLSelectElement).value || null"
             >
               <option value="">
                 Nothing

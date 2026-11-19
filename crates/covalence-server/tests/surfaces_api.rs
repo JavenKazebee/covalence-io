@@ -119,20 +119,20 @@ async fn surfaces_layers_and_bindings_are_validated_and_stored() {
         &server,
         "/surfaces",
         "surface",
-        json!({ "name": "FOH deck", "model": "virtual.deck15", "startLayer": id(&cams) }),
+        json!({ "name": "FOH deck", "model": "virtual.deck15", "startComponent": id(&cams) }),
     )
     .await;
     assert_eq!(deck["slug"], "fohDeck");
     let (status, body) = server
         .post(
             "/surfaces",
-            json!({ "name": "Other", "model": "virtual.deck15", "startLayer": "nope" }),
+            json!({ "name": "Other", "model": "virtual.deck15", "startComponent": "nope" }),
         )
         .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(
         codes(&body),
-        [(json!(["startLayer"]), "unknownLayer".into())]
+        [(json!(["startComponent"]), "unknownComponent".into())]
     );
 
     // Bindings: on a layer, on one of its controls, one per control.
@@ -234,7 +234,7 @@ async fn surfaces_layers_and_bindings_are_validated_and_stored() {
         json!({
             "name": "On press",
             "enabled": true, "concurrency": "ignore",
-            "triggers": [{ "kind": "event", "from": { "layer": layer, "controls": "k3" }, "event": "press" }],
+            "triggers": [{ "kind": "event", "from": { "component": layer, "controls": "k3" }, "event": "press" }],
             "body": [{ "id": "s", "kind": "set", "path": "vars.pressed", "value": "true" }],
         })
     };
@@ -242,22 +242,25 @@ async fn surfaces_layers_and_bindings_are_validated_and_stored() {
     assert_eq!(status, StatusCode::CREATED, "{body}");
     let (status, body) = server.post("/flows", control_flow("nope")).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(codes(&body)[0].1, "unknownLayer", "{body}");
+    assert_eq!(codes(&body)[0].1, "unknownComponent", "{body}");
 
     // Navigating: state, unknown layers, other groups, and nothing.
     let show = format!("/surfaces/{}/current", id(&deck));
-    let (status, body) = server.post(&show, json!({ "layer": id(&audio) })).await;
+    let (status, body) = server.post(&show, json!({ "component": id(&audio) })).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
         server.value("surface.fohDeck.current.main").await,
         Some(json!("audio"))
     );
     assert_eq!(body["group"], "main");
-    let (status, body) = server.post(&show, json!({ "layer": "nope" })).await;
+    let (status, body) = server.post(&show, json!({ "component": "nope" })).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(body["code"], "unknownLayer");
+    assert_eq!(body["code"], "unknownComponent");
     let (status, body) = server
-        .post(&show, json!({ "group": "popover", "layer": id(&audio) }))
+        .post(
+            &show,
+            json!({ "group": "popover", "component": id(&audio) }),
+        )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["group"], "popover");
@@ -266,7 +269,7 @@ async fn surfaces_layers_and_bindings_are_validated_and_stored() {
         Some(json!("audio"))
     );
     let (status, body) = server
-        .post(&show, json!({ "group": "pop over", "layer": null }))
+        .post(&show, json!({ "group": "pop over", "component": null }))
         .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body["code"], "invalid");
@@ -279,14 +282,14 @@ async fn surfaces_layers_and_bindings_are_validated_and_stored() {
         )
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    let (status, _) = server.post(&show, json!({ "layer": null })).await;
+    let (status, _) = server.post(&show, json!({ "component": null })).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         server.value("surface.fohDeck.current.main").await,
         Some(json!(null))
     );
     let (status, _) = server
-        .post("/surfaces/nope/current", json!({ "layer": null }))
+        .post("/surfaces/nope/current", json!({ "component": null }))
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
@@ -297,7 +300,7 @@ async fn surfaces_layers_and_bindings_are_validated_and_stored() {
     );
     assert_eq!(server.get("/control-bindings").await, json!([on_audio]));
     let deck = server.get(&format!("/surfaces/{}", id(&deck))).await;
-    assert!(deck.get("startLayer").is_none(), "{deck}");
+    assert!(deck.get("startComponent").is_none(), "{deck}");
     assert_eq!(
         server.delete(&format!("/layers/{}", id(&cams))).await,
         StatusCode::NOT_FOUND
@@ -335,7 +338,7 @@ async fn surfaces_layers_and_bindings_survive_a_restart() {
         .unwrap();
     let (surface, _) = app
         .save::<Surface>(
-            &json!({ "name": "FOH deck", "model": "virtual.deck15", "startLayer": layer.id }),
+            &json!({ "name": "FOH deck", "model": "virtual.deck15", "startComponent": layer.id }),
             None,
         )
         .await
@@ -656,7 +659,7 @@ async fn a_web_surface_presses_routes_and_redraws() {
         &server,
         "/surfaces",
         "surface",
-        json!({ "name": "FOH deck", "model": "virtual.deck15", "startLayer": id(&layer) }),
+        json!({ "name": "FOH deck", "model": "virtual.deck15", "startComponent": id(&layer) }),
     )
     .await;
     let k0 = label_of(id(&layer), "k0", &vh);
@@ -674,7 +677,7 @@ async fn a_web_surface_presses_routes_and_redraws() {
             json!({
                 "name": "Route on press",
                 "enabled": true, "concurrency": "ignore",
-                "triggers": [{ "kind": "event", "from": { "layer": id(&layer), "controls": "k1" }, "event": "press" }],
+                "triggers": [{ "kind": "event", "from": { "component": id(&layer), "controls": "k1" }, "event": "press" }],
                 "body": [{
                     "id": "route1", "kind": "action", "target": { "conn": vh },
                     "action": "route", "params": { "output": 1, "input": 3 },
@@ -787,7 +790,7 @@ async fn a_web_surface_presses_routes_and_redraws() {
     let (status, body) = server
         .post(
             &format!("/surfaces/{}/current", id(&deck)),
-            json!({ "layer": id(&empty) }),
+            json!({ "component": id(&empty) }),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -821,7 +824,7 @@ async fn a_web_surface_presses_routes_and_redraws() {
     let (status, body) = server
         .post(
             &format!("/surfaces/{}/current", id(&deck)),
-            json!({ "layer": id(&wide) }),
+            json!({ "component": id(&wide) }),
         )
         .await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
@@ -848,7 +851,7 @@ async fn a_web_surface_must_attach_as_itself() {
         &server,
         "/surfaces",
         "surface",
-        json!({ "name": "FOH deck", "model": "virtual.deck15", "startLayer": id(&layer) }),
+        json!({ "name": "FOH deck", "model": "virtual.deck15", "startComponent": id(&layer) }),
     )
     .await;
 
@@ -946,7 +949,7 @@ async fn flows_drive_the_deck_and_other_flows_through_core() {
         &server,
         "/surfaces",
         "surface",
-        json!({ "name": "FOH deck", "model": "virtual.deck15", "startLayer": id(&cams) }),
+        json!({ "name": "FOH deck", "model": "virtual.deck15", "startComponent": id(&cams) }),
     )
     .await;
     let mut ws = connect(&addr, id(&deck)).await;
@@ -965,7 +968,7 @@ async fn flows_drive_the_deck_and_other_flows_through_core() {
         "flow",
         json!({
             "name": "Note audio press", "enabled": true, "concurrency": "parallel",
-            "triggers": [{ "kind": "event", "from": { "layer": id(&audio), "controls": "k3" }, "event": "press" }],
+            "triggers": [{ "kind": "event", "from": { "component": id(&audio), "controls": "k3" }, "event": "press" }],
             "body": [{ "id": "note", "kind": "set", "path": "vars.audioPressed", "value": "trigger.control" }],
         }),
     )
@@ -981,7 +984,7 @@ async fn flows_drive_the_deck_and_other_flows_through_core() {
                 { "id": "pick", "kind": "set", "path": "vars.deck", "value": format!("'{}'", id(&deck)) },
                 {
                     "id": "nav", "kind": "action", "target": { "conn": "core" }, "action": "navigate",
-                    "params": { "surface": { "ref": { "root": "vars", "path": ["deck"] } }, "layer": id(&audio) },
+                    "params": { "surface": { "ref": { "root": "vars", "path": ["deck"] } }, "component": id(&audio) },
                 },
                 {
                     "id": "down", "kind": "action", "target": { "conn": "core" },
@@ -1097,7 +1100,7 @@ async fn flows_drive_the_deck_and_other_flows_through_core() {
             json!({
                 "name": "Bad", "enabled": true, "concurrency": "ignore",
                 "triggers": [{ "kind": "api" }],
-                "body": [{ "id": "nav", "kind": "action", "target": { "conn": "core" }, "action": "navigate", "params": { "surface": "nope", "layer": null } }],
+                "body": [{ "id": "nav", "kind": "action", "target": { "conn": "core" }, "action": "navigate", "params": { "surface": "nope", "component": null } }],
             }),
         )
         .await;
@@ -1142,7 +1145,7 @@ async fn surface_scoped_helpers_live_on_the_surfaces_that_showed_their_layer() {
     let (status, body) = server
         .post(
             &format!("/surfaces/{}/current", id(&deck)),
-            json!({ "layer": id(&cams) }),
+            json!({ "component": id(&cams) }),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");

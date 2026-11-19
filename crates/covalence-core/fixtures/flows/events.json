@@ -16,7 +16,7 @@
     {
       "kind": "event",
       "from": {
-        "layer": "01JBZ7P0D3F5G7H9J1K3L5M7PA",
+        "component": "01JBZ7P0D3F5G7H9J1K3L5M7PA",
         "controls": { "any": [["k1", "k2"], { "expr": "vars.extraKey" }] }
       },
       "event": ["press", "long"]

@@ -780,7 +780,7 @@ fn control_event(shared: &Shared, control: &str, name: &str, payload: Option<Jso
             },
             Record::Event(EventRecord {
                 surface: Some("01JC5URFACE000000000000001".into()),
-                layer: Some(LAYER.into()),
+                component: Some(LAYER.into()),
                 control: Some(control.into()),
                 ..EventRecord::at(
                     path("surface", &["deck", "controls", control]),
@@ -816,7 +816,7 @@ async fn an_encoder_follows_the_volume_and_sends_only_its_own_turns() {
         } }
     }));
     df.replace("helper:b1/", cells, None);
-    let vol = path("layer", &["cams", "controls", "e1", "vol"]);
+    let vol = path("component", &["cams", "controls", "e1", "vol"]);
     // It starts where the volume is, and sends nothing for that.
     assert_eq!(value(&shared, &vol), Some(json!(50)));
 
@@ -863,7 +863,7 @@ async fn a_select_helper_pages_through_a_list() {
                                "to": { "set": { "root": "vars", "path": ["page"] } } } }
     }));
     df.replace("helper:b2/", cells, None);
-    let page = path("layer", &["cams", "controls", "e2", "page"]);
+    let page = path("component", &["cams", "controls", "e2", "page"]);
     assert_eq!(value(&shared, &page), Some(json!("cams")));
     control_event(&shared, "e2", "turn", Some(json!({ "delta": 1 })));
     control_event(&shared, "e2", "turn", Some(json!({ "delta": 1 })));

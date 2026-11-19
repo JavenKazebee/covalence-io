@@ -48,7 +48,7 @@ fn world() -> World {
                 slug: slug.into(),
                 model: "virtual.deck15".into(),
                 serial: None,
-                start_layer: Some(CAMS.into()),
+                start_component: Some(CAMS.into()),
                 provider: None,
                 virtual_layout: None,
             })
@@ -422,7 +422,7 @@ async fn bench_a_full_page_of_expr_bindings() {
                 slug: format!("bench{cols}{rows}{size}"),
                 model: "virtual".into(),
                 serial: None,
-                start_layer: Some(page.clone()),
+                start_component: Some(page.clone()),
                 provider: None,
                 virtual_layout: None,
             })
@@ -490,7 +490,10 @@ impl Actions for Timed {
 #[ignore = "a benchmark: run it in release"]
 async fn bench_key_down_to_first_action() {
     for (what, from) in [
-        ("a layer's key", json!({ "layer": CAMS, "controls": "k0" })),
+        (
+            "a layer's key",
+            json!({ "component": CAMS, "controls": "k0" }),
+        ),
         (
             "a path pattern",
             json!({ "path": { "match": "surface.*.controls.k0" } }),
@@ -524,7 +527,7 @@ async fn key_down_to_first_action(what: &str, from: serde_json::Value, others: u
     // Others the matcher has to pass over: other keys, connections, flows.
     for i in 0..others {
         let from = match i % 4 {
-            0 => json!({ "layer": CAMS, "controls": format!("k{}", 1 + i % 14) }),
+            0 => json!({ "component": CAMS, "controls": format!("k{}", 1 + i % 14) }),
             1 => json!({ "target": VH }),
             2 => json!({ "path": format!("flow.other{i}") }),
             _ => json!({ "path": { "match": format!("surface.*.controls.dial{i}") } }),
@@ -605,7 +608,7 @@ async fn a_toggle_helper_latches_a_key_and_its_events_start_flows() {
         Arc::new(Timed(requested)),
         Arc::new(QuickJs::default()),
     );
-    let helper = json!({ "root": "layer", "path": ["cams", "controls", "k3", "latched"] });
+    let helper = json!({ "root": "component", "path": ["cams", "controls", "k3", "latched"] });
     let b = ControlBinding::parse(&json!({
         "id": "b3", "layer": CAMS, "control": "k3",
         "helpers": { "latched": { "use": "toggle" } },
@@ -621,7 +624,7 @@ async fn a_toggle_helper_latches_a_key_and_its_events_start_flows() {
     let flow: Flow = serde_json::from_value(json!({
         "id": "01JC5FLOWLATCH000000000001",
         "name": "On air", "slug": "onAir", "enabled": true,
-        "triggers": [{ "kind": "event", "from": { "layer": CAMS, "controls": "k3" }, "event": "on" }],
+        "triggers": [{ "kind": "event", "from": { "component": CAMS, "controls": "k3" }, "event": "on" }],
         "concurrency": "parallel",
         "body": [{
             "id": "route", "kind": "action", "target": { "conn": VH },
@@ -643,7 +646,7 @@ async fn a_toggle_helper_latches_a_key_and_its_events_start_flows() {
         ts,
         echo: false,
     };
-    let latched = path("layer", &["cams", "controls", "k3", "latched"]);
+    let latched = path("component", &["cams", "controls", "k3", "latched"]);
     for (n, (on, red)) in [(true, true), (false, false)].into_iter().enumerate() {
         let ts = 1_000.0 * (n as f64 + 1.0);
         link.input.send(press(InputKind::Down, ts)).await.unwrap();
@@ -687,7 +690,7 @@ async fn a_toggle_helper_latches_a_key_and_its_events_start_flows() {
         .into_iter()
         .filter_map(|e| match &e.record {
             covalence_core::journal::Record::Event(ev) if ev.path == latched => {
-                Some((ev.event.clone(), ev.layer.clone(), ev.control.clone()))
+                Some((ev.event.clone(), ev.component.clone(), ev.control.clone()))
             }
             _ => None,
         })
@@ -915,7 +918,7 @@ async fn a_surface_scoped_helper_keeps_one_value_per_surface() {
             Record::Event(ev) if ev.path == latched("deck") => Some((
                 ev.event.clone(),
                 ev.surface.clone(),
-                ev.layer.clone(),
+                ev.component.clone(),
                 ev.control.clone(),
             )),
             _ => None,

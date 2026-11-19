@@ -255,9 +255,10 @@ pub struct EventRecord {
     /// Control input: the surface's entity ID.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface: Option<String>,
-    /// Control input: the layer that controlled the control, by ID.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub layer: Option<String>,
+    /// Control input: the shown component that controlled the control, by
+    /// ID (surfaces spec §5.2). Entries from before M9 call it `layer`.
+    #[serde(default, alias = "layer", skip_serializing_if = "Option::is_none")]
+    pub component: Option<String>,
     /// Control input: the control's ID.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub control: Option<String>,
@@ -272,7 +273,7 @@ impl EventRecord {
             payload,
             conn: None,
             surface: None,
-            layer: None,
+            component: None,
             control: None,
         }
     }

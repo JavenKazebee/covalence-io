@@ -695,7 +695,7 @@ fn reserved_root(name: &str) -> Option<Root> {
         ("vars", Root::Vars),
         ("sys", Root::Sys),
         ("surface", Root::Surface),
-        ("layer", Root::Layer),
+        ("component", Root::Component),
         ("flow", Root::Flow),
     ]
     .into_iter()

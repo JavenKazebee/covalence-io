@@ -1268,7 +1268,7 @@ async fn one_flow_hears_every_key_with_captures() {
     ));
     let press = |surface: &str, control: &str, event: &str| EventRecord {
         surface: Some(format!("id-{surface}")),
-        layer: Some("L".into()),
+        component: Some("L".into()),
         control: Some(control.into()),
         ..EventRecord::at(
             StatePath::new("surface", vec![key(surface), key("controls"), key(control)]),
@@ -1313,15 +1313,15 @@ async fn layer_sources_pick_controls_and_the_payload_carries_context() {
         "id": "keys", "name": "keys", "slug": "keys", "enabled": true,
         "triggers": [{
             "kind": "event",
-            "from": { "layer": "L", "controls": ["k1", "k2"] },
+            "from": { "component": "L", "controls": ["k1", "k2"] },
             "event": "turn",
         }],
         "concurrency": "parallel",
-        "body": [{ "id": "note", "kind": "set", "path": "vars.seen", "value": "[trigger.path, trigger.surface, trigger.layer, trigger.control, trigger.payload.delta]" }],
+        "body": [{ "id": "note", "kind": "set", "path": "vars.seen", "value": "[trigger.path, trigger.surface, trigger.component, trigger.control, trigger.payload.delta]" }],
     }));
     let turn = |layer: &str, control: &str| EventRecord {
         surface: Some("S1".into()),
-        layer: Some(layer.into()),
+        component: Some(layer.into()),
         control: Some(control.into()),
         ..EventRecord::at(
             StatePath::new("surface", vec![key("deck"), key("controls"), key(control)]),
@@ -1427,7 +1427,7 @@ async fn a_core_action_takes_its_surface_from_state() {
         "parallel",
         json!([{
             "id": "nav", "kind": "action", "target": { "conn": "core" }, "action": "navigate",
-            "params": { "surface": { "ref": { "root": "vars", "path": ["deck"] } }, "layer": null },
+            "params": { "surface": { "ref": { "root": "vars", "path": ["deck"] } }, "component": null },
         }]),
     ));
     world.set_state("vars", &["deck"], "S1".into());

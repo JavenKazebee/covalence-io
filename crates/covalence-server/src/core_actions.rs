@@ -24,7 +24,7 @@ struct Navigate {
     surface: String,
     #[serde(default)]
     group: Option<String>,
-    layer: Option<String>,
+    component: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -76,7 +76,7 @@ impl CoreActions for AppCore {
                         .as_deref()
                         .unwrap_or(covalence_core::surface::MAIN_GROUP);
                     app.surfaces()
-                        .navigate(&p.surface, group, p.layer.as_deref(), call.origin)
+                        .navigate(&p.surface, group, p.component.as_deref(), call.origin)
                         .map_err(|e| match e {
                             ShowError::BadGroup(_) => {
                                 error(ErrorCode::InvalidParams, "invalid", e.to_string())
@@ -84,8 +84,8 @@ impl CoreActions for AppCore {
                             ShowError::UnknownSurface(_) => {
                                 error(ErrorCode::NotFound, "unknownSurface", e.to_string())
                             }
-                            ShowError::UnknownLayer(_) => {
-                                error(ErrorCode::InvalidParams, "unknownLayer", e.to_string())
+                            ShowError::UnknownComponent(_) => {
+                                error(ErrorCode::InvalidParams, "unknownComponent", e.to_string())
                             }
                             ShowError::DoesNotFit { .. } => {
                                 error(ErrorCode::ActionFailed, "doesNotFit", e.to_string())
@@ -96,8 +96,8 @@ impl CoreActions for AppCore {
                         })?;
                     // Answers once the surface has been sent its outputs.
                     app.surfaces().flush().await;
-                    let layer = p.layer.map_or(Value::Nil, Value::from);
-                    Ok(Some(Value::Map(vec![("layer".into(), layer)])))
+                    let component = p.component.map_or(Value::Nil, Value::from);
+                    Ok(Some(Value::Map(vec![("component".into(), component)])))
                 }
                 "inject" => {
                     let p: Inject = params(json)?;

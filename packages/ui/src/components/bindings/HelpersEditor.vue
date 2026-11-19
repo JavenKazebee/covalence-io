@@ -152,7 +152,7 @@ function setSinks(key: string, h: Helper, to: Sink[]) {
           <label :for="`helper-${key}-scope`">One value</label>
           <select
             :id="`helper-${key}-scope`"
-            :value="h.scope ?? 'layer'"
+            :value="h.scope ?? 'component'"
             @change="
               replace(
                 key,
@@ -162,8 +162,8 @@ function setSinks(key: string, h: Helper, to: Sink[]) {
               )
             "
           >
-            <option value="layer">
-              for the layer
+            <option value="component">
+              for the page
             </option>
             <option value="surface">
               per surface

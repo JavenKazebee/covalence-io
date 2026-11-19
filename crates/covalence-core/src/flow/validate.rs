@@ -43,8 +43,11 @@ pub enum Code {
     BadPath,
     /// A `branch` without arms.
     NoArms,
-    /// A `control` trigger, binding or start layer on a layer that doesn't exist.
+    /// A binding on a layer that doesn't exist.
     UnknownLayer,
+    /// An event trigger, or a surface's start, naming a component that
+    /// doesn't exist (surfaces spec §7).
+    UnknownComponent,
     /// A `control` trigger or binding on a control its layer doesn't list.
     UnknownControl,
     /// A second binding for a control on the same layer, or a layer that
@@ -308,7 +311,7 @@ fn find_unsupported(json: &Value) -> Vec<Problem> {
                 } else if from.is_some_and(|f| {
                     f.get("slot").is_some()
                         || (f.get("controls").is_some()
-                            && f.get("layer").is_none()
+                            && f.get("component").is_none()
                             && f.get("surface").is_none())
                 }) {
                     not_yet(at("from"), "component event sources");
@@ -865,12 +868,15 @@ impl<'a> Validation<'a> {
                     }
                 }
             }
-            EventSource::Layer { layer, controls } => {
-                let Some(def) = self.ctx.layers.get(layer) else {
+            EventSource::Component {
+                component,
+                controls,
+            } => {
+                let Some(def) = self.ctx.layers.get(component) else {
                     self.error(
-                        join(at, &[key("layer")]),
-                        Code::UnknownLayer,
-                        format!("no layer {layer:?}"),
+                        join(at, &[key("component")]),
+                        Code::UnknownComponent,
+                        format!("no component {component:?}"),
                     );
                     return;
                 };

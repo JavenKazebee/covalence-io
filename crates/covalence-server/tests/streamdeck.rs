@@ -127,7 +127,10 @@ async fn a_stream_deck_mk2_becomes_a_surface_by_itself() {
     // A shown layer is drawn on the deck as JPEG, each key complete.
     let main = layer(&server).await;
     let (status, body) = server
-        .post(&format!("/surfaces/{id}/current"), json!({ "layer": main }))
+        .post(
+            &format!("/surfaces/{id}/current"),
+            json!({ "component": main }),
+        )
         .await;
     assert_eq!(status.as_u16(), 200, "{body}");
     let images = server
@@ -301,7 +304,7 @@ async fn a_stream_deck_runs_flows_and_rides_out_unplugs_and_host_restarts() {
             "/surfaces",
             json!({
                 "name": "Desk", "model": "elgato.original-mk2",
-                "serial": "CL12K1A00042", "startLayer": main,
+                "serial": "CL12K1A00042", "startComponent": main,
             }),
         )
         .await;
@@ -327,7 +330,7 @@ async fn a_stream_deck_runs_flows_and_rides_out_unplugs_and_host_restarts() {
             "/flows",
             json!({
                 "name": "Bright on k0", "enabled": true, "concurrency": "ignore",
-                "triggers": [{ "kind": "event", "from": { "layer": main, "controls": "k0" }, "event": "press" }],
+                "triggers": [{ "kind": "event", "from": { "component": main, "controls": "k0" }, "event": "press" }],
                 "body": [{
                     "id": "bright", "kind": "action", "target": { "conn": conn_id },
                     "action": "brightness", "params": { "percent": 60 },
@@ -530,7 +533,7 @@ async fn bench_budgets_with_the_plugin_host_in_the_path() {
             "/flows",
             json!({
                 "name": "Bright on k0", "enabled": true, "concurrency": "parallel",
-                "triggers": [{ "kind": "event", "from": { "layer": layer, "controls": "k0" }, "event": "press" }],
+                "triggers": [{ "kind": "event", "from": { "component": layer, "controls": "k0" }, "event": "press" }],
                 "body": [{
                     "id": "bright", "kind": "action", "target": { "conn": conn_id },
                     "action": "brightness", "params": { "percent": 60 },
@@ -542,7 +545,7 @@ async fn bench_budgets_with_the_plugin_host_in_the_path() {
     server
         .post(
             &format!("/surfaces/{id}/current"),
-            json!({ "layer": layer }),
+            json!({ "component": layer }),
         )
         .await;
     all_drawn(&deck, 0).await;

@@ -987,7 +987,7 @@ impl Turn<'_> {
             if at_surface
                 && let Some(c) = &cell.def.control
                 && c.surface.is_some()
-                && event.layer.as_ref() != Some(&c.layer)
+                && event.component.as_ref() != Some(&c.layer)
             {
                 continue;
             }
@@ -1429,7 +1429,7 @@ impl Turn<'_> {
         for (seq, e) in emitted {
             let record = EventRecord {
                 surface: def.control.as_ref().and_then(|c| c.surface.clone()),
-                layer: def.control.as_ref().map(|c| c.layer.clone()),
+                component: def.control.as_ref().map(|c| c.layer.clone()),
                 control: def.control.as_ref().map(|c| c.control.clone()),
                 ..EventRecord::at(
                     def.home.clone(),

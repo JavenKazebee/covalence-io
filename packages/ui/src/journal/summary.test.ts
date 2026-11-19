@@ -121,7 +121,7 @@ group("journal summaries", () => {
     const at = (control: string) => ({ conn: "surface", path: ["fohDeck", "controls", control] });
     const ev = (control: string, event: string, extra: Record<string, unknown> = {}) =>
       entry("event", { path: at(control), event, surface: SURFACE, control, ...extra });
-    expect(describe(ev("k3", "press", { layer: LAYER }), ctx)).toBe("FOH deck k3 press on Cameras");
+    expect(describe(ev("k3", "press", { component: LAYER }), ctx)).toBe("FOH deck k3 press on Cameras");
     expect(describe(ev("k0", "hold", { payload: { delta: 2 } }), ctx)).toBe("FOH deck k0 hold ×2");
     expect(describe(ev("dial", "turn", { payload: { delta: 3 } }), ctx)).toBe("FOH deck dial turn +3");
     expect(describe(ev("fader", "change", { payload: { value: 0.5 } }), ctx)).toBe("FOH deck fader change 0.5");
@@ -143,12 +143,12 @@ group("journal summaries", () => {
     expect(
       describe(
         dataflow([
-          { path: at("surface", "deck", "layers"), value: ["shift", "cams"] },
-          { path: at("surface", "deck", "controls", "k3", "layer"), value: "shift" },
+          { path: at("surface", "deck", "shown"), value: ["shift", "cams"] },
+          { path: at("surface", "deck", "controls", "k3", "component"), value: "shift" },
         ]),
         ctx,
       ),
-    ).toBe("deck: active shift, cams; k3 on shift");
+    ).toBe("deck: showing shift, cams; k3 on shift");
     expect(
       describe(dataflow([{ path: at("surface", "deck", "controls", "k3", "look"), value: { background: "cams", label: "shift" } }]), ctx),
     ).toBe("deck: k3 background from cams, label from shift");
@@ -156,8 +156,8 @@ group("journal summaries", () => {
       "deck f0 level sent 0.5",
     );
     expect(describe(dataflow([{ path: at("vars", "isLive"), value: true }]), ctx)).toBe("cell vars.isLive = true");
-    expect(describe(dataflow([{ path: at("layer", "cams", "controls", "k3", "latched"), value: true }]), ctx)).toBe(
-      "helper layer.cams.controls.k3.latched = true",
+    expect(describe(dataflow([{ path: at("component", "cams", "controls", "k3", "latched"), value: true }]), ctx)).toBe(
+      "helper component.cams.controls.k3.latched = true",
     );
   });
 });

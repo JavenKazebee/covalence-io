@@ -228,11 +228,11 @@ export const api = {
     call<SavedSurface>("PUT", `/surfaces/${encodeURIComponent(surface.id)}`, surface),
   deleteSurface: (id: string) => call<null>("DELETE", `/surfaces/${encodeURIComponent(id)}`),
   /** Navigates one of the surface's groups, `main` by default. Answers once the surface has been sent its keys. */
-  navigate: (surface: string, layer: string | null, group?: string) =>
-    call<{ surface: string; group: string; layer: string | null }>(
+  navigate: (surface: string, component: string | null, group?: string) =>
+    call<{ surface: string; group: string; component: string | null }>(
       "POST",
       `/surfaces/${encodeURIComponent(surface)}/current`,
-      group === undefined ? { layer } : { group, layer },
+      group === undefined ? { component } : { group, component },
     ),
   /** The controls the surface last attached with; 404 if it hasn't attached since the server started. */
   surfaceControls: (surface: string) => call<ControlDef[]>("GET", `/surfaces/${encodeURIComponent(surface)}/controls`),

@@ -14,8 +14,8 @@
 //! or its controls changed. Its results are state, written in the same
 //! turn, so bindings, triggers and `why` see them with the change that
 //! caused them:
-//! - `surface.<slug>.layers`: the active layers' slugs, highest first.
-//! - `surface.<slug>.controls.<id>.layer`: the controlling layer's slug, or
+//! - `surface.<slug>.shown`: the active shown components' slugs, highest first.
+//! - `surface.<slug>.controls.<id>.component`: the controlling component's slug, or
 //!   `null`.
 //!
 //! Each is journaled as a `state.patch` with origin `{core: "dataflow"}` and
@@ -467,14 +467,19 @@ impl Resolver {
                 .map_or(Value::Nil, |l| l.slug.as_str().into())
         };
         let mut ops = vec![(
-            StatePath::new(STATE_ROOT, vec![key(&slug), key("layers")]),
+            StatePath::new(STATE_ROOT, vec![key(&slug), key("shown")]),
             Value::Array(resolution.active.iter().map(slug_of).collect()),
         )];
         for control in &controls {
             ops.push((
                 StatePath::new(
                     STATE_ROOT,
-                    vec![key(&slug), key("controls"), key(&control.id), key("layer")],
+                    vec![
+                        key(&slug),
+                        key("controls"),
+                        key(&control.id),
+                        key("component"),
+                    ],
                 ),
                 resolution
                     .controls

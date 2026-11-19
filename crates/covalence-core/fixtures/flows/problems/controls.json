@@ -6,22 +6,22 @@
     "triggers": [
       {
         "kind": "event",
-        "from": { "layer": "01JBZ7P0D3F5G7H9J1K3L5M7PZ", "controls": "k0" },
+        "from": { "component": "01JBZ7P0D3F5G7H9J1K3L5M7PZ", "controls": "k0" },
         "event": "press"
       },
       {
         "kind": "event",
-        "from": { "layer": "01JBZ7P0D3F5G7H9J1K3L5M7PA", "controls": "k15" },
+        "from": { "component": "01JBZ7P0D3F5G7H9J1K3L5M7PA", "controls": "k15" },
         "event": "press"
       },
       {
         "kind": "event",
-        "from": { "layer": "01JBZ7P0D3F5G7H9J1K3L5M7PA", "controls": "k01" },
+        "from": { "component": "01JBZ7P0D3F5G7H9J1K3L5M7PA", "controls": "k01" },
         "event": "double"
       },
       {
         "kind": "event",
-        "from": { "layer": "01JBZ7P0D3F5G7H9J1K3L5M7PA", "controls": "k0" },
+        "from": { "component": "01JBZ7P0D3F5G7H9J1K3L5M7PA", "controls": "k0" },
         "event": "turn"
       }
     ],
@@ -29,7 +29,7 @@
     "body": []
   },
   "errors": [
-    { "path": ["triggers", 0, "from", "layer"], "code": "unknownLayer" },
+    { "path": ["triggers", 0, "from", "component"], "code": "unknownComponent" },
     { "path": ["triggers", 1, "from", "controls"], "code": "unknownControl" },
     { "path": ["triggers", 2, "from", "controls"], "code": "unknownControl" },
     { "path": ["triggers", 3, "event"], "code": "unsupported" }

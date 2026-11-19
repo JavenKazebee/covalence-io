@@ -121,8 +121,8 @@ describe("flow model", () => {
     expect(firesOn(keys, layer, "k1", "press")).toBe(false); // `any` with an `expr`: not a plain list
     expect(firesOn(pressTrigger(layer, "k0"), layer, "k0", "press")).toBe(true);
     expect(firesOn(pressTrigger(layer, "k0"), layer, "k0", "release")).toBe(false);
-    expect(firesOn({ kind: "event", from: { layer, controls: ["k1", "k2"] }, event: ["press", "long"] }, layer, "k2", "long")).toBe(true);
-    expect(firesOn({ kind: "event", from: { layer }, event: "*" }, layer, "k9", "turn")).toBe(true);
+    expect(firesOn({ kind: "event", from: { component: layer, controls: ["k1", "k2"] }, event: ["press", "long"] }, layer, "k2", "long")).toBe(true);
+    expect(firesOn({ kind: "event", from: { component: layer }, event: "*" }, layer, "k9", "turn")).toBe(true);
     expect(describeTrigger(flow.triggers[0]!, (c) => c)).toBe("sys startup");
     expect(describeTrigger(flow.triggers[2]!, (c) => c)).toBe("surface.*.controls.* press");
     expect(describeTrigger(flow.triggers[5]!, (c) => c)).toBe("surface.*.controls.*.pressed (rising)");
@@ -132,7 +132,7 @@ describe("flow model", () => {
     const flow: Flow = {
       id: "f", name: "f", slug: "f", enabled: true, triggers: [{ kind: "api" }], concurrency: "ignore", failover: "abort",
       body: [
-        { id: "a", kind: "action", target: { conn: "core" }, action: "navigate", params: { surface: "S1", layer: "L" } },
+        { id: "a", kind: "action", target: { conn: "core" }, action: "navigate", params: { surface: "S1", component: "L" } },
         {
           id: "b", kind: "action", target: { conn: "core" }, action: "inject",
           params: { surface: { ref: { root: "vars", path: ["deck"] } }, control: "k1", input: "down", value: { value: { ref: "not a source" } } },

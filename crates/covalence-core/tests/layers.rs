@@ -45,7 +45,7 @@ fn world() -> World {
                 slug: slug.into(),
                 model: "virtual.deck15".into(),
                 serial: None,
-                start_layer: Some(CAMS.into()),
+                start_component: Some(CAMS.into()),
                 provider: None,
                 virtual_layout: None,
             })
@@ -197,8 +197,8 @@ async fn a_shift_layer_takes_three_keys_while_its_key_is_held() {
     let mut link = w.surfaces.attach(DECK, deck()).unwrap();
     w.surfaces.flush().await;
     assert_eq!(draws(&mut link)["k3"], image(look("Cam 3")));
-    let layers = path(&["deck", "layers"]);
-    let k3 = path(&["deck", "controls", "k3", "layer"]);
+    let layers = path(&["deck", "shown"]);
+    let k3 = path(&["deck", "controls", "k3", "component"]);
     assert_eq!(w.shared.state.value(&layers), Some(slugs(&["cams"])));
     assert_eq!(w.shared.state.value(&k3), Some("cams".into()));
     let resolution = w.surfaces.resolution(DECK).unwrap();
@@ -216,7 +216,7 @@ async fn a_shift_layer_takes_three_keys_while_its_key_is_held() {
     assert_eq!(
         w.shared
             .state
-            .value(&path(&["deck", "controls", "k5", "layer"])),
+            .value(&path(&["deck", "controls", "k5", "component"])),
         Some("cams".into()),
         "keys shift doesn't cover stay on cams"
     );
@@ -267,7 +267,7 @@ async fn a_shift_layer_takes_three_keys_while_its_key_is_held() {
         .into_iter()
         .find_map(|e| match &e.record {
             Record::Event(ev) if ev.control.as_deref() == Some("k3") && ev.event == "press" => {
-                Some(ev.layer.clone())
+                Some(ev.component.clone())
             }
             _ => None,
         });
@@ -311,8 +311,8 @@ async fn layers_are_ordered_by_level_then_rank_then_recency() {
         ))
         .unwrap();
     let _link = w.surfaces.attach(DECK, deck()).unwrap();
-    let k0 = path(&["deck", "controls", "k0", "layer"]);
-    let layers = path(&["deck", "layers"]);
+    let k0 = path(&["deck", "controls", "k0", "component"]);
+    let layers = path(&["deck", "shown"]);
     let set = |name: &str, on: bool| {
         let at = StatePath::new("vars", vec![PathSegment::Key(name.into())]);
         let meta = covalence_core::state::Meta {
@@ -367,7 +367,7 @@ async fn layers_are_ordered_by_level_then_rank_then_recency() {
     assert_eq!(
         w.shared
             .state
-            .value(&path(&["deck", "controls", "k9", "layer"])),
+            .value(&path(&["deck", "controls", "k9", "component"])),
         Some(Value::Nil),
         "a key no active layer covers is nobody's"
     );
@@ -388,7 +388,7 @@ async fn popovers_open_by_navigation_and_on_picks_surfaces() {
         .unwrap();
     let _deck = w.surfaces.attach(DECK, deck()).unwrap();
     let _other = w.surfaces.attach(OTHER, deck()).unwrap();
-    let k7 = path(&["deck", "controls", "k7", "layer"]);
+    let k7 = path(&["deck", "controls", "k7", "component"]);
     w.surfaces.flush().await;
     assert_eq!(w.shared.state.value(&k7), Some("cams".into()));
 
@@ -407,7 +407,7 @@ async fn popovers_open_by_navigation_and_on_picks_surfaces() {
     assert_eq!(
         w.shared
             .state
-            .value(&path(&["other", "controls", "k7", "layer"])),
+            .value(&path(&["other", "controls", "k7", "component"])),
         Some("cams".into())
     );
 
@@ -502,20 +502,20 @@ async fn a_through_layer_sets_only_what_it_binds() {
         .send(press("k14", InputKind::Down))
         .await
         .unwrap();
-    until(&w, &at("k3", "layer"), "shift".into()).await;
+    until(&w, &at("k3", "component"), "shift".into()).await;
     assert_eq!(
         w.shared.state.value(&at("k3", "look")),
         Some(look_of(&[("background", "cams"), ("label", "shift")]))
     );
     assert_eq!(
-        w.shared.state.value(&at("k4", "layer")),
+        w.shared.state.value(&at("k4", "component")),
         Some("cams".into()),
         "k4 is covered but not bound: its input passes down"
     );
     w.surfaces.flush().await;
     assert_eq!(draws(&mut link)["k3"], image(red("Wide")));
     link.input.send(press("k14", InputKind::Up)).await.unwrap();
-    until(&w, &at("k3", "layer"), "cams".into()).await;
+    until(&w, &at("k3", "component"), "cams".into()).await;
 
     // Locked: presses are the lock layer's, so nothing on Cameras sees them,
     // and the key's look stays live.
@@ -530,7 +530,7 @@ async fn a_through_layer_sets_only_what_it_binds() {
         .state
         .mutate(|tree| ((), tree.set(&locked, &Value::from(true), &meta)));
     assert_eq!(
-        w.shared.state.value(&at("k3", "layer")),
+        w.shared.state.value(&at("k3", "component")),
         Some("lock".into())
     );
     w.surfaces.flush().await;
@@ -546,7 +546,7 @@ async fn a_through_layer_sets_only_what_it_binds() {
         .into_iter()
         .filter_map(|e| match &e.record {
             Record::Event(ev) if ev.control.as_deref() == Some("k3") && ev.event == "press" => {
-                Some(ev.layer.clone())
+                Some(ev.component.clone())
             }
             _ => None,
         })

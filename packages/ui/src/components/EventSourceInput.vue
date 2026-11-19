@@ -33,7 +33,7 @@ const kind = computed(() => eventSourceKind(trigger.value.from));
 const plugins = computed(() => catalog.connections.filter((c) => !c.builtIn));
 
 const kindNames: Record<EventSourceKind, string> = {
-  layer: "A key on a layer",
+  component: "A key on a page",
   surface: "A key on a surface",
   target: "A connection",
   path: "A path",
@@ -42,8 +42,8 @@ const kindNames: Record<EventSourceKind, string> = {
 function setKind(next: EventSourceKind) {
   const t = trigger.value;
   switch (next) {
-    case "layer":
-      t.from = { layer: surfaces.layers[0]?.id ?? "" };
+    case "component":
+      t.from = { component: surfaces.layers[0]?.id ?? "" };
       t.event = "press";
       break;
     case "surface":
@@ -82,7 +82,7 @@ function setControls(text: string) {
 }
 
 const controlsOf = computed(() => {
-  if (kind.value === "layer") return surfaces.layer(String(from.value.layer))?.controls.map((c) => c.id) ?? [];
+  if (kind.value === "component") return surfaces.layer(String(from.value.component))?.controls.map((c) => c.id) ?? [];
   return [];
 });
 
@@ -164,7 +164,7 @@ function setNames(text: string) {
 
 /** Names to suggest: a control's events, or the connection's. */
 const suggested = computed<{ id: string; name: string }[]>(() => {
-  if (kind.value === "layer" || kind.value === "surface") return controlEvents.map((e) => ({ id: e, name: eventHelp[e] }));
+  if (kind.value === "component" || kind.value === "surface") return controlEvents.map((e) => ({ id: e, name: eventHelp[e] }));
   if (kind.value === "target" && targetForm.value === "conn") {
     const conn = catalog.connections.find((c) => c.id === targetSelector.value);
     return (conn === undefined ? [] : (catalog.manifest(conn.plugin)?.events ?? [])).map((e) => ({ id: e.id, name: e.name }));
@@ -203,16 +203,16 @@ const fieldProblems = (field: string) => props.problems.filter((p) => p.path[2] 
       </option>
     </select>
 
-    <template v-if="kind === 'layer'">
+    <template v-if="kind === 'component'">
       <select
-        v-model="from.layer"
+        v-model="from.component"
         :aria-label="`${label} layer`"
       >
         <option
-          v-if="!surfaces.layer(String(from.layer))"
-          :value="from.layer"
+          v-if="!surfaces.layer(String(from.component))"
+          :value="from.component"
         >
-          {{ from.layer || "Pick a layer" }}
+          {{ from.component || "Pick a page" }}
         </option>
         <option
           v-for="l in surfaces.layers"
@@ -243,7 +243,7 @@ const fieldProblems = (field: string) => props.problems.filter((p) => p.path[2] 
         </option>
       </select>
     </template>
-    <template v-if="kind === 'layer' || kind === 'surface'">
+    <template v-if="kind === 'component' || kind === 'surface'">
       <input
         :value="controlsText"
         :aria-label="`${label} controls`"
@@ -355,7 +355,7 @@ const fieldProblems = (field: string) => props.problems.filter((p) => p.path[2] 
       </option>
     </datalist>
     <small
-      v-for="(p, j) in [...fieldProblems('layer'), ...fieldProblems('controls'), ...fieldProblems('path'), ...fieldProblems('target')]"
+      v-for="(p, j) in [...fieldProblems('component'), ...fieldProblems('controls'), ...fieldProblems('path'), ...fieldProblems('target')]"
       :key="j"
       :class="p.warning ? 'warn' : 'error'"
     >{{ p.message }}</small>

@@ -91,7 +91,7 @@ async fn deck(server: &Server, start: &str) -> Value {
         "/surfaces",
         "surface",
         json!({
-            "name": "FOH deck", "model": "virtual.deck15", "startLayer": start,
+            "name": "FOH deck", "model": "virtual.deck15", "startComponent": start,
             "virtual": { "encoders": 1, "faders": 1 },
         }),
     )
@@ -393,7 +393,7 @@ async fn an_encoder_and_a_motor_fader_keep_in_step_with_a_volume() {
             .then_some(())
         })
         .await;
-    let vol = "layer.mix.controls.e0.vol";
+    let vol = "component.mix.controls.e0.vol";
     assert_eq!(server.value(vol).await, Some(json!(0.5)));
 
     // Turning the encoder sends the latest value, rate-limited: five
@@ -506,7 +506,7 @@ async fn an_encoder_pages_a_deck_through_navigate() {
             json!({
                 "layer": id(layer), "control": "e0",
                 "helpers": { "page": { "use": "select", "items": pages, "scope": "surface",
-                    "to": [{ "action": { "target": "core", "action": "navigate", "param": "layer",
+                    "to": [{ "action": { "target": "core", "action": "navigate", "param": "component",
                                          "params": { "surface": id(&surface) } } }] } },
             }),
         )
@@ -575,7 +575,7 @@ async fn a_shift_layer_takes_three_keys_while_held_and_a_latching_one_on_a_toggl
             .await;
         took.push(pressed.elapsed());
         assert_eq!(
-            server.value("surface.fohDeck.controls.k3.layer").await,
+            server.value("surface.fohDeck.controls.k3.component").await,
             Some(json!("shift"))
         );
         deck.input("k14", "up", None, false).await;
@@ -594,7 +594,7 @@ async fn a_shift_layer_takes_three_keys_while_held_and_a_latching_one_on_a_toggl
         .put(
             &format!("/layers/{}", id(&shift)),
             json!({ "name": "Shift", "controls": shift["controls"], "level": "over",
-                    "when": { "while": { "ref": { "root": "layer", "path": ["cameras", "controls", "k14", "latched"] } } } }),
+                    "when": { "while": { "ref": { "root": "component", "path": ["cameras", "controls", "k14", "latched"] } } } }),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");

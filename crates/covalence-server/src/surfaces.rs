@@ -95,12 +95,12 @@ struct NavigateBody {
     /// `main` when absent.
     #[serde(default)]
     group: Option<String>,
-    layer: Option<LayerId>,
+    component: Option<LayerId>,
 }
 
 /// Navigates one of a surface's navigation groups, `main` by default, to a
-/// layer or to nothing (surfaces spec §5.3), and answers once the surface has been sent its controls'
-/// outputs: `{surface, group, layer}`.
+/// shown component or to nothing (surfaces spec §5.3), and answers once the surface has been sent
+/// its controls' outputs: `{surface, group, component}`.
 async fn navigate(
     State(app): State<Arc<App>>,
     Path(id): Path<String>,
@@ -116,11 +116,12 @@ async fn navigate(
     let group = body.group.as_deref().unwrap_or(surface::MAIN_GROUP);
     match app
         .surfaces()
-        .navigate(&id, group, body.layer.as_deref(), origin)
+        .navigate(&id, group, body.component.as_deref(), origin)
     {
         Ok(()) => {
             app.surfaces().flush().await;
-            Json(json!({ "surface": id, "group": group, "layer": body.layer })).into_response()
+            Json(json!({ "surface": id, "group": group, "component": body.component }))
+                .into_response()
         }
         Err(e @ ShowError::BadGroup(_)) => {
             problem(StatusCode::UNPROCESSABLE_ENTITY, "invalid", e.to_string())
@@ -128,9 +129,9 @@ async fn navigate(
         Err(e @ ShowError::UnknownSurface(_)) => {
             ApiError::new(StatusCode::NOT_FOUND, e.to_string()).into_response()
         }
-        Err(e @ ShowError::UnknownLayer(_)) => problem(
+        Err(e @ ShowError::UnknownComponent(_)) => problem(
             StatusCode::UNPROCESSABLE_ENTITY,
-            "unknownLayer",
+            "unknownComponent",
             e.to_string(),
         ),
         Err(ShowError::DoesNotFit { layer, missing }) => {
@@ -332,15 +333,22 @@ impl EntityKind for Surface {
     }
 
     fn refs(&self) -> Vec<Ref> {
-        self.start_layer
+        self.start_component
             .iter()
-            .map(|layer| Ref::new(surface::LAYER_ENTITY, layer, "startLayer", OnDelete::Clear))
+            .map(|layer| {
+                Ref::new(
+                    surface::LAYER_ENTITY,
+                    layer,
+                    "startComponent",
+                    OnDelete::Clear,
+                )
+            })
             .collect()
     }
 
     fn clear_ref(&mut self, field: &str) {
-        if field == "startLayer" {
-            self.start_layer = None;
+        if field == "startComponent" {
+            self.start_component = None;
         }
     }
 

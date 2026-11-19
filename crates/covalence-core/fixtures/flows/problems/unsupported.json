@@ -7,7 +7,7 @@
       { "kind": "event", "from": { "group": "faders" }, "event": "change" },
       {
         "kind": "event",
-        "from": { "layer": "01JBZ7P0D3F5G7H9J1K3L5M7PA", "controls": "k0" },
+        "from": { "component": "01JBZ7P0D3F5G7H9J1K3L5M7PA", "controls": "k0" },
         "event": "press",
         "echo": true
       },

@@ -17,7 +17,7 @@ export interface Surface {
   slug: string;
   model: string;
   serial?: string;
-  startLayer?: string;
+  startComponent?: string;
   /** The connection whose device this is, for a surface a plugin provides. */
   provider?: string;
   /** A virtual deck's encoders and faders, beside its keys (surfaces spec §11.4). */
