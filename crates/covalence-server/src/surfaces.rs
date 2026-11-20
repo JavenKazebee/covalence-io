@@ -492,6 +492,15 @@ impl EntityKind for Component {
             app.remove_binding(b);
         }
         app.forget_component(id);
+        // An instance's runs of its template's flows end with it.
+        let flows = read(&app.flows).clone();
+        let components = read(&app.components).clone();
+        let templates: BTreeSet<&str> = components
+            .values()
+            .filter(|c| c.is_template())
+            .map(|c| c.id.as_str())
+            .collect();
+        crate::flows::place_owned(&app.runtime, &templates, &flows, &components);
         Ok(())
     }
 
@@ -533,16 +542,16 @@ impl App {
             app.sync_helpers_on(&b, &this.slug);
             crate::write(&app.bindings).insert(b.id.clone(), b);
         }
-        // So do its flows' homes (composition spec §2).
+        // So do its flows' homes, and an instance runs its template's
+        // flows (composition spec §2).
         let flows = read(&app.flows).clone();
         let mut components = read(&app.components).clone();
         components.insert(this.id.clone(), this.clone());
-        for flow in flows
-            .values()
-            .filter(|f| f.owner.as_deref() == Some(this.id.as_str()))
-        {
-            crate::flows::place(&app.runtime, flow, &flows, &components);
-        }
+        let owners: BTreeSet<&str> = [Some(this.id.as_str()), this.template.as_deref()]
+            .into_iter()
+            .flatten()
+            .collect();
+        crate::flows::place_owned(&app.runtime, &owners, &flows, &components);
         Ok(())
     }
 }

@@ -387,6 +387,7 @@ fn owner(slug: &str) -> Owner {
     Owner {
         component: "L".into(),
         home: StatePath::new("component", vec![PathSegment::Key(slug.into())]),
+        instance: None,
     }
 }
 
@@ -399,7 +400,7 @@ async fn an_owned_flow_runs_on_its_layers_controls() {
     w.runtime.place(
         Placement::of(&flow, None)
             .expect("it runs")
-            .owned_by(owner("deck")),
+            .owned_by(vec![owner("deck")]),
     );
     let home = ["component", "deck", "flows", "take", "running"];
     w.eventually("its status under the component", || w.value(&home))
@@ -455,7 +456,7 @@ async fn an_owned_flow_runs_on_its_layers_controls() {
     w.runtime.place(
         Placement::of(&flow, None)
             .expect("it runs")
-            .owned_by(owner("main")),
+            .owned_by(vec![owner("main")]),
     );
     w.eventually("its new home", || {
         w.value(&["component", "main", "flows", "take", "running"])

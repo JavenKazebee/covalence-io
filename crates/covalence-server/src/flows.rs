@@ -272,7 +272,7 @@ pub(crate) fn place(
         // An owned flow whose component is gone doesn't run.
         Some(owner) => components
             .get(owner)
-            .and_then(|l| Some(Placement::of(flow, template)?.owned_by(Owner::of(l)))),
+            .and_then(|c| Some(Placement::of(flow, template)?.owned_by(owners(c, components)))),
         None => Placement::of(flow, template),
     };
     match placement {
@@ -282,6 +282,37 @@ pub(crate) fn place(
                 tracing::error!(flow = %flow.id, "cannot end a flow that no longer runs: {e}");
             }
         }
+    }
+}
+
+/// Who runs a flow `component` owns (composition spec §2): the component
+/// itself, unless it's an abstract template, and each instance of it.
+fn owners(component: &Component, components: &BTreeMap<ComponentId, Component>) -> Vec<Owner> {
+    let itself = (!component.is_abstract()).then(|| Owner::of(component));
+    itself
+        .into_iter()
+        .chain(
+            components
+                .values()
+                .filter(|c| c.template.as_deref() == Some(component.id.as_str()))
+                .map(Owner::of),
+        )
+        .collect()
+}
+
+/// Places again every flow owned by one of `owners`, whose owners or homes
+/// may have changed.
+pub(crate) fn place_owned(
+    runtime: &Runtime,
+    owners: &BTreeSet<&str>,
+    flows: &BTreeMap<String, Flow>,
+    components: &BTreeMap<ComponentId, Component>,
+) {
+    for flow in flows
+        .values()
+        .filter(|f| f.owner.as_deref().is_some_and(|o| owners.contains(o)))
+    {
+        place(runtime, flow, flows, components);
     }
 }
 
@@ -439,13 +470,13 @@ impl App {
             return json;
         };
         let flows = read(&self.flows);
+        let components = read(&self.components);
         for link in links {
             for (field, named) in [("instance", "name"), ("template", "templateName")] {
-                let name = link
-                    .get(field)
-                    .and_then(JsonValue::as_str)
-                    .and_then(|id| flows.get(id))
-                    .map(|f| f.name.clone());
+                let id = link.get(field).and_then(JsonValue::as_str);
+                let name = id
+                    .and_then(|id| flows.get(id).map(|f| f.name.clone()))
+                    .or_else(|| id.and_then(|id| components.get(id).map(|c| c.name.clone())));
                 if let (Some(name), Some(obj)) = (name, link.as_object_mut()) {
                     obj.insert(named.into(), JsonValue::String(name));
                 }

@@ -1487,3 +1487,203 @@ async fn component_instances_survive_a_restart() {
     let problems = server.get("/components/problems").await;
     assert_eq!(problems, json!([]), "its binding evaluates: {problems}");
 }
+
+/// composition spec §2, §7.2: a flow owned by a component template runs
+/// once per instance, with that instance's params, on that instance's
+/// controls. A free-standing flow on the template's key gets the instance
+/// and the component in `trigger`, and no params.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_templates_owned_flow_runs_per_instance() {
+    let server = Server::start();
+    let addr = server.listen().await;
+    let template = create(
+        &server,
+        "/components",
+        "component",
+        json!({
+            "name": "Camera control", "controls": keys(15),
+            "params": { "camera": { "type": "string", "required": true } },
+        }),
+    )
+    .await;
+    let instance = |name: &str| json!({ "name": name, "template": id(&template), "params": { "camera": name }, "show": {} });
+    let cam_a = create(&server, "/components", "component", instance("Cam A")).await;
+    let cam_b = create(&server, "/components", "component", instance("Cam B")).await;
+
+    let pick = create(
+        &server,
+        "/flows",
+        "flow",
+        json!({
+            "name": "Pick", "enabled": true, "concurrency": "parallel", "owner": id(&template),
+            "triggers": [{ "kind": "event", "from": { "controls": "k3" }, "event": "press" }],
+            "body": [{ "id": "pick", "kind": "set", "path": "vars.selected", "value": "params.camera" }],
+        }),
+    )
+    .await;
+    for slug in ["camA", "camB"] {
+        let path = format!("component.{slug}.flows.pick.running");
+        server.eventually(WAIT, &path, || server.value(&path)).await;
+    }
+    assert_eq!(
+        server
+            .value("component.cameraControl.flows.pick.running")
+            .await,
+        None,
+        "an abstract template only runs through its instances"
+    );
+    let (status, body) = server
+        .post(
+            "/flows",
+            json!({
+                "name": "Bad", "enabled": true, "concurrency": "parallel", "owner": id(&cam_a),
+                "triggers": [{ "kind": "event", "from": { "controls": "k3" }, "event": "press" }],
+                "body": [],
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(codes(&body)[0].0, json!(["owner"]));
+
+    create(
+        &server,
+        "/flows",
+        "flow",
+        json!({
+            "name": "Note", "enabled": true, "concurrency": "parallel",
+            "triggers": [{ "kind": "event", "from": { "component": id(&template), "controls": "k3" }, "event": "press" }],
+            "body": [{
+                "id": "note", "kind": "set", "path": "vars.seen",
+                "value": "[trigger.component, trigger.instance[0].instance, trigger.instance[0].template, params.camera === undefined]",
+            }],
+        }),
+    )
+    .await;
+
+    let deck = create(
+        &server,
+        "/surfaces",
+        "surface",
+        json!({ "name": "FOH deck", "model": "virtual.deck15", "startComponent": id(&cam_a) }),
+    )
+    .await;
+    let mut ws = connect(&addr, id(&deck)).await;
+    send(&mut ws, attach("fohDeck")).await;
+    server
+        .eventually(WAIT, "the deck to attach", || async {
+            (server.value("surface.fohDeck.current.main").await == Some(json!("camA")))
+                .then_some(())
+        })
+        .await;
+    let press = create(
+        &server,
+        "/flows",
+        "flow",
+        json!({
+            "name": "Press k3", "enabled": true, "concurrency": "ignore",
+            "triggers": [{ "kind": "api" }],
+            "body": [
+                {
+                    "id": "down", "kind": "action", "target": { "conn": "core" },
+                    "action": "inject", "params": { "surface": id(&deck), "control": "k3", "input": "down" },
+                },
+                {
+                    "id": "up", "kind": "action", "target": { "conn": "core" },
+                    "action": "inject", "params": { "surface": id(&deck), "control": "k3", "input": "up" },
+                },
+            ],
+        }),
+    )
+    .await;
+
+    run_flow(&server, &press).await;
+    server
+        .eventually(WAIT, "Cam A's press", || async {
+            (server.value("vars.selected").await == Some(json!("Cam A"))).then_some(())
+        })
+        .await;
+    server
+        .eventually(WAIT, "the free-standing flow", || async {
+            server.value("vars.seen").await
+        })
+        .await;
+    assert_eq!(
+        server.value("vars.seen").await,
+        Some(json!([id(&cam_a), id(&cam_a), id(&template), true]))
+    );
+    // The press and its run are journaled inside Cam A, named as they are now.
+    let inside = server
+        .get(&format!(
+            "/journal?from=1&limit=1000&instance={}",
+            id(&cam_a)
+        ))
+        .await;
+    let inside = inside.as_array().unwrap();
+    let press_event = inside
+        .iter()
+        .find(|e| {
+            e["kind"] == "event" && e["data"]["control"] == "k3" && e["data"]["event"] == "press"
+        })
+        .unwrap_or_else(|| panic!("no press inside Cam A: {inside:?}"));
+    assert_eq!(
+        press_event["instance"],
+        json!([{
+            "template": id(&template), "instance": id(&cam_a),
+            "name": "Cam A", "templateName": "Camera control",
+        }])
+    );
+    assert!(
+        inside.iter().any(|e| e["kind"] == "run.started"),
+        "{inside:?}"
+    );
+
+    let (status, body) = server
+        .post(
+            &format!("/surfaces/{}/current", id(&deck)),
+            json!({ "component": id(&cam_b) }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    run_flow(&server, &press).await;
+    server
+        .eventually(WAIT, "Cam B's press", || async {
+            (server.value("vars.selected").await == Some(json!("Cam B"))).then_some(())
+        })
+        .await;
+
+    // Each run is made inside the instance it ran for.
+    let runs = |query: String| {
+        let server = &server;
+        async move {
+            server
+                .get(&format!("/runs?{query}"))
+                .await
+                .as_array()
+                .unwrap()
+                .len()
+        }
+    };
+    server
+        .eventually(WAIT, "both runs listed", || async {
+            (runs(format!("template={}", id(&template))).await == 2).then_some(())
+        })
+        .await;
+    assert_eq!(runs(format!("instance={}", id(&cam_b))).await, 1);
+
+    // An instance that goes takes its runs of the flow with it.
+    assert_eq!(
+        server.delete(&format!("/components/{}", id(&cam_b))).await,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        server.value("component.camB.flows.pick.running").await,
+        None
+    );
+    assert!(
+        server
+            .value("component.camA.flows.pick.running")
+            .await
+            .is_some()
+    );
+    let _ = pick;
+}

@@ -1012,8 +1012,15 @@ impl Turn<'_> {
                 continue;
             }
             let mut eval = Eval::new(&scope, &self.inner.evaluator as &dyn Evaluator);
-            if crate::flow::runtime::source_matches(from, event, &aliases, &mut eval, None)
-                .is_none()
+            if crate::flow::runtime::source_matches(
+                from,
+                event,
+                &aliases,
+                &mut eval,
+                None,
+                Default::default(),
+            )
+            .is_none()
             {
                 continue;
             }

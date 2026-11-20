@@ -1949,12 +1949,25 @@ impl Task {
             };
             // Addressed at the control (dataflow §3); a surface removed
             // since keeps its ID in place of its slug.
-            let slug = self
-                .inner
-                .book()
-                .surfaces
-                .get(&self.surface)
-                .map_or_else(|| self.surface.clone(), |s| s.slug.clone());
+            let (slug, instance) = {
+                let book = self.inner.book();
+                let slug = book
+                    .surfaces
+                    .get(&self.surface)
+                    .map_or_else(|| self.surface.clone(), |s| s.slug.clone());
+                // Input on an instance's controls is made inside it
+                // (composition spec §7.2).
+                let instance = component
+                    .and_then(|c| book.components.get(c))
+                    .and_then(|c| {
+                        Some(vec![crate::compose::Link {
+                            template: c.template.clone()?,
+                            instance: c.id.clone(),
+                            key: None,
+                        }])
+                    });
+                (slug, instance)
+            };
             let payload = match (delta, value) {
                 (Some(d), _) => Some(Value::Map(vec![("delta".into(), d.into())])),
                 (None, Some(v)) => Some(Value::Map(vec![("value".into(), v)])),
@@ -1976,7 +1989,8 @@ impl Task {
                     )
                 }),
             )
-            .cause(cause);
+            .cause(cause)
+            .instance(instance);
             if let Err(e) = self.inner.shared.journal.append(entry) {
                 tracing::error!(surface = %self.surface, "cannot journal an event: {e}");
             }

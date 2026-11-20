@@ -585,6 +585,16 @@ impl<'a> Validation<'a> {
                 "a component can't own an instance of a flow template yet".into(),
             );
         }
+        if let Some(owner) = self.owner.filter(|o| o.is_instance()) {
+            self.error(
+                path![key("owner")],
+                Code::Invalid,
+                format!(
+                    "{:?} is an instance; its flows are its template's, so the template owns them",
+                    owner.name
+                ),
+            );
+        }
         if !flow.params.is_empty() {
             self.error(
                 path![key("params")],

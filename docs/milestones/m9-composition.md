@@ -1,6 +1,6 @@
 # Milestone 9: Composition
 
-- **Status:** In progress: the template primitive is built for flows, components replace layers and own flows, and components are templates shown through instances; owned flows per instance, children and composites are next
+- **Status:** In progress: the template primitive is built for flows, components replace layers and own flows, and components are templates shown through instances, which run their template's owned flows; children and composites are next
 
 Users build bigger things out of smaller ones, and reuse them by parameters, never by copying ([composition §11.4](../specs/composition.md#114-composite-connections), [composition §11.1](../specs/composition.md#111-reuse-is-by-parameters-never-by-copying-or-overriding), [composition §11.2](../specs/composition.md#112-one-template-primitive-for-three-kinds)):
 - **One template primitive.** Composite connections, components and flows declare `params`, and instances bind them. Binding, scope, identity, validation and Detach are built once, for all three.
@@ -16,7 +16,7 @@ Users build bigger things out of smaller ones, and reuse them by parameters, nev
 - [ ] Two simulated PTZ plugins with different preset actions behind one "Camera" template: its `recallPreset` is an owned flow that branches on `target(params.ptz).plugin`, and one layer recalls presets on both. A step constrained to `{plugin: …}` works on a selected camera of that plugin with no composite.
 - [ ] A composite template "Camera" with three instances, one per camera. Editing the template changes all three, and a change that breaks an instance's params is refused, naming it.
 - [ ] One "Cameras" composite instance with `forEach` over a list in `vars`. Each item is a target at `cams.items[<key>]`, accepted by `{template: <Camera>}`. Adding an item to the list adds a camera, journaled `instance.added`; removing one ends it, and its owned flow's active run is cancelled with `removed`.
-- [ ] A shown component template "Camera control" with a `camera` param, instanced per camera. One flow owned by the template handles a key on every instance with that instance's `params.camera`. A free-standing flow on the same key gets `trigger.instance` and `trigger.component` but no `params`.
+- [x] A shown component template "Camera control" with a `camera` param, instanced per camera. One flow owned by the template handles a key on every instance with that instance's `params.camera`. A free-standing flow on the same key gets `trigger.instance` and `trigger.component` but no `params`.
 - [ ] A "Camera strip" with a `recordKey` component param, a child of a page three times with one bound to a different record key: that strip's record key is the other component, a fix to the strip reaches all three, and a record key whose controls don't fit is refused with `badInstance`.
 - [ ] A "Tally key" component, a child of a page four times with a different camera each, draws each key's tally, and its owned flow selects that key's camera. One event trigger `{component: <Tally key>}` fires for all four. The key editor shows "Tally key, camera = Cam B".
 - [ ] A "Camera strip" component with a "Tally key" child, inside an instance of a shown component template. The tally follows the strip's camera, which follows the page instance's. `why` on its owned flow's action shows the chain: page instance, strip, key. A component that contains itself can't be saved (`recursiveTemplate`).
@@ -47,7 +47,7 @@ Users build bigger things out of smaller ones, and reuse them by parameters, nev
 - [x] `covalence_core::compose`: `ParamDef` (source defaults, `required`), `template` and `params` on an instance, binding in the placer's scope, homes (composition §1.1), abstract templates, `badInstance` checked across every instance at every depth. Params are cells at `<home>.params.<name>`. A template with instances can't be deleted.
 - [x] `params` in scope (dataflow §8) and `{scope}` refs (`params`, `self`, `item`), checked on save (`notInScope`, `unknownParam`).
 - [x] Owned flows on components: `owner`, status under the component's home, `from: {controls}` with the component implied, and deleted with the component.
-- [ ] Owned flows per instance: one run per owner instance with its `params`, when components and composites are templates (Phases 3 and 4).
+- [x] Owned flows per instance, for components: a template's owned flow runs once per instance (and for the template itself unless it's abstract), each with its own home, `params` and instance chain; control input on an instance's controls is journaled inside it, and `{component: <template>}` triggers match every instance. Composites' come with them (Phase 3).
 - [ ] Nesting: instances inside a template's body, `recursiveTemplate`, `tooDeep`.
 - [x] Batches: `POST /batch`, validated as a whole and saved all or nothing.
 - [ ] Batches as one `batch` op in one turn, with base revisions, one timeline entry and one undo. Needs the project op log (state spec §2.3), which isn't built.

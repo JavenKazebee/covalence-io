@@ -182,6 +182,8 @@ struct Inner {
     places: RwLock<BTreeMap<FlowId, Arc<Place>>>,
     /// `forEach` instances, by the instance's ID (composition spec §4).
     lists: Mutex<BTreeMap<FlowId, List>>,
+    /// Owned flows' slots, one per owner, by the flow's ID (composition spec §2).
+    owned: Mutex<BTreeMap<FlowId, std::collections::BTreeSet<FlowId>>>,
     /// Keeps params' cells (composition spec §1), once the owner sets it.
     cells: RwLock<Option<Arc<dyn Cells>>>,
 }
@@ -198,6 +200,9 @@ pub struct Place {
     /// owner's.
     pub params: StatePath,
     pub instance: Option<InstanceChain>,
+    /// An owned flow's owner, whose controls its `{controls}` sources name
+    /// exactly: for the component that owns it, not its instances.
+    pub owner: Option<crate::surface::ComponentId>,
 }
 
 impl Place {
@@ -215,6 +220,7 @@ impl Place {
             params: home.key("params"),
             home,
             instance: None,
+            owner: None,
         }
     }
 
@@ -231,17 +237,33 @@ pub struct Owner {
     /// Its home, `component.<slug>`: the flow's status is under
     /// `<home>.flows.<slug>`, and its `params` are `<home>.params`.
     pub home: StatePath,
+    /// For an instance of the component that owns the flow: the instance,
+    /// which its runs are made inside (composition spec §5).
+    pub instance: Option<Link>,
 }
 
 impl Owner {
+    /// A component that runs its own flows: the one that owns them, or
+    /// with `template`, an instance of it.
     pub fn of(component: &crate::component::Component) -> Owner {
         Owner {
             component: component.id.clone(),
-            home: StatePath::new(
-                crate::source::Root::Component.as_str(),
-                vec![PathSegment::Key(component.slug.clone())],
-            ),
+            home: component.home(),
+            instance: component.template.as_ref().map(|t| Link {
+                template: t.clone(),
+                instance: component.id.clone(),
+                key: None,
+            }),
         }
+    }
+}
+
+/// The slot an owned flow runs in for one owner: the flow's own ID for the
+/// component that owns it, and `<flow>@<instance>` for an instance of it.
+pub fn owned_slot(flow: &str, owner: &Owner) -> FlowId {
+    match &owner.instance {
+        None => flow.to_owned(),
+        Some(link) => format!("{flow}@{}", link.instance),
     }
 }
 
@@ -267,8 +289,10 @@ pub struct Placement {
     /// Each param's source: the instance's binding, or the default.
     pub bound: Vec<(String, Source<serde_json::Value>)>,
     pub for_each: Option<ForEach>,
-    /// The component that owns it.
-    pub owner: Option<Owner>,
+    /// An owned flow's owners: its component, when that's shown by itself,
+    /// and each instance of it (composition spec §2). It runs once per
+    /// owner, and with none, not at all.
+    pub owners: Option<Vec<Owner>>,
 }
 
 impl Placement {
@@ -280,7 +304,7 @@ impl Placement {
             (Some(_), Some(t)) => Some(Placement {
                 bound: compose::bound(&t.params, &flow.bindings),
                 for_each: flow.for_each.clone(),
-                owner: None,
+                owners: None,
                 flow: flow.instance_of(t),
             }),
             (Some(_), None) => None,
@@ -288,17 +312,26 @@ impl Placement {
             (None, _) => Some(Placement {
                 bound: compose::bound(&flow.params, &BTreeMap::new()),
                 for_each: None,
-                owner: None,
+                owners: None,
                 flow: flow.clone(),
             }),
         }
     }
 
-    /// Runs it as `owner`'s (composition spec §2): its status under the
-    /// component's home, the component's `params`, and its `{controls}` event
-    /// sources on the component's controls.
-    pub fn owned_by(mut self, owner: Owner) -> Placement {
-        for trigger in &mut self.flow.triggers {
+    /// Runs it once per owner (composition spec §2): each with its status
+    /// under the owner's home, the owner's `params`, and its `{controls}`
+    /// event sources on the owner's controls.
+    pub fn owned_by(mut self, owners: Vec<Owner>) -> Placement {
+        self.owners = Some(owners);
+        self
+    }
+
+    /// The flow as it runs for one owner: its `{controls}` sources on the
+    /// owner's controls, and its slot's ID.
+    fn for_owner(&self, owner: &Owner) -> Flow {
+        let mut flow = self.flow.clone();
+        flow.id = owned_slot(&flow.id, owner);
+        for trigger in &mut flow.triggers {
             if let Trigger::Event { from, .. } = trigger
                 && let EventSource::Owner { controls } = from
             {
@@ -308,8 +341,7 @@ impl Placement {
                 };
             }
         }
-        self.owner = Some(owner);
-        self
+        flow
     }
 }
 
@@ -411,6 +443,7 @@ impl Runtime {
             index: RwLock::new(BTreeMap::new()),
             places: RwLock::new(BTreeMap::new()),
             lists: Mutex::new(BTreeMap::new()),
+            owned: Mutex::new(BTreeMap::new()),
             cells: RwLock::new(None),
         });
         // Subscribed before anything can be journaled, so `sys:startup`
@@ -498,24 +531,22 @@ impl Runtime {
         let inner = &self.inner;
         let id = placement.flow.id.clone();
         match placement.for_each.clone() {
+            None if placement.owners.is_some() => {
+                inner.drop_list(&id);
+                inner.place_owned(&placement);
+            }
             None => {
                 inner.drop_list(&id);
-                let place = match &placement.owner {
-                    Some(owner) => Place {
-                        home: owner.home.key("flows").key(&placement.flow.slug),
-                        params: owner.home.key("params"),
-                        instance: None,
-                    },
-                    None => Place {
-                        instance: placement.flow.template.as_ref().map(|t| {
-                            vec![Link {
-                                template: t.clone(),
-                                instance: id.clone(),
-                                key: None,
-                            }]
-                        }),
-                        ..Place::of(&placement.flow)
-                    },
+                inner.drop_owned(&id, None);
+                let place = Place {
+                    instance: placement.flow.template.as_ref().map(|t| {
+                        vec![Link {
+                            template: t.clone(),
+                            instance: id.clone(),
+                            key: None,
+                        }]
+                    }),
+                    ..Place::of(&placement.flow)
                 };
                 inner.put_cells(
                     &compose::param_prefix(&id, None),
@@ -564,6 +595,7 @@ impl Runtime {
     pub fn remove_flow(&self, id: &str) -> Result<(), JournalError> {
         let inner = &self.inner;
         inner.drop_list(id);
+        inner.drop_owned(id, None);
         inner.put_cells(
             &compose::param_prefix(id, None),
             &StatePath::root(STATE_ROOT),
@@ -934,14 +966,18 @@ impl Inner {
         let by_id: BTreeMap<&ConnId, &String> = aliases.iter().map(|(a, id)| (id, a)).collect();
         let mut out = Vec::new();
         for (flow_id, mut triggers) in by_flow {
-            let Some(flow) = self
+            let Some((flow, owner)) = self
                 .book()
                 .flows
                 .get(&flow_id)
                 .filter(|s| s.flow.enabled)
-                .map(|s| s.flow.clone())
+                .map(|s| (s.flow.clone(), s.place.owner.clone()))
             else {
                 continue;
+            };
+            let seen = Seen {
+                instance,
+                owner: owner.as_deref(),
             };
             triggers.sort_unstable();
             for i in triggers {
@@ -954,7 +990,8 @@ impl Inner {
                 if !names.contains(&event.event) {
                     continue;
                 }
-                let Some((captures, source)) = self.source_matches(from, event, &aliases) else {
+                let Some((captures, source)) = self.source_matches(from, event, &aliases, seen)
+                else {
                     continue;
                 };
                 let mut payload: Vec<(Value, Value)> = vec![
@@ -1002,6 +1039,7 @@ impl Inner {
         from: &EventSource,
         event: &EventRecord,
         aliases: &Arc<BTreeMap<String, ConnId>>,
+        seen: Seen<'_>,
     ) -> Option<(Option<Vec<String>>, Option<Target>)> {
         let scope = Scope::new(&self.shared.state, aliases);
         let mut eval = Eval::new(&scope, self.evaluator.as_ref());
@@ -1012,7 +1050,7 @@ impl Inner {
                 .get(conn)
                 .cloned()
         });
-        source_matches(from, event, aliases, &mut eval, view)
+        source_matches(from, event, aliases, &mut eval, view, seen)
     }
 
     /// Journals a flow's own event at its home: `flow.<slug>` (flows spec
@@ -1955,6 +1993,56 @@ impl Inner {
 
     /// Ends a `forEach` instance's items, without journaling them as
     /// removed from the list: the instance itself went.
+    /// Places an owned flow once per owner (composition spec §2): each in
+    /// its own slot, with its status under the owner's home, the owner's
+    /// `params`, and the owner's instance on its runs. Owners that are gone
+    /// end, their runs cancelled with `removed`.
+    fn place_owned(&self, placement: &Placement) {
+        let id = &placement.flow.id;
+        let owners = placement.owners.as_deref().unwrap_or_default();
+        let now: std::collections::BTreeSet<FlowId> =
+            owners.iter().map(|o| owned_slot(id, o)).collect();
+        self.drop_owned(id, Some(&now));
+        // An owned flow has no params of its own: they're its owner's.
+        self.put_cells(
+            &compose::param_prefix(id, None),
+            &StatePath::root(STATE_ROOT),
+            &[],
+            &[],
+        );
+        if !now.contains(id) {
+            let _ = self.remove_slot(id, None);
+        }
+        for owner in owners {
+            let place = Place {
+                home: owner.home.key("flows").key(&placement.flow.slug),
+                params: owner.home.key("params"),
+                instance: owner.instance.clone().map(|link| vec![link]),
+                owner: Some(owner.component.clone()),
+            };
+            self.put_slot(placement.for_owner(owner), place);
+        }
+        self.owned_slots().insert(id.clone(), now);
+    }
+
+    /// Ends an owned flow's slots, but for those in `keep`.
+    fn drop_owned(&self, id: &str, keep: Option<&std::collections::BTreeSet<FlowId>>) {
+        let old = self.owned_slots().remove(id).unwrap_or_default();
+        for slot in old {
+            if keep.is_some_and(|k| k.contains(&slot)) || slot == id {
+                continue;
+            }
+            let removed = RunError::new("removed", "its owner is gone");
+            if let Err(e) = self.remove_slot(&slot, Some(removed)) {
+                tracing::error!(flow = %id, "cannot end an owned flow's slot: {e}");
+            }
+        }
+    }
+
+    fn owned_slots(&self) -> MutexGuard<'_, BTreeMap<FlowId, std::collections::BTreeSet<FlowId>>> {
+        self.owned.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     fn drop_list(&self, id: &str) {
         let Some(list) = self.lists().remove(id) else {
             return;
@@ -3254,12 +3342,23 @@ impl RunTask {
 
 /// Whether `from` (dataflow §3.1) picks the event: `Some((captures,
 /// source))`. `view` is the event's connection, when known.
+/// What a control event is matched with besides itself.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Seen<'a> {
+    /// The instances the event was made inside (composition spec §5).
+    pub instance: Option<&'a InstanceChain>,
+    /// The owner of the flow being matched, whose `{component}` source
+    /// names only its own controls, not its instances'.
+    pub owner: Option<&'a str>,
+}
+
 pub(crate) fn source_matches(
     from: &EventSource,
     event: &EventRecord,
     aliases: &BTreeMap<String, ConnId>,
     eval: &mut Eval<'_>,
     view: Option<TargetView>,
+    seen: Seen<'_>,
 ) -> Option<(Option<Vec<String>>, Option<Target>)> {
     let failed = |e: ExprError| {
         tracing::warn!("an event source's expression failed, matching nothing: {e}");
@@ -3315,11 +3414,20 @@ pub(crate) fn source_matches(
                 }
             }
         }
+        // A component's controls wherever it's shown, its instances'
+        // included (composition spec §7.2), but for an owned flow's own
+        // component, whose instances run the flow themselves.
         EventSource::Component {
             component,
             controls,
-        } => (event.component.as_ref() == Some(component) && control_in(controls, eval))
-            .then_some((None, None)),
+        } => {
+            let used = event.component.as_ref() == Some(component)
+                || (seen.owner != Some(component.as_str())
+                    && seen
+                        .instance
+                        .is_some_and(|chain| compose::chain_uses(chain, component)));
+            (used && control_in(controls, eval)).then_some((None, None))
+        }
         EventSource::Surface { surface, controls } => (event.surface.as_ref() == Some(surface)
             && control_in(controls, eval))
         .then_some((None, None)),
