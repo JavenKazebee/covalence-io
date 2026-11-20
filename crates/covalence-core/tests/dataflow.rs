@@ -107,6 +107,7 @@ fn cell(id: &str, home: StatePath, source: Json) -> CellDef {
         to: Vec::new(),
         control: None,
         values: Vec::new(),
+        named: Vec::new(),
     }
 }
 

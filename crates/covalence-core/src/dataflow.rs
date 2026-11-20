@@ -89,6 +89,9 @@ pub struct CellDef {
     /// Names in scope that aren't state: a `forEach` item's `item`,
     /// `index` and `key`, for its params (composition §4).
     pub values: Vec<(String, Value)>,
+    /// Names in scope that are state: `params` in a component's helpers,
+    /// its instance's `<home>.params` (composition §2).
+    pub named: Vec<(String, StatePath)>,
 }
 
 /// The control a helper belongs to.
@@ -117,6 +120,7 @@ impl CellDef {
             to: Vec::new(),
             control: None,
             values: Vec::new(),
+            named: Vec::new(),
         }
     }
 }
@@ -1080,6 +1084,7 @@ impl Turn<'_> {
         let aliases = self.inner.aliases.clone();
         let scope = Scope {
             values: &def.values,
+            named: &def.named,
             ..Scope::new(&self.state, &aliases)
         };
         let outcome = def.source.evaluate(&scope, &self.inner.evaluator);
@@ -1116,6 +1121,7 @@ impl Turn<'_> {
         let aliases = self.inner.aliases.clone();
         let scope = Scope {
             values: &def.values,
+            named: &def.named,
             ..Scope::new(&self.state, &aliases)
         };
         let evaluator = &self.inner.evaluator;

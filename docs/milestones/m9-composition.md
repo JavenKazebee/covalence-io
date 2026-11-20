@@ -1,6 +1,6 @@
 # Milestone 9: Composition
 
-- **Status:** In progress: the template primitive is built for flows, components replace layers, and components own flows; children, composites and component templates are next
+- **Status:** In progress: the template primitive is built for flows, components replace layers and own flows, and components are templates shown through instances; owned flows per instance, children and composites are next
 
 Users build bigger things out of smaller ones, and reuse them by parameters, never by copying ([composition §11.4](../specs/composition.md#114-composite-connections), [composition §11.1](../specs/composition.md#111-reuse-is-by-parameters-never-by-copying-or-overriding), [composition §11.2](../specs/composition.md#112-one-template-primitive-for-three-kinds)):
 - **One template primitive.** Composite connections, components and flows declare `params`, and instances bind them. Binding, scope, identity, validation and Detach are built once, for all three.
@@ -64,7 +64,8 @@ Users build bigger things out of smaller ones, and reuse them by parameters, nev
 ### Phase 4: Components (Rust)
 - [x] **Components' names** ([composition §7.4](../specs/composition.md#74-what-components-replace)): the `component` root, `surface.<slug>.shown`, `.controls.<id>.component`, `startComponent`, `{component}` event sources, `trigger.component` and the event's `component`, helpers' `scope: "component"`, `navigate {component}` and `POST /surfaces/{id}/current {component}`, `unknownComponent`. The M5 and M8 tests pass on the new names. Projects saved before aren't migrated (composition §11.8).
 - [x] **Layers become components:** the `component` entity with embedded bindings and `show`, and `/components`, `/components/problems` and `/components/preview`. A shown component is resolved, cascaded, armed and navigated as M8's layers were; one without `show` isn't a candidate. Bindings are keyed `<component>/<binding>` in the running core, so their helpers' cells never meet. The UI's layer editor is a component editor: it edits `show`, and saves a binding by putting its component back.
-- [ ] Per-instance evaluation of a component template's bindings, helpers and children; shown `forEach` instances and `navigate` with `item`.
+- [x] Component templates and shown instances: a component with `params` is shown by itself with their defaults, or through instances, which are stored as their identity, `template`, `params` and `show`. Each one's params are cells at `component.<slug>.params`, read as `params` by its bindings, helpers, gestures and `show`; `badInstance`, `unboundParam` for a shown abstract template, and `409` on deleting a template with instances.
+- [ ] Shown `forEach` instances and `navigate` with `item`.
 - [ ] Children: control mapping and fit (`doesNotFit`, `unmappedControl`), owned controls (`duplicateControl`), homes under `parts`, helpers' cells under each instance, owned flows with `{controls}` triggers, `{component}` triggers matching every use, the instance chain on control events, nesting, `recursiveTemplate` and `tooDeep`.
 - [ ] Params that hold a component: `{param}` as a child's `template`, and the fit check.
 - [ ] Children with `forEach`: one item per control of `over`, `item` bound into params, `overflow: "scroll"` with its offset, and `item`, `index` and `key` in `trigger`.

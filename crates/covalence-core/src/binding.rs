@@ -38,6 +38,11 @@ pub struct ControlBinding {
     /// embedded in it, and the component fills this in.
     #[serde(skip)]
     pub component: ComponentId,
+    /// Where `params` is in its properties and helpers: its component's
+    /// `<home>.params` (composition spec §2). Not stored: the component
+    /// fills this in when it has params.
+    #[serde(skip)]
+    pub params: Option<StatePath>,
     pub control: String,
     #[serde(default)]
     pub props: BTreeMap<Prop, Binding>,
@@ -435,6 +440,7 @@ impl ControlBinding {
         }
         let input = reducer.input.is_none() && reducer.definition().steps.input.is_some();
         CellDef {
+            named: self.named(),
             journal: match &h.journal {
                 Some(crate::variable::Journaling::Sampled { sampled }) => {
                     JournalMode::Sampled(sampled.get())
@@ -457,6 +463,15 @@ impl ControlBinding {
                 },
             )
         }
+    }
+
+    /// The names its properties and helpers have in scope that are state:
+    /// `params`, when its component has them.
+    pub fn named(&self) -> Vec<(String, StatePath)> {
+        self.params
+            .iter()
+            .map(|p| ("params".to_owned(), p.clone()))
+            .collect()
     }
 
     /// The outputs its properties drive, which its component must give the
@@ -495,6 +510,35 @@ impl ControlBinding {
             }
         }
         deserialize(json, &[]).map_err(|p| vec![p])
+    }
+}
+
+/// What's wrong with a `{scope}` ref in a component's bindings, helpers or
+/// `show` (composition spec §2): `params.<name>` must be one of its params.
+pub(crate) fn scope_problem(
+    scope: crate::source::ScopeName,
+    path: &[PathSegment],
+    params: &BTreeMap<String, crate::param::ParamDef>,
+) -> Option<(Code, String)> {
+    use crate::source::ScopeName;
+    match scope {
+        ScopeName::Params if params.is_empty() => Some((
+            Code::NotInScope,
+            "this component has no params; a component that's reused with params declares them"
+                .into(),
+        )),
+        ScopeName::Params => match path.first() {
+            Some(PathSegment::Key(name)) if !params.contains_key(name) => Some((
+                Code::UnknownParam,
+                format!("the component has no param {name:?}"),
+            )),
+            _ => None,
+        },
+        ScopeName::Item => Some((
+            Code::NotInScope,
+            "\"item\" is only in scope while a forEach instance's params are bound".into(),
+        )),
+        ScopeName::This => None,
     }
 }
 
@@ -549,9 +593,14 @@ fn find_targets(json: &Json, here: &mut Path, out: &mut Vec<Problem>) {
 /// Checks a parsed binding against components, connections and the property
 /// types.
 pub fn validate(binding: &ControlBinding, ctx: &Context) -> Report {
+    let none = BTreeMap::new();
     let mut v = Validation {
         ctx,
         errors: Vec::new(),
+        params: ctx
+            .components
+            .get(&binding.component)
+            .map_or(&none, |c| &c.params),
     };
     let control = match ctx.components.get(&binding.component) {
         None => {
@@ -645,6 +694,8 @@ pub fn validate(binding: &ControlBinding, ctx: &Context) -> Report {
 struct Validation<'a> {
     ctx: &'a Context<'a>,
     errors: Vec<Problem>,
+    /// Its component's params, which `{scope: "params"}` refs name.
+    params: &'a BTreeMap<String, crate::param::ParamDef>,
 }
 
 impl Validation<'_> {
@@ -706,8 +757,12 @@ impl Validation<'_> {
     /// may only be the whole source, and only where `home` says it has one.
     fn sources(&mut self, b: &Binding, base: &[PathSegment], home: bool) {
         let mut found = Vec::new();
-        let (conns, evaluator) = (self.ctx.conns, self.ctx.evaluator);
+        let (conns, evaluator, params) = (self.ctx.conns, self.ctx.evaluator, self.params);
         b.walk(&mut base.to_vec(), &mut |path, part| match part {
+            Part::Ref(Ref::Scope { scope, path: at }) => found.extend(
+                scope_problem(*scope, at, params)
+                    .map(|(code, message)| Problem::new(path.clone(), code, message)),
+            ),
             Part::Ref(Ref::Conn { conn, .. }) if !conns.contains(conn) => found.push(Problem::new(
                 at(path, &[key("conn")]),
                 Code::UnknownConnection,

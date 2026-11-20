@@ -3,8 +3,10 @@ import { computed, ref, shallowRef } from "vue";
 import { api, relative } from "../api";
 import type { ControlBinding, SavedBinding } from "../bindings/model";
 import {
+  asStored,
   bindingProblems,
   newBindingId,
+  withTemplateBodies,
   type Component,
   type SavedComponent,
   type SavedSurface,
@@ -27,7 +29,7 @@ export const useSurfacesStore = defineStore("surfaces", () => {
     try {
       const [s, c] = await Promise.all([api.surfaces(), api.components()]);
       surfaces.value = s.sort((a, b) => a.name.localeCompare(b.name));
-      components.value = c.sort((a, b) => a.name.localeCompare(b.name));
+      components.value = withTemplateBodies(c).sort((a, b) => a.name.localeCompare(b.name));
       error.value = null;
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e);
@@ -53,7 +55,7 @@ export const useSurfacesStore = defineStore("surfaces", () => {
 
   /** Creates the component when it has no ID, else replaces it, bindings and all. */
   async function saveComponent(component: Component): Promise<SavedComponent> {
-    const saved = await api.saveComponent(component);
+    const saved = await api.saveComponent(asStored(component));
     await refresh();
     return saved;
   }

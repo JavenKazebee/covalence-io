@@ -316,11 +316,6 @@ impl Resolver {
         let controls = target.controls.clone();
         let self_path = StatePath::new(STATE_ROOT, vec![key(&slug)]);
         let input_path = StatePath::new(STATE_ROOT, vec![key(&slug), key("controls")]);
-        let named = [("self".to_owned(), self_path)];
-        let scope = Scope {
-            named: &named,
-            ..Scope::new(state, &aliases)
-        };
         let mut reads = BTreeSet::new();
         let mut candidates = Vec::new();
         let mut problems: Vec<(String, &'static str, Option<String>)> = Vec::new();
@@ -328,6 +323,14 @@ impl Resolver {
             if !missing(component, &controls).is_empty() {
                 continue;
             }
+            // `self` is the surface, and `params` the component's own
+            // (composition spec §7.3).
+            let mut named = vec![("self".to_owned(), self_path.clone())];
+            named.extend(component.params_at().map(|p| ("params".to_owned(), p)));
+            let scope = Scope {
+                named: &named,
+                ..Scope::new(state, &aliases)
+            };
             if let Some(on) = &component.shows().on {
                 let mut eval = Eval::new(&scope, &inner.evaluator);
                 let picked = on.picks(surface, &inner.universe, Some(&mut eval));

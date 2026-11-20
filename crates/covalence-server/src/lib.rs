@@ -344,7 +344,14 @@ impl App {
         // here (flow spec §8.4).
         let flows = load_kind::<Flow>(&store)?;
         let surface_entities = load_kind::<Surface>(&store)?;
-        let components = load_kind::<Component>(&store)?;
+        let mut components = load_kind::<Component>(&store)?;
+        // Instances are kept with their templates' bodies (composition spec §2).
+        let templates = components.clone();
+        for c in components.values_mut() {
+            if let Some(template) = c.template.as_ref().and_then(|t| templates.get(t)) {
+                *c = c.instance_of(template);
+            }
+        }
         let bindings: BTreeMap<String, ControlBinding> = components
             .values()
             .flat_map(Component::runtime_bindings)
@@ -360,6 +367,13 @@ impl App {
             if let Some(cell) = var.cell() {
                 dataflow.put(cell, None);
             }
+        }
+        for component in components.values() {
+            dataflow.replace(
+                &covalence_core::compose::param_prefix(&component.id, None),
+                component.param_cells(),
+                None,
+            );
         }
         // What each surface showed last: it shows it again when it attaches,
         // and its surface-scoped helpers on that component are there from the start.

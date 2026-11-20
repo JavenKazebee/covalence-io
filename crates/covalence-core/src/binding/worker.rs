@@ -240,14 +240,20 @@ pub struct Evaluated {
 
 /// Evaluates one property as the worker does: the binding's result if it
 /// fits the property, else its fallback, else nothing.
+/// `named` is what's in scope that's state: its component's `params`.
 pub fn evaluate(
     prop: Prop,
     b: &Binding,
+    named: &[(String, StatePath)],
     state: &Arc<LiveState>,
     aliases: &BTreeMap<String, ConnId>,
     evaluator: &dyn Evaluator,
 ) -> Evaluated {
-    let outcome = b.evaluate(&Scope::new(state, aliases), evaluator);
+    let scope = Scope {
+        named,
+        ..Scope::new(state, aliases)
+    };
+    let outcome = b.evaluate(&scope, evaluator);
     let (value, reads) = (outcome.value.map_err(|e| e.to_string()), outcome.reads);
     let (value, error) = match value {
         Ok(Some(v)) => match prop_value(prop, &v) {
@@ -343,7 +349,10 @@ pub fn preview(
     let props: BTreeMap<Prop, Evaluated> = binding
         .props
         .iter()
-        .map(|(prop, b)| (*prop, evaluate(*prop, b, state, aliases, evaluator)))
+        .map(|(prop, b)| {
+            let named = binding.named();
+            (*prop, evaluate(*prop, b, &named, state, aliases, evaluator))
+        })
         .collect();
     let look = look(&props, state);
     Preview { props, look }
@@ -572,7 +581,7 @@ impl Worker {
                 (Some(d), Some(e)) => touched(&e.reads, d),
             };
             if due {
-                let evaluated = self.evaluate(&binding.id, *prop, b);
+                let evaluated = self.evaluate(&binding, *prop, b);
                 resolved.props.insert(*prop, evaluated);
                 any = true;
             }
@@ -592,9 +601,10 @@ impl Worker {
     }
 
     /// One property. Errors are kept for the editor and logged when they change.
-    fn evaluate(&mut self, id: &str, prop: Prop, b: &Binding) -> Evaluated {
-        let evaluated = evaluate(prop, b, &self.state, &self.aliases, &self.evaluator);
-        self.note(id, prop, evaluated.error.clone());
+    fn evaluate(&mut self, binding: &ControlBinding, prop: Prop, b: &Binding) -> Evaluated {
+        let named = binding.named();
+        let evaluated = evaluate(prop, b, &named, &self.state, &self.aliases, &self.evaluator);
+        self.note(&binding.id, prop, evaluated.error.clone());
         evaluated
     }
 

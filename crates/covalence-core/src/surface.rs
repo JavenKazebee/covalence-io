@@ -608,6 +608,9 @@ struct Inner {
     bound: Mutex<BTreeMap<String, BoundAt>>,
     /// Each control's `gestures`, by `(component, control)`, with its binding.
     gestures: Mutex<BTreeMap<(ComponentId, String), (String, crate::binding::Gestures)>>,
+    /// What each binding with `gestures` has in scope that's state: its
+    /// component's `params`, by binding ID.
+    gesture_scopes: Mutex<BTreeMap<String, Vec<(String, StatePath)>>>,
     /// The connection aliases gesture settings' expressions read.
     aliases: Mutex<Arc<BTreeMap<String, crate::state::ConnId>>>,
     /// Evaluates gesture settings' expressions, with a binding's limit.
@@ -682,6 +685,7 @@ impl Surfaces {
                 on_shown: Mutex::new(None),
                 on_active: Mutex::new(None),
                 gestures: Mutex::new(BTreeMap::new()),
+                gesture_scopes: Mutex::new(BTreeMap::new()),
                 bound: Mutex::new(BTreeMap::new()),
                 aliases: Mutex::new(Arc::new(BTreeMap::new())),
                 evaluator: crate::expr::QuickJs::new(crate::expr::Limits {
@@ -874,6 +878,7 @@ impl Surfaces {
         {
             let mut gestures = lock(&self.inner.gestures);
             gestures.retain(|_, (id, _)| *id != binding.id);
+            lock(&self.inner.gesture_scopes).insert(binding.id.clone(), binding.named());
             if let Some(g) = &binding.gestures {
                 gestures.insert(
                     (binding.component.clone(), binding.control.clone()),
@@ -887,6 +892,7 @@ impl Surfaces {
     pub fn remove_binding(&self, id: &str) {
         self.inner.set_bound(id, None);
         lock(&self.inner.gestures).retain(|_, (b, _)| b != id);
+        lock(&self.inner.gesture_scopes).remove(id);
         self.inner.bindings.remove(id);
     }
 
@@ -1286,13 +1292,20 @@ pub fn validate_fields(component: &Component, ctx: &FieldContext<'_>) -> Report 
         Some(When::While(source)) => field_source(
             source,
             vec![key("show"), key("when"), key("while")],
+            &component.params,
             ctx,
             &mut errors,
         ),
         _ => {}
     }
     if let Some(rank) = &component.shows().rank {
-        field_source(rank, vec![key("show"), key("rank")], ctx, &mut errors);
+        field_source(
+            rank,
+            vec![key("show"), key("rank")],
+            &component.params,
+            ctx,
+            &mut errors,
+        );
     }
     if component.controls.len() > MAX_COMPONENT_CONTROLS {
         errors.push(Problem::new(
@@ -1369,11 +1382,12 @@ fn ambiguous(component: &Component, others: &BTreeMap<ComponentId, Component>) -
         .collect()
 }
 
-/// A component field's source: its expressions compile, and nothing in it
-/// reads resolution's results.
+/// A component field's source: its expressions compile, nothing in it
+/// reads resolution's results, and its `{scope}` refs name what's there.
 fn field_source<T>(
     source: &crate::source::Source<T>,
     base: Vec<PathSegment>,
+    params: &BTreeMap<String, crate::param::ParamDef>,
     ctx: &FieldContext<'_>,
     errors: &mut Vec<Problem>,
 ) {
@@ -1390,6 +1404,11 @@ fn field_source<T>(
         })) =>
         {
             errors.push(resolution_cycle(at.clone()))
+        }
+        Part::Ref(Ref::Scope { scope, path }) => {
+            if let Some((code, message)) = crate::binding::scope_problem(*scope, path, params) {
+                errors.push(Problem::new(at.clone(), code, message));
+            }
         }
         Part::Ref(_) => {}
         Part::Transform(t) => {
@@ -2067,7 +2086,14 @@ impl Inner {
             return timing;
         };
         let aliases = lock(&self.aliases).clone();
-        let scope = crate::expr::Scope::new(&self.shared.state, &aliases);
+        let named = lock(&self.gesture_scopes)
+            .get(&binding)
+            .cloned()
+            .unwrap_or_default();
+        let scope = crate::expr::Scope {
+            named: &named,
+            ..crate::expr::Scope::new(&self.shared.state, &aliases)
+        };
         for (name, setting) in gestures.settings() {
             let Some(source) = setting else { continue };
             let value = match source.evaluate(&scope, &self.evaluator).value {

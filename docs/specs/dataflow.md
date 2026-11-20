@@ -350,7 +350,7 @@ What an expression or `{scope}` ref can name depends on where it's evaluated. **
 |---|---|---|
 | state roots | everywhere | `<alias>`, `vars`, `sys`, `surface`, `component`, `flow` |
 | `trigger`, `input`, `local`, `steps`, `error`, loop `<as>` and `index` | flows | flows §3 |
-| `params` | the body of a template: a composite, a component, a flow, and the flows they own | the **own** instance's parameters ([composition §1](composition.md)). In a nested instance, the innermost one's. A free-standing flow sees only its own |
+| `params` | the body of a template: a composite, a component, a flow, and the flows they own; a shown component's `show` fields | the **own** instance's parameters ([composition §1](composition.md)). In a nested instance, the innermost one's. A free-standing flow sees only its own |
 | `self` | a shown component's `controls` and `show` fields | the surface being resolved (surfaces §5.2) |
 | `self` | a control binding, a helper, a child's params | `{surface, component, control}`: where it's being evaluated |
 | `item`, `index`, `key` | an instance's `params` and `show`, when it has `forEach` | the item this instance is for ([composition §4](composition.md)). Not inside the body |

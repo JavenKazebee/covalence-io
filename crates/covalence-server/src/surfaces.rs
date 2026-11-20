@@ -15,6 +15,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use covalence_core::binding::worker::{self, Evaluated};
 use covalence_core::binding::{self, ControlBinding, PropValue};
 use covalence_core::component::{self, Component};
+use covalence_core::compose;
 use covalence_core::flow;
 use covalence_core::journal::Origin;
 use covalence_core::state::ConnId;
@@ -411,7 +412,15 @@ impl EntityKind for Component {
         if self.slug.is_empty() {
             self.slug = flow::derive_slug_for("component", &self.name, &taken);
         }
-        let others: BTreeMap<ComponentId, Component> = read(&app.components)
+        let components = read(&app.components).clone();
+        // An instance is kept, and checked, with its template's body
+        // (composition spec §2).
+        if let Some(template) = self.template.as_ref().and_then(|t| components.get(t))
+            && !template.is_instance()
+        {
+            *self = self.instance_of(template);
+        }
+        let others: BTreeMap<ComponentId, Component> = components
             .values()
             .filter(|c| c.id != self.id && c.show.is_some())
             .map(|c| (c.id.clone(), c.clone()))
@@ -426,43 +435,54 @@ impl EntityKind for Component {
                 conns: &conns,
                 evaluator: &*app.evaluator,
                 others: &others,
+                components: &components,
             },
         )
     }
 
-    /// Shows it, or stops showing it, and replaces its bindings and their
-    /// helpers' cells, which live under its slug.
+    /// Shows it, or stops showing it, and replaces its params' cells, its
+    /// bindings and their helpers' cells, which live under its slug. A
+    /// template's instances take its new body (composition spec §1).
     fn apply(&self, app: &App) -> Result<(), SaveError> {
-        app.surfaces.set_component(self.clone())?;
-        let new = self.runtime_bindings();
-        let gone: Vec<String> = read(&app.bindings)
+        app.apply_component(self)?;
+        if self.is_instance() {
+            return Ok(());
+        }
+        let instances: Vec<Component> = read(&app.components)
             .values()
-            .filter(|b| b.component == self.id && !new.iter().any(|n| n.id == b.id))
-            .map(|b| b.id.clone())
+            .filter(|c| c.template.as_deref() == Some(self.id.as_str()))
+            .map(|c| c.instance_of(self))
             .collect();
-        for id in &gone {
-            app.remove_binding(id);
-        }
-        for b in new {
-            app.surfaces.set_binding(b.clone());
-            app.sync_helpers_on(&b, &self.slug);
-            crate::write(&app.bindings).insert(b.id.clone(), b);
-        }
-        // So do its flows' homes (composition spec §2).
-        let flows = read(&app.flows).clone();
-        let mut components = read(&app.components).clone();
-        components.insert(self.id.clone(), self.clone());
-        for flow in flows
-            .values()
-            .filter(|f| f.owner.as_deref() == Some(self.id.as_str()))
-        {
-            crate::flows::place(&app.runtime, flow, &flows, &components);
+        for instance in instances {
+            app.apply_component(&instance)?;
+            crate::write(&app.components).insert(instance.id.clone(), instance);
         }
         Ok(())
     }
 
+    /// A template with instances stays until they're deleted (composition
+    /// spec §5).
+    fn deletable(app: &App, id: &str) -> Result<(), String> {
+        let instances: Vec<String> = read(&app.components)
+            .values()
+            .filter(|c| c.template.as_deref() == Some(id))
+            .map(|c| format!("{:?}", c.name))
+            .collect();
+        if instances.is_empty() {
+            Ok(())
+        } else {
+            Err(format!(
+                "it's the template of {}; delete {} first",
+                instances.join(", "),
+                if instances.len() == 1 { "it" } else { "them" }
+            ))
+        }
+    }
+
     fn unapply(id: &str, app: &App) -> Result<(), SaveError> {
         app.surfaces.remove_component(id)?;
+        app.dataflow
+            .replace(&compose::param_prefix(id, None), Vec::new(), None);
         let gone: Vec<String> = read(&app.bindings)
             .values()
             .filter(|b| b.component == id)
@@ -484,6 +504,46 @@ impl EntityKind for Component {
         query
             .get("shown")
             .is_none_or(|v| (v == "true") == self.show.is_some())
+    }
+}
+
+impl App {
+    /// Makes the running core match one component, an instance with its
+    /// template's body: shown or not, its params' cells, its bindings and
+    /// their helpers, and its owned flows' homes.
+    fn apply_component(&self, component: &Component) -> Result<(), SaveError> {
+        let (app, this) = (self, component);
+        app.surfaces.set_component(this.clone())?;
+        app.dataflow.replace(
+            &compose::param_prefix(&this.id, None),
+            this.param_cells(),
+            None,
+        );
+        let new = this.runtime_bindings();
+        let gone: Vec<String> = read(&app.bindings)
+            .values()
+            .filter(|b| b.component == this.id && !new.iter().any(|n| n.id == b.id))
+            .map(|b| b.id.clone())
+            .collect();
+        for id in &gone {
+            app.remove_binding(id);
+        }
+        for b in new {
+            app.surfaces.set_binding(b.clone());
+            app.sync_helpers_on(&b, &this.slug);
+            crate::write(&app.bindings).insert(b.id.clone(), b);
+        }
+        // So do its flows' homes (composition spec §2).
+        let flows = read(&app.flows).clone();
+        let mut components = read(&app.components).clone();
+        components.insert(this.id.clone(), this.clone());
+        for flow in flows
+            .values()
+            .filter(|f| f.owner.as_deref() == Some(this.id.as_str()))
+        {
+            crate::flows::place(&app.runtime, flow, &flows, &components);
+        }
+        Ok(())
     }
 }
 

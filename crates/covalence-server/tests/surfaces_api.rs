@@ -1286,3 +1286,204 @@ async fn a_component_owns_its_flows() {
         })
         .await;
 }
+
+/// composition spec §1, §7.3: a component template with a `camera` param,
+/// shown through an instance that binds it. The instance is stored as its
+/// identity, params and `show`; its keys draw the template's bindings with
+/// its params, a fix to the template reaches it, and a change it can't
+/// satisfy is refused, naming it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_component_template_is_shown_through_its_instances() {
+    let server = Server::start();
+    let addr = server.listen().await;
+    let page = |label: Value| {
+        json!({
+            "name": "Camera page", "controls": keys(15),
+            "params": { "camera": { "type": "string", "required": true } },
+            "bindings": [{ "id": "name", "control": "k0", "props": { "label": label } }],
+        })
+    };
+    let camera = json!({ "ref": { "scope": "params", "path": ["camera"] } });
+
+    // A template's refs name its own params, and one that's only shown
+    // through instances isn't shown itself.
+    let mut wrong = page(json!({ "ref": { "scope": "params", "path": ["cam"] } }));
+    wrong["show"] = json!({});
+    let (status, body) = server.post("/components", wrong).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(
+        codes(&body),
+        [
+            (json!(["show"]), "unboundParam".into()),
+            (
+                json!(["bindings", 0, "props", "label", "ref"]),
+                "unknownParam".into()
+            ),
+        ]
+    );
+    let template = create(&server, "/components", "component", page(camera.clone())).await;
+
+    // An instance has its identity, its template, its params and `show`.
+    let instance = |name: &str, params: Value| json!({ "name": name, "template": id(&template), "params": params, "show": {} });
+    for (body, code) in [
+        (instance("Cam B", json!({ "cam": "Cam B" })), "unknownParam"),
+        (instance("Cam B", json!({})), "badInstance"),
+        (
+            json!({ "name": "Cam B", "template": id(&template), "params": { "camera": "Cam B" } }),
+            "invalid",
+        ),
+        (
+            json!({ "name": "Cam B", "template": "nope", "show": {} }),
+            "unknownTemplate",
+        ),
+    ] {
+        let (status, saved) = server.post("/components", body.clone()).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}: {saved}");
+        assert_eq!(codes(&saved)[0].1, code, "{body}: {saved}");
+    }
+    let mut with_controls = instance("Cam B", json!({ "camera": "Cam B" }));
+    with_controls["controls"] = json!(keys(1));
+    let (status, _) = server.post("/components", with_controls).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+
+    let cam_b = create(
+        &server,
+        "/components",
+        "component",
+        instance("Cam B", json!({ "camera": "Cam B" })),
+    )
+    .await;
+    assert_eq!(
+        cam_b,
+        json!({
+            "id": id(&cam_b), "name": "Cam B", "slug": "camB",
+            "template": id(&template), "params": { "camera": "Cam B" }, "show": {},
+        }),
+        "stored as an instance, with no body of its own"
+    );
+    let (status, body) = server
+        .post(
+            "/components",
+            json!({ "name": "Again", "template": id(&cam_b), "params": { "camera": "x" }, "show": {} }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(codes(&body)[0].1, "templateIsInstance");
+
+    // Shown, it draws the template's binding with its own params.
+    let deck = create(
+        &server,
+        "/surfaces",
+        "surface",
+        json!({ "name": "FOH deck", "model": "virtual.deck15", "startComponent": id(&cam_b) }),
+    )
+    .await;
+    let mut ws = connect(&addr, id(&deck)).await;
+    send(&mut ws, attach("fohDeck")).await;
+    let mut drawn = BTreeMap::new();
+    while drawn.len() < 15 {
+        let (control, image) = next_draw(&mut ws, "fohDeck").await;
+        drawn.insert(control, image);
+    }
+    assert_eq!(
+        server.value("component.camB.params.camera").await,
+        Some(json!("Cam B"))
+    );
+    let (_, image) = previewed(
+        &server,
+        &json!({ "control": "k0", "props": { "label": "Cam B" } }),
+    )
+    .await;
+    assert_eq!(
+        drawn["k0"], image,
+        "k0 is labelled with the instance's camera"
+    );
+
+    // A fix to the template reaches the instance.
+    let (status, body) = edit(&server, id(&template), |t| {
+        t["bindings"][0]["props"]["label"] =
+            json!({ "use": "template", "parts": ["Cam: ", camera.clone()] });
+    })
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (control, image) = next_draw(&mut ws, "fohDeck").await;
+    assert_eq!(control, "k0");
+    let (_, expected) = previewed(
+        &server,
+        &json!({ "control": "k0", "props": { "label": "Cam: Cam B" } }),
+    )
+    .await;
+    assert_eq!(image, expected);
+
+    // A change the instance can't satisfy is refused, naming it.
+    let (status, body) = edit(&server, id(&template), |t| {
+        t["params"]["iso"] = json!({ "type": "number", "required": true });
+    })
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(codes(&body), [(json!(["params"]), "badInstance".into())]);
+    let message = body["errors"][0]["message"].as_str().unwrap();
+    assert!(message.contains("\"Cam B\""), "{message}");
+
+    // A template with instances stays until they go.
+    let template_uri = format!("/components/{}", id(&template));
+    assert_eq!(server.delete(&template_uri).await, StatusCode::CONFLICT);
+    assert_eq!(
+        server.delete(&format!("/components/{}", id(&cam_b))).await,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(server.value("component.camB.params.camera").await, None);
+    assert_eq!(server.delete(&template_uri).await, StatusCode::NO_CONTENT);
+}
+
+/// composition spec §1: instances survive a restart with their templates'
+/// bodies.
+#[tokio::test(flavor = "multi_thread")]
+async fn component_instances_survive_a_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let start = || {
+        Server::with_app(
+            App::start(Config {
+                data_dir: dir.path().to_owned(),
+                root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."),
+                plugins: Config::default_plugins(),
+                deno: "deno".into(),
+                devices: Default::default(),
+            })
+            .unwrap(),
+        )
+    };
+    let server = start();
+    let template = create(
+        &server,
+        "/components",
+        "component",
+        json!({
+            "name": "Camera page", "controls": keys(15),
+            "params": { "camera": { "type": "string", "default": "Cam A" } },
+            "bindings": [{
+                "id": "name", "control": "k0",
+                "props": { "label": { "ref": { "scope": "params", "path": ["camera"] } } },
+            }],
+        }),
+    )
+    .await;
+    create(
+        &server,
+        "/components",
+        "component",
+        json!({ "name": "Cam C", "template": id(&template), "params": { "camera": "Cam C" }, "show": {} }),
+    )
+    .await;
+    drop(server);
+
+    let server = start();
+    server
+        .eventually(WAIT, "the instance's param", || async {
+            (server.value("component.camC.params.camera").await == Some(json!("Cam C")))
+                .then_some(())
+        })
+        .await;
+    let problems = server.get("/components/problems").await;
+    assert_eq!(problems, json!([]), "its binding evaluates: {problems}");
+}

@@ -82,6 +82,34 @@ export interface Component {
   bindings?: ControlBinding[];
   /** Shown on surfaces (composition spec §7.3); absent, it's only used inside others. */
   show?: Show;
+  /** An instance's template (composition spec §1): its controls and bindings are the template's. */
+  template?: string;
+  /** A template's param definitions, or an instance's bindings of them. */
+  params?: Record<string, unknown>;
+}
+
+/**
+ * Components as the editor shows them: an instance, which the server sends
+ * as its identity, template, params and `show`, with its template's
+ * controls and bindings filled in (composition spec §2).
+ */
+export function withTemplateBodies(components: Component[]): Component[] {
+  const byId = new Map(components.map((c) => [c.id, c]));
+  return components.map((c) => {
+    const template = c.template === undefined ? undefined : byId.get(c.template);
+    return template === undefined
+      ? { ...c, controls: c.controls ?? [] }
+      : { ...c, controls: template.controls, bindings: template.bindings };
+  });
+}
+
+/** A component as it's saved: an instance without its template's body. */
+export function asStored(c: Component): Component {
+  if (c.template === undefined) return c;
+  const instance: Partial<Component> = { ...c };
+  delete instance.controls;
+  delete instance.bindings;
+  return instance as Component;
 }
 
 /** Where and when a component is shown (surfaces spec §5.2, §5.3). */

@@ -391,12 +391,11 @@ pub fn validate(flow: &Flow, ctx: &Context) -> Report {
         seen: BTreeSet::new(),
         acted_on: BTreeSet::new(),
         outputs: &flow.outputs,
-        // An owned flow's params are its owner's (composition spec §2),
-        // and components don't declare any yet.
-        params: if flow.owner.is_some() {
-            &none
-        } else {
-            &flow.params
+        // An owned flow's params are its owner's (composition spec §2).
+        params: match (&flow.owner, owner) {
+            (Some(_), Some(owner)) => &owner.params,
+            (Some(_), None) => &none,
+            (None, _) => &flow.params,
         },
         owned: flow.owner.is_some(),
         owner,
@@ -795,7 +794,7 @@ impl<'a> Validation<'a> {
             ScopeName::Params if self.params.is_empty() && self.owned => self.error(
                 at,
                 Code::NotInScope,
-                "an owned flow's params are its component's, and components have no params".into(),
+                "an owned flow's params are its component's, and this component has none".into(),
             ),
             ScopeName::Params if self.params.is_empty() => self.error(
                 at,

@@ -15,12 +15,27 @@ import {
   bindingProblems,
   bindingRuntime,
   newBindingId,
+  asStored,
+  withTemplateBodies,
   type Component,
 } from "./model";
 
 const page = (controls: Component["controls"]): Component => ({ id: "l", name: "L", slug: "l", controls, show: {} });
 
 describe("components", () => {
+  it("show an instance with its template's body, and save it without", () => {
+    const template: Component = {
+      ...page([{ id: "k0" }]),
+      id: "t",
+      bindings: [{ id: "b", control: "k0", props: { label: "Hi" } }],
+    };
+    const sent = { id: "i", name: "Cam B", slug: "camB", template: "t", params: { camera: "Cam B" }, show: {} };
+    const instance = withTemplateBodies([template, sent as unknown as Component])[1]!;
+    expect(instance.controls).toEqual([{ id: "k0" }]);
+    expect(instance.bindings).toEqual(template.bindings);
+    expect(asStored(instance)).toEqual(sent);
+    expect(asStored(template)).toBe(template);
+  });
   it("copy a surface's controls with their capabilities", () => {
     const k7 = deckControls(virtualDeck)[7]!;
     expect(toControlSpec(k7)).toEqual({ id: "k7", at: { x: 2, y: 1 }, inputs: ["momentary"], outputs: ["image"] });
