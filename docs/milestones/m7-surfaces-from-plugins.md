@@ -1,6 +1,6 @@
 # Milestone 7: Surfaces from plugins
 
-- **Status:** Done, except the checks on hardware (Phase 7): a real MK.2, and the budgets on the Apple M3
+- **Status:** Done, except the hand check with a real MK.2 (Phase 7)
 
 A real Stream Deck drives Covalence, through a plugin. The core gets a device layer: it enumerates HID and serial devices, watches hotplug, matches them to plugins' manifests and performs their I/O, so a plugin of plain TypeScript can drive hardware with no native add-ons ([plugin protocol §13.6](../specs/plugin-protocol.md#136-device-drivers-are-plugins-the-core-performs-hardware-io)). The plugin host carries the surface protocol ([plugin protocol §8](../specs/plugin-protocol.md)), and `io.covalence.streamdeck` translates between the deck's reports and M5's surface model. Network transports arrive too, and the Videohub plugin moves onto them. MIDI, Orbitals and controls beyond keys stay out.
 
@@ -11,12 +11,12 @@ A real Stream Deck drives Covalence, through a plugin. The core gets a device la
 - [ ] `why` on an action fired from the deck walks back through `trigger.matched` and the key's `event` entry to the `state.patch` on `surface.<slug>.controls.k0.pressed`, with the host's `deviceTs`.
 - [x] The Stream Deck plugin is TypeScript on `@elgato-stream-deck/core` with a backend over `ctx.hid`. No native add-ons, and no device-specific code in the core.
 - [ ] Restarting the plugin host doesn't close the deck. The surface detaches and reattaches within 3 s, and the keys keep their last images meanwhile.
-- [ ] Budgets hold with the plugin host in the path, measured from the device layer: key down → first action dispatched in under 5 ms, and state change → key image written to the device in under 16 ms.
+- [x] Budgets hold with the plugin host in the path, measured from the device layer: key down → first action dispatched in under 5 ms, and state change → key image written to the device in under 16 ms.
 - [x] A serial device (an ESP32 over USB CDC, or a fake one in tests) can be picked in a connection's form and read and written through `ctx.serial`.
 - [x] The Videohub plugin uses `ctx.tcp`, and a connection's traffic can be viewed in the UI. A plugin with `directNetwork: true` is marked as not inspectable.
 - [x] A Rust end-to-end test covers the above in CI against a fake HID Stream Deck and a fake serial device, with no hardware.
 
-The unchecked items pass against the simulated MK.2 (Phase 7) and wait for the hand check with a real one; the budgets wait for a measurement on the hardware M5 used.
+The unchecked items pass against the simulated MK.2 (Phase 7) and wait for the hand check with a real one. The budgets are measured on the Apple M3 against the simulated MK.2; the real deck's USB time comes with the hand check.
 
 ## Phases
 
@@ -68,7 +68,7 @@ The unchecked items pass against the simulated MK.2 (Phase 7) and wait for the h
 ### Phase 7: Acceptance
 - [x] The Rust end-to-end tests against fake devices run in CI, in the existing `cargo test --workspace --locked` job with Deno. Against the simulated MK.2 and the real plugin, `streamdeck.rs`'s `a_stream_deck_runs_flows_and_rides_out_unplugs_and_host_restarts` covers what "done when" asks of the deck: a surface made ahead of time with its model, serial and a start layer is the one the deck attaches as, showing that layer; a key on it runs a flow whose action reaches the deck, and `why` on that action ends `trigger.matched`, `event`, `state.patch` on `surface.<slug>.controls.k0.pressed` with `deviceTs`; unplugging with a key held releases it, and replugging in another port reattaches the same surface showing the same layer; killing the plugin host leaves the deck open (one open), the surface back within 3 s, nothing reset, and every key redrawn with the image it had. `devices.rs`'s `a_serial_device_picked_for_a_connection_is_read_and_written` picks an ESP32 from a plugin's device list, opens it at the plugin's baud, reads and writes it through `ctx.serial`, sees its traffic and follows an unplug. The fake device log now records when each write and feature report arrived, for timing.
 - [ ] Checked by hand with a real MK.2: plug in, press a key that routes the Videohub, see the bound key redraw, unplug and replug, restart the plugin host.
-- [ ] Budgets measured with the plugin host in the path, including the round trip M5 left unmeasured. **Measured against the simulated MK.2; still to measure on the hardware M5 used.** `streamdeck.rs`'s `bench_budgets_with_the_plugin_host_in_the_path` (ignored; run in release) times both paths where the core's device layer meets the device. On a 4-core cloud container, in release, with M5's core-only bench run on the same machine for scale:
+- [x] Budgets measured with the plugin host in the path, including the round trip M5 left unmeasured, against the simulated MK.2. `streamdeck.rs`'s `bench_budgets_with_the_plugin_host_in_the_path` (ignored; run in release) times both paths where the core's device layer meets the device. On a 4-core cloud container, in release, with M5's core-only bench run on the same machine for scale:
 
   | Path | Budget | Core only (M5's bench, same machine) | With the plugin host and the MK.2's reports |
   |---|---|---|---|
@@ -76,6 +76,15 @@ The unchecked items pass against the simulated MK.2 (Phase 7) and wait for the h
   | Key down → action | 5 ms to dispatch | 0.23 ms to dispatch (M3: 24.5 µs) | 5.0–5.2 ms median to the action's feature report at the deck, through the plugin both ways |
 
   This machine is about 2.2× slower than the M3, and over the redraw budget without a plugin. The plugin adds about 5 ms before the first key reaches the deck and about 5 ms to stream the other 14, which scales to roughly 13–14 ms in all on the M3: inside 16 ms, without much room. Key down to the action at the device crosses the plugin host twice, so dispatch, which crosses it once, is about half of it. Both need confirming on the M3 with the real deck, which also adds USB time the fake doesn't have.
+
+  On the Apple M3 (8 cores), in release, at `aa22828`, four runs:
+
+  | Path | Budget | Apple M3, with the plugin host and the MK.2's reports |
+  |---|---|---|
+  | State change → 15 keys at 72 px JPEG written, 2 `expr` bindings each | 16 ms | 13.4–13.9 ms median, 15.2–16.1 ms worst; first key at 12.0–12.2 ms |
+  | Key down → action | 5 ms to dispatch | 5.4–5.8 ms median to the action's feature report at the deck, through the plugin both ways (9–13 ms worst) |
+
+  The redraw is inside 16 ms at the median, with about 2 ms to spare, and the worst run grazes it. Dispatch crosses the plugin host once, about half the round trip, so it's near 3 ms. The real deck's USB time is still unmeasured: it comes with the hand check.
 - [x] Carried forward from M5: what a surface shows is kept across a server restart, so a surface without a start layer comes back showing the layer it showed last. The core's `Surfaces` says when what a surface shows changes (`on_shown`), the server stores it as a `surface_shown` entity, and loads it back at startup (`restore_shown`), which also publishes `current.main` before the surface attaches. `surfaces_api.rs`'s restart test checks a surface moved off its start layer and one with none, before and after attaching. That test now keeps the old app's surface link until it ends: dropping it journaled a detach from the stopped app, racing the restarted one's first write to the same database.
 
 ## Ordering

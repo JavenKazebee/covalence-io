@@ -1,6 +1,6 @@
 # Milestone 6: Primitives
 
-- **Status:** Done, except re-measuring the redraw budget on the reference machine (Phase 6)
+- **Status:** Done
 
 The shapes M5 stored get their general form before hardware surfaces start creating entities in real projects ([M7](m7-surfaces-from-plugins.md) creates them on plug-in). Three changes:
 - **One way to give a value and one way to pick things:** `Source<T>` and `Selector` ([dataflow §10.1](../specs/dataflow.md#101-one-way-to-give-a-value-one-way-to-pick-things)). The binding kinds become stateless transforms.
@@ -19,7 +19,7 @@ Nothing here adds a new kind of thing for users to learn. It makes the existing 
 - [x] A flow presses a key on another layer and navigates the deck: `core` actions `inject` and `navigate`, on a fixed surface target and on a target held in `vars`. Both are journaled `action.requested` → `action.result` and both happen in simulate mode. `cancelRuns` and `setEnabled` work on a flow target.
 - [x] Action parameters accept `{ref}` and stateless transforms as well as `{expr}`, and `wait.for` accepts a `Source<Duration>`.
 - [x] The UI edits all of the above: one source widget for binding properties and action parameters, an event-source picker in the trigger editor (key, any key on a layer, a connection, a flow, startup, a pattern), and `core` in the action step's connection list.
-- [ ] Budgets from M5 still hold: key down → first action dispatched in under 5 ms, state change → redrawn key in under 16 ms. Key down holds; the redraw is unchanged from M5 on the same machine, but needs re-measuring on the M3 (Phase 6).
+- [x] Budgets from M5 still hold: key down → first action dispatched in under 5 ms, state change → redrawn key in under 16 ms. Measured on the Apple M3 below.
 
 ## Budgets measured
 
@@ -31,7 +31,15 @@ In release, on a 4-vCPU cloud VM (Intel Xeon, 2.1 GHz), and against the code bef
 | State change → 15 keys at 144 px redrawn, 2 `expr` bindings each | 16 ms | 28–37 ms | 29–38 ms |
 | The same at 72 px | 16 ms | 27–30 ms | 28–30 ms |
 
-`bench_key_down_to_first_action` now runs on event triggers, with and without 200 others: triggers under the same root (`surface`) are each tested, at about 2.5 µs, and reparsing a pattern's text per test is the first thing to cache if that grows. The redraw path is unchanged by M6 and machine-bound here: this VM is about 3× slower than the M3, where M5 measured 8.7 ms. **Open:** re-run `cargo test --release -p covalence-core --test binding_worker bench -- --ignored --nocapture --test-threads=1` on the M3 to confirm the 16 ms budget.
+`bench_key_down_to_first_action` now runs on event triggers, with and without 200 others: triggers under the same root (`surface`) are each tested, at about 2.5 µs, and reparsing a pattern's text per test is the first thing to cache if that grows. The redraw path is unchanged by M6 and machine-bound here: this VM is about 3× slower than the M3, where M5 measured 8.7 ms.
+
+Re-measured on the Apple M3 (8 cores), in release, at `aa22828` (components by then, so a layer's key is a component's), with `cargo test --release -p covalence-core --test binding_worker bench -- --ignored --nocapture --test-threads=1`:
+
+| Path | Budget | Apple M3 |
+|---|---|---|
+| Key down → first action requested, keys redrawing | 5 ms | 22.5 µs median on a component's key or a path pattern; 75 µs among 200 other event triggers |
+| State change → 15 keys at 144 px redrawn, 2 `expr` bindings each | 16 ms | 9.6 ms median, 9.8 ms worst |
+| The same at 72 px | 16 ms | 8.9 ms median, 13.8 ms worst |
 
 ## History
 

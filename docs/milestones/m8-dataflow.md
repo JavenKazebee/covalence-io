@@ -1,6 +1,6 @@
 # Milestone 8: Dataflow
 
-- **Status:** Done, except the budgets on the reference machine
+- **Status:** Done
 
 Covalence gets its continuous half. Values can be computed, accumulated and sent somewhere without a flow ([dataflow §10.3](../specs/dataflow.md#103-sources-transforms-and-sinks-helpers-are-transforms)):
 - **Reducers** (`toggle`, `position`, `select` …) are sandboxed transform definitions.
@@ -85,7 +85,7 @@ Notes from Phase 2:
 ### Phase 7: Acceptance
 - [x] A Rust end-to-end test covers the "Done when" list against simulated devices: `crates/covalence-server/tests/dataflow_acceptance.rs`, with the real plugin host, a virtual deck with an encoder and a motor fader over its WebSocket, and `plugins/showsim` (a simulated switcher, mixer and GPIO contact). The latching key, conformance, cycles and persistence are checked by the narrower tests it names.
 - [x] Budgets measured with cells and sandboxed reducers in the path, in a release build on the development container: a held shift's key redrawn a median 1.8 ms after the press, and a key at the end of three chained cells 4.6 ms after the action that moved the first. The first measurement found 44 ms for the shift: Nagle's algorithm held small WebSocket writes for a delayed ACK. The server's sockets now set `TCP_NODELAY`.
-- [ ] The same budgets on the reference machine (M6's open item).
+- [x] The same budgets on the Apple M3, in release, at `aa22828`: the held shift's key redrawn a median 0.72 ms after the press, and the key at the end of three chained cells 1.8 ms after the action.
 
 ## Ordering
 

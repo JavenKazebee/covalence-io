@@ -24,7 +24,7 @@ Markers such as **(M8)** in a spec name the milestone that builds a rule; each s
 - [M3: First flows](milestones/m3-first-flows.md) (done)
 - [M4: Expressions](milestones/m4-expressions.md) (done)
 - [M5: Surfaces and bindings](milestones/m5-surfaces-and-bindings.md) (done)
-- [M6: Primitives](milestones/m6-primitives.md) (done, except re-measuring the redraw budget on the Apple M3): sources, selectors, events by path, the core connection
-- [M7: Surfaces from plugins](milestones/m7-surfaces-from-plugins.md) (done, except checks on hardware: Phase 7 waits on a real MK.2, and the budgets on the Apple M3): devices, transports, surfaces over the plugin host, the Stream Deck plugin
-- [M8: Dataflow](milestones/m8-dataflow.md) (in progress: Phases 0–4 done): reducers, cells, variables, sinks, helpers, layer resolution
-- [M9: Composition](milestones/m9-composition.md) (planned): one template primitive, composites, components, nesting, `forEach`, plugin transforms
+- [M6: Primitives](milestones/m6-primitives.md) (done): sources, selectors, events by path, the core connection
+- [M7: Surfaces from plugins](milestones/m7-surfaces-from-plugins.md) (done, except the hand check with a real MK.2): devices, transports, surfaces over the plugin host, the Stream Deck plugin
+- [M8: Dataflow](milestones/m8-dataflow.md) (done): reducers, cells, variables, sinks, helpers, layer resolution
+- [M9: Composition](milestones/m9-composition.md) (in progress): one template primitive, composites, components, nesting, `forEach`, plugin transforms
