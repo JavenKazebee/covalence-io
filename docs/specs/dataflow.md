@@ -275,7 +275,7 @@ A **cell** is a source with a home in the state tree. It's how a computed or acc
   3. Then, against the settled state: resolution of shown components (surfaces §5.2), display bindings, state triggers and `waitUntil`, and sinks (§7).
 - **Cycles.** A cell that would be evaluated a second time in one turn is on a cycle. Every cell on it keeps its previous value and reports `cycle`, until a later turn breaks the cycle. Saving a definition whose static reads already form a cycle is an error (`cycle`).
 - **The budgets stand:** a state change to a redrawn key in under 16 ms, including any cells in between.
-- **Where it runs (M8 Phase 2).** The graph settles inside the state tree's turn: a writer's patch and the cells it moves are published as one dirty set, so bindings, triggers and `waitUntil` never see a cell lag its input. Events, wakes and edits start turns of their own.
+- **Where it runs.** The graph settles inside the state tree's turn: a writer's patch and the cells it moves are published as one dirty set, so bindings, triggers and `waitUntil` never see a cell lag its input. Events, wakes and edits start turns of their own.
 
 ### 5.4 Kept state through edits
 How [state spec §7.6](state-and-event-log.md#76-editing-a-running-show)'s rule applies to cells. It's the same rule when a persisted variable is restored after a restart.
