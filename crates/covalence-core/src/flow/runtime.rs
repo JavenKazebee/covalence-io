@@ -232,14 +232,18 @@ impl Place {
 /// The component that owns a flow, as it's placed (composition spec §2).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Owner {
-    /// The component's ID, which `{controls}` event sources imply.
+    /// The shown component whose controls `{controls}` event sources name.
     pub component: crate::surface::ComponentId,
-    /// Its home, `component.<slug>`: the flow's status is under
+    /// Its home, `component.<slug>` or a child's: the flow's status is under
     /// `<home>.flows.<slug>`, and its `params` are `<home>.params`.
     pub home: StatePath,
-    /// For an instance of the component that owns the flow: the instance,
-    /// which its runs are made inside (composition spec §5).
-    pub instance: Option<Link>,
+    /// The instances its runs are made inside, outermost first, the owner
+    /// last (composition spec §5): empty for the component that owns the
+    /// flow itself.
+    pub chain: InstanceChain,
+    /// For a child (composition spec §8): each of its controls, to the shown
+    /// component's, which its `{controls}` sources are mapped onto.
+    pub controls: Option<BTreeMap<String, String>>,
 }
 
 impl Owner {
@@ -249,19 +253,56 @@ impl Owner {
         Owner {
             component: component.id.clone(),
             home: component.home(),
-            instance: component.template.as_ref().map(|t| Link {
-                template: t.clone(),
-                instance: component.id.clone(),
-                key: None,
-            }),
+            chain: component
+                .template
+                .iter()
+                .map(|t| Link {
+                    template: t.clone(),
+                    instance: component.id.clone(),
+                    key: None,
+                })
+                .collect(),
+            controls: None,
         }
+    }
+
+    /// A child of `component` at some depth (composition spec §8).
+    pub fn part(component: &crate::component::Component, part: &crate::component::Part) -> Owner {
+        Owner {
+            component: component.id.clone(),
+            home: part.home.clone(),
+            chain: part.chain.clone(),
+            controls: Some(part.controls.clone()),
+        }
+    }
+}
+
+/// `controls` with each ID mapped onto the shown component's (composition
+/// spec §8). `Not` is kept within the child's own controls; an expression
+/// or a form is left as it is.
+fn map_controls(
+    controls: &crate::select::Selector<crate::select::Controls>,
+    map: &BTreeMap<String, String>,
+) -> crate::select::Selector<crate::select::Controls> {
+    use crate::select::Selector;
+    let one = |id: &String| map.get(id).cloned().unwrap_or_else(|| id.clone());
+    match controls {
+        Selector::One(id) => Selector::One(one(id)),
+        Selector::List(ids) => Selector::List(ids.iter().map(one).collect()),
+        Selector::Any(all) => Selector::Any(all.iter().map(|s| map_controls(s, map)).collect()),
+        Selector::All(all) => Selector::All(all.iter().map(|s| map_controls(s, map)).collect()),
+        Selector::Not(inner) => Selector::All(vec![
+            Selector::List(map.values().cloned().collect()),
+            Selector::Not(Box::new(map_controls(inner, map))),
+        ]),
+        other => other.clone(),
     }
 }
 
 /// The slot an owned flow runs in for one owner: the flow's own ID for the
 /// component that owns it, and `<flow>@<instance>` for an instance of it.
 pub fn owned_slot(flow: &str, owner: &Owner) -> FlowId {
-    match &owner.instance {
+    match owner.chain.last() {
         None => flow.to_owned(),
         Some(link) => format!("{flow}@{}", link.instance),
     }
@@ -337,7 +378,10 @@ impl Placement {
             {
                 *from = EventSource::Component {
                     component: owner.component.clone(),
-                    controls: Some(controls.clone()),
+                    controls: Some(match &owner.controls {
+                        Some(map) => map_controls(controls, map),
+                        None => controls.clone(),
+                    }),
                 };
             }
         }
@@ -2017,7 +2061,7 @@ impl Inner {
             let place = Place {
                 home: owner.home.key("flows").key(&placement.flow.slug),
                 params: owner.home.key("params"),
-                instance: owner.instance.clone().map(|link| vec![link]),
+                instance: (!owner.chain.is_empty()).then(|| owner.chain.clone()),
                 owner: Some(owner.component.clone()),
             };
             self.put_slot(placement.for_owner(owner), place);

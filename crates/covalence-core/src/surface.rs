@@ -1955,17 +1955,11 @@ impl Task {
                     .surfaces
                     .get(&self.surface)
                     .map_or_else(|| self.surface.clone(), |s| s.slug.clone());
-                // Input on an instance's controls is made inside it
-                // (composition spec §7.2).
+                // Input on an instance's controls, or a child's, is made
+                // inside it (composition spec §7.2).
                 let instance = component
                     .and_then(|c| book.components.get(c))
-                    .and_then(|c| {
-                        Some(vec![crate::compose::Link {
-                            template: c.template.clone()?,
-                            instance: c.id.clone(),
-                            key: None,
-                        }])
-                    });
+                    .and_then(|c| c.chain_at(&control));
                 (slug, instance)
             };
             let payload = match (delta, value) {

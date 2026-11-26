@@ -345,12 +345,11 @@ impl App {
         let flows = load_kind::<Flow>(&store)?;
         let surface_entities = load_kind::<Surface>(&store)?;
         let mut components = load_kind::<Component>(&store)?;
-        // Instances are kept with their templates' bodies (composition spec §2).
-        let templates = components.clone();
+        // Instances are kept with their templates' bodies, and children as
+        // parts (composition spec §2, §8).
+        let stored = components.clone();
         for c in components.values_mut() {
-            if let Some(template) = c.template.as_ref().and_then(|t| templates.get(t)) {
-                *c = c.instance_of(template);
-            }
+            *c = c.filled(&stored);
         }
         let bindings: BTreeMap<String, ControlBinding> = components
             .values()

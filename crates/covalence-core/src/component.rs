@@ -52,9 +52,52 @@ pub struct Component {
     pub controls: Vec<ControlSpec>,
     /// One per bound control, embedded (composition spec §7.1).
     pub bindings: Vec<ControlBinding>,
+    /// Components on some of its controls, by slug (composition spec §8).
+    pub children: BTreeMap<String, Child>,
     /// Shown on surfaces, and when (composition spec §7.3). Absent, it's
     /// only used inside other components.
     pub show: Option<Show>,
+    /// Its children at every depth, as the app keeps them
+    /// ([`Component::filled`]). Not stored.
+    pub parts: Vec<Part>,
+}
+
+/// A child (composition spec §8): an instance of a component on some of
+/// its container's controls, its params bound in the container's scope.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Child {
+    /// The component it's an instance of.
+    pub template: ComponentId,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub params: BTreeMap<String, Source<Json>>,
+    /// Each of its template's controls, to one of its container's.
+    pub controls: BTreeMap<String, String>,
+}
+
+/// A child at some depth, as it runs on its shown component (composition
+/// spec §8): where it is, what it's inside, and its template's bindings on
+/// the shown component's controls.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Part {
+    /// `<container's ID>/<slug>`: the child's instance in journal chains.
+    pub id: String,
+    pub template: ComponentId,
+    /// `<container's home>.parts.<slug>` (composition spec §1.1).
+    pub home: StatePath,
+    /// The instances it's inside, outermost first, itself last.
+    pub chain: compose::InstanceChain,
+    /// Its params' sources, evaluated in its container's scope.
+    pub bound: Vec<(String, Source<Json>)>,
+    /// Its container's `<home>.params`, which its params' sources read as
+    /// `params`, when the container has params.
+    pub outer: Option<StatePath>,
+    /// Its own `<home>.params`, when its template has params.
+    pub params_at: Option<StatePath>,
+    /// Each of its template's controls, to the shown component's.
+    pub controls: BTreeMap<String, String>,
+    /// Its template's bindings, on its template's controls.
+    pub bindings: Vec<ControlBinding>,
 }
 
 /// A component as it's stored and sent. An instance's `params` are
@@ -75,6 +118,8 @@ struct Wire {
     controls: Option<Vec<ControlSpec>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     bindings: Vec<ControlBinding>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    children: BTreeMap<String, Child>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     show: Option<Show>,
 }
@@ -88,6 +133,7 @@ impl TryFrom<Wire> for Component {
             for (field, has) in [
                 ("controls", w.controls.is_some()),
                 ("bindings", !w.bindings.is_empty()),
+                ("children", !w.children.is_empty()),
             ] {
                 if has {
                     return Err(format!(
@@ -119,7 +165,9 @@ impl TryFrom<Wire> for Component {
             param_bindings,
             controls: w.controls.unwrap_or_default(),
             bindings: w.bindings,
+            children: w.children,
             show: w.show,
+            parts: Vec::new(),
         })
     }
 }
@@ -151,6 +199,11 @@ impl From<Component> for Wire {
             params,
             controls: (!instance).then_some(c.controls),
             bindings: if instance { Vec::new() } else { c.bindings },
+            children: if instance {
+                BTreeMap::new()
+            } else {
+                c.children
+            },
             show: c.show,
         }
     }
@@ -240,7 +293,71 @@ impl Component {
             param_bindings: self.param_bindings.clone(),
             controls: template.controls.clone(),
             bindings: template.bindings.clone(),
+            children: template.children.clone(),
             show: self.show.clone(),
+            parts: Vec::new(),
+        }
+    }
+
+    /// The component as the app keeps it: an instance with its template's
+    /// body (composition spec §2), and its children at every depth as
+    /// [`Part`]s (composition spec §8). `components` are the stored ones;
+    /// a child whose template is missing or an instance is left out, and
+    /// nesting stops at [`compose::MAX_DEPTH`].
+    pub fn filled(&self, components: &BTreeMap<ComponentId, Component>) -> Component {
+        let mut c = match self.template.as_ref().and_then(|t| components.get(t)) {
+            Some(t) if !t.is_instance() => self.instance_of(t),
+            _ => self.clone(),
+        };
+        let chain: compose::InstanceChain = c
+            .template
+            .iter()
+            .map(|t| compose::Link {
+                template: t.clone(),
+                instance: c.id.clone(),
+                key: None,
+            })
+            .collect();
+        let controls: BTreeMap<String, String> = c
+            .controls
+            .iter()
+            .map(|s| (s.id.clone(), s.id.clone()))
+            .collect();
+        let mut parts = Vec::new();
+        expand(
+            &Container {
+                id: &c.id,
+                home: &c.home(),
+                params: c.params_at(),
+                controls: &controls,
+                chain: &chain,
+            },
+            &c.children,
+            components,
+            &mut parts,
+        );
+        c.parts = parts;
+        c
+    }
+
+    /// The instances input on `control` is made inside (composition spec
+    /// §5, §7.2): the deepest child on it, or the component itself when it's
+    /// an instance.
+    pub fn chain_at(&self, control: &str) -> Option<compose::InstanceChain> {
+        let deepest = self
+            .parts
+            .iter()
+            .filter(|p| p.controls.values().any(|c| c == control))
+            .max_by_key(|p| p.chain.len());
+        match deepest {
+            Some(part) => Some(part.chain.clone()),
+            None => self.template.as_ref().map(|t| {
+                vec![compose::Link {
+                    template: t.clone(),
+                    instance: self.id.clone(),
+                    key: None,
+                }]
+            }),
         }
     }
 
@@ -262,35 +379,134 @@ impl Component {
     /// per param that's bound or has a default, at `<home>.params.<name>`.
     /// None for a component that isn't shown, or an abstract template,
     /// which is only shown through its instances.
+    /// Its children's params are cells too, at `<child's home>.params`,
+    /// reading their container's as `params` (composition spec §8).
     pub fn param_cells(&self) -> Vec<crate::dataflow::CellDef> {
         if self.show.is_none() || self.is_abstract() {
             return Vec::new();
         }
-        compose::param_cells(
+        let mut cells = compose::param_cells(
             &compose::param_prefix(&self.id, None),
             &self.home(),
             &compose::bound(&self.params, &self.param_bindings),
             &[],
-        )
+        );
+        for part in &self.parts {
+            let named: Vec<(String, StatePath)> = part
+                .outer
+                .iter()
+                .map(|p| ("params".to_owned(), p.clone()))
+                .collect();
+            cells.extend(
+                compose::param_cells(
+                    &compose::param_prefix(&part.id, None),
+                    &part.home,
+                    &part.bound,
+                    &[],
+                )
+                .into_iter()
+                .map(|c| crate::dataflow::CellDef {
+                    named: named.clone(),
+                    ..c
+                }),
+            );
+        }
+        cells
     }
 
     /// Its bindings as the running core has them: on this component, with
     /// IDs of `<component>/<binding>`, and its `params` in scope.
+    /// Its children's bindings are on its controls, each with an ID of
+    /// `<child's ID>/<binding>` and its child's `params` (composition spec §8).
     pub fn runtime_bindings(&self) -> Vec<ControlBinding> {
         let params = self.params_at();
-        self.bindings
-            .iter()
-            .map(|b| ControlBinding {
-                id: binding_id(&self.id, &b.id),
-                component: self.id.clone(),
-                params: params.clone(),
-                ..b.clone()
+        let own = self.bindings.iter().map(|b| ControlBinding {
+            id: binding_id(&self.id, &b.id),
+            component: self.id.clone(),
+            params: params.clone(),
+            ..b.clone()
+        });
+        let parts = self.parts.iter().flat_map(|part| {
+            part.bindings.iter().filter_map(move |b| {
+                Some(ControlBinding {
+                    id: binding_id(&part.id, &b.id),
+                    component: self.id.clone(),
+                    params: part.params_at.clone(),
+                    part: Some((part.home.clone(), b.control.clone())),
+                    control: part.controls.get(&b.control)?.clone(),
+                    ..b.clone()
+                })
             })
-            .collect()
+        });
+        own.chain(parts).collect()
     }
 
     pub fn control(&self, id: &str) -> Option<&ControlSpec> {
         self.controls.iter().find(|c| c.id == id)
+    }
+}
+
+/// Where a child is placed: its container, as the shown component sees it.
+struct Container<'a> {
+    id: &'a str,
+    home: &'a StatePath,
+    params: Option<StatePath>,
+    /// The container's controls, to the shown component's.
+    controls: &'a BTreeMap<String, String>,
+    chain: &'a compose::InstanceChain,
+}
+
+/// Adds `children` of `container`, and theirs, to `out`, depth first.
+fn expand(
+    container: &Container<'_>,
+    children: &BTreeMap<String, Child>,
+    components: &BTreeMap<ComponentId, Component>,
+    out: &mut Vec<Part>,
+) {
+    if container.chain.len() >= compose::MAX_DEPTH {
+        return;
+    }
+    for (slug, child) in children {
+        let Some(template) = components.get(&child.template).filter(|t| !t.is_instance()) else {
+            continue;
+        };
+        let id = format!("{}/{slug}", container.id);
+        let home = container.home.key("parts").key(slug);
+        let mut chain = container.chain.clone();
+        chain.push(compose::Link {
+            template: template.id.clone(),
+            instance: id.clone(),
+            key: None,
+        });
+        let controls: BTreeMap<String, String> = child
+            .controls
+            .iter()
+            .filter_map(|(its, to)| Some((its.clone(), container.controls.get(to)?.clone())))
+            .collect();
+        let params_at = (!template.params.is_empty()).then(|| home.key("params"));
+        out.push(Part {
+            id: id.clone(),
+            template: template.id.clone(),
+            home: home.clone(),
+            chain: chain.clone(),
+            bound: compose::bound(&template.params, &child.params),
+            outer: container.params.clone(),
+            params_at: params_at.clone(),
+            controls: controls.clone(),
+            bindings: template.bindings.clone(),
+        });
+        expand(
+            &Container {
+                id: &id,
+                home: &home,
+                params: params_at,
+                controls: &controls,
+                chain: &chain,
+            },
+            &template.children,
+            components,
+            out,
+        );
     }
 }
 
@@ -339,6 +555,7 @@ pub fn validate(component: &Component, ctx: &Context<'_>) -> Report {
         return Report { errors, warnings };
     }
     errors.extend(template_problems(component, ctx));
+    errors.extend(children_problems(component, ctx));
     let components = BTreeMap::from([(component.id.clone(), component.clone())]);
     let mut ids = BTreeSet::new();
     for (i, b) in component.bindings.iter().enumerate() {
@@ -438,6 +655,200 @@ fn instance_problems(component: &Component, ctx: &Context<'_>) -> Vec<Problem> {
     errors
 }
 
+/// Its children (composition spec §8): each names a component that isn't
+/// an instance and fits where it's placed ([`child_problems`]), each
+/// control is covered once, by a binding or a child (`duplicateControl`),
+/// and the component doesn't contain itself (`recursiveTemplate`) or nest
+/// more than 16 deep (`tooDeep`).
+fn children_problems(component: &Component, ctx: &Context<'_>) -> Vec<Problem> {
+    let mut errors = Vec::new();
+    for (slug, child) in &component.children {
+        let at = [key("children"), key(slug)];
+        if !crate::flow::is_identifier(slug) {
+            errors.push(Problem::new(
+                at.to_vec(),
+                Code::BadId,
+                format!("child {slug:?} isn't a name"),
+            ));
+        }
+        let id = child.template.as_str();
+        let here = [key("children"), key(slug), key("template")];
+        match ctx.components.get(id) {
+            _ if id == component.id => errors.push(Problem::new(
+                here.to_vec(),
+                Code::RecursiveTemplate,
+                "a component can't contain itself",
+            )),
+            None => errors.push(Problem::new(
+                here.to_vec(),
+                Code::UnknownTemplate,
+                format!("no component {id:?}"),
+            )),
+            Some(t) if t.is_instance() => errors.push(Problem::new(
+                here.to_vec(),
+                Code::TemplateIsInstance,
+                format!(
+                    "{:?} is itself an instance; use its template, {:?}",
+                    t.name,
+                    t.template.as_deref().unwrap_or_default()
+                ),
+            )),
+            Some(t) => errors.extend(
+                child_problems(child, t, component, ctx.evaluator)
+                    .into_iter()
+                    .map(|p| prefixed(p, &at)),
+            ),
+        }
+    }
+    // Each control once (composition spec §7.1).
+    let mut covered: BTreeMap<&str, String> = component
+        .bindings
+        .iter()
+        .map(|b| (b.control.as_str(), format!("binding {:?}", b.id)))
+        .collect();
+    for (slug, child) in &component.children {
+        for (its, to) in &child.controls {
+            if let Some(by) = covered.get(to.as_str()) {
+                errors.push(Problem::new(
+                    vec![key("children"), key(slug), key("controls"), key(its)],
+                    Code::DuplicateControl,
+                    format!("{to} is already covered, by {by}"),
+                ));
+            } else {
+                covered.insert(to, format!("child {slug:?}"));
+            }
+        }
+    }
+    if !component.id.is_empty() && !component.children.is_empty() {
+        let edges = |id: &str| -> Vec<String> {
+            let c = if id == component.id {
+                Some(component)
+            } else {
+                ctx.components.get(id)
+            };
+            c.map(|c| c.children.values().map(|ch| ch.template.clone()).collect())
+                .unwrap_or_default()
+        };
+        if let Err((code, trail)) = compose::check_nesting(&component.id, &edges) {
+            let names: Vec<String> = trail
+                .iter()
+                .map(|id| {
+                    let name = if id == &component.id {
+                        &component.name
+                    } else {
+                        ctx.components.get(id).map_or(id, |c| &c.name)
+                    };
+                    format!("{name:?}")
+                })
+                .collect();
+            let message = if code == Code::TooDeep {
+                format!(
+                    "children nest at most {} deep: {}",
+                    compose::MAX_DEPTH,
+                    names.join(" → ")
+                )
+            } else {
+                format!("it would contain itself: {}", names.join(" → "))
+            };
+            errors.push(Problem::new(vec![key("children")], code, message));
+        }
+    }
+    errors
+}
+
+/// Whether a child fits where it's placed (composition spec §8), with
+/// problems relative to the child: its params fit its template's, read in
+/// its container's scope, and each of its template's controls is mapped
+/// to one of the container's with the capabilities it needs.
+pub fn child_problems(
+    child: &Child,
+    template: &Component,
+    container: &Component,
+    evaluator: &dyn crate::expr::Evaluator,
+) -> Vec<Problem> {
+    let mut errors = compose::check_bindings_in(
+        &template.params,
+        &child.params,
+        false,
+        Some(&container.params),
+    );
+    for (name, source) in &child.params {
+        let mut here = vec![key("params"), key(name)];
+        source.walk(&mut here, &mut |at, part| {
+            if let crate::source::Part::Expr(e) = part
+                && let Err(e) = evaluator.check(e)
+            {
+                errors.push(Problem::new(at.clone(), Code::ExprSyntax, e.message));
+            }
+        });
+    }
+    for spec in &template.controls {
+        let Some(to) = child.controls.get(&spec.id) else {
+            errors.push(Problem::new(
+                vec![key("controls")],
+                Code::UnmappedControl,
+                format!("{:?}'s control {:?} isn't mapped", template.name, spec.id),
+            ));
+            continue;
+        };
+        let at = vec![key("controls"), key(&spec.id)];
+        let Some(theirs) = container.control(to) else {
+            errors.push(Problem::new(
+                at,
+                Code::UnknownControl,
+                format!("the component doesn't list a control {to:?}"),
+            ));
+            continue;
+        };
+        let inputs = spec.inputs.iter().filter(|k| !theirs.inputs.contains(k));
+        let outputs = spec.outputs.iter().filter(|k| !theirs.outputs.contains(k));
+        let missing: Vec<String> = inputs
+            .map(|k| format!("{k:?}").to_lowercase())
+            .chain(outputs.map(|k| format!("{k:?}").to_lowercase()))
+            .collect();
+        if !missing.is_empty() {
+            errors.push(Problem::new(
+                at,
+                Code::DoesNotFit,
+                format!(
+                    "{:?}'s {:?} needs {}, and {to} doesn't give {}",
+                    template.name,
+                    spec.id,
+                    missing.join(", "),
+                    if missing.len() == 1 { "it" } else { "them" }
+                ),
+            ));
+        }
+    }
+    for its in child.controls.keys() {
+        if template.control(its).is_none() {
+            errors.push(Problem::new(
+                vec![key("controls"), key(its)],
+                Code::UnknownControl,
+                format!("{:?} has no control {its:?}", template.name),
+            ));
+        }
+    }
+    errors
+}
+
+/// Every component with a child of `template`, by name, with the child's
+/// slug: they're its instances too (composition spec §5).
+pub fn containers_of<'a>(
+    template: &str,
+    components: &'a BTreeMap<ComponentId, Component>,
+) -> impl Iterator<Item = (&'a Component, &'a str, &'a Child)> {
+    components
+        .values()
+        .filter(|c| !c.is_instance())
+        .flat_map(move |c| {
+            c.children
+                .iter()
+                .filter(move |(_, ch)| ch.template == template)
+                .map(move |(slug, ch)| (c, slug.as_str(), ch))
+        })
+}
+
 /// A template's params (composition spec §1): names, defaults that fit,
 /// a shown template that can be shown by itself, and a change that every
 /// instance still fits (`badInstance`).
@@ -456,7 +867,7 @@ fn template_problems(component: &Component, ctx: &Context<'_>) -> Vec<Problem> {
             errors.push(Problem::new(
                 at.clone(),
                 Code::Unsupported,
-                "a component's params hold values for now; ones that hold a component come with children",
+                "a component's params hold values for now; ones that hold a component aren't built yet",
             ));
             continue;
         }
@@ -485,10 +896,23 @@ fn template_problems(component: &Component, ctx: &Context<'_>) -> Vec<Problem> {
             .components
             .values()
             .filter(|c| c.template.as_deref() == Some(component.id.as_str()));
-        let broken = compose::broken_instances(
+        let mut broken = compose::broken_instances(
             &component.params,
             instances.map(|c| (c.name.as_str(), &c.param_bindings, false)),
         );
+        // Children are instances too, and must still fit (composition spec §8).
+        for (container, slug, child) in containers_of(&component.id, ctx.components) {
+            if container.id == component.id {
+                continue;
+            }
+            let why: Vec<String> = child_problems(child, component, container, ctx.evaluator)
+                .into_iter()
+                .map(|p| p.message)
+                .collect();
+            if !why.is_empty() {
+                broken.push((format!("{slug}, in {}", container.name), why));
+            }
+        }
         if !broken.is_empty() {
             let list: Vec<String> = broken
                 .iter()

@@ -413,13 +413,9 @@ impl EntityKind for Component {
             self.slug = flow::derive_slug_for("component", &self.name, &taken);
         }
         let components = read(&app.components).clone();
-        // An instance is kept, and checked, with its template's body
-        // (composition spec §2).
-        if let Some(template) = self.template.as_ref().and_then(|t| components.get(t))
-            && !template.is_instance()
-        {
-            *self = self.instance_of(template);
-        }
+        // An instance is kept, and checked, with its template's body, and
+        // children as parts (composition spec §2, §8).
+        *self = self.filled(&components);
         let others: BTreeMap<ComponentId, Component> = components
             .values()
             .filter(|c| c.id != self.id && c.show.is_some())
@@ -441,21 +437,22 @@ impl EntityKind for Component {
     }
 
     /// Shows it, or stops showing it, and replaces its params' cells, its
-    /// bindings and their helpers' cells, which live under its slug. A
-    /// template's instances take its new body (composition spec §1).
+    /// bindings and their helpers' cells, which live under its slug. Its
+    /// instances, and every component it's a child of at any depth, take
+    /// its new body (composition spec §1, §8).
     fn apply(&self, app: &App) -> Result<(), SaveError> {
         app.apply_component(self)?;
-        if self.is_instance() {
-            return Ok(());
-        }
-        let instances: Vec<Component> = read(&app.components)
+        let mut all = read(&app.components).clone();
+        all.insert(self.id.clone(), self.clone());
+        let changed: Vec<Component> = all
             .values()
-            .filter(|c| c.template.as_deref() == Some(self.id.as_str()))
-            .map(|c| c.instance_of(self))
+            .filter(|c| c.id != self.id)
+            .map(|c| c.filled(&all))
+            .filter(|c| all.get(&c.id) != Some(c))
             .collect();
-        for instance in instances {
-            app.apply_component(&instance)?;
-            crate::write(&app.components).insert(instance.id.clone(), instance);
+        for c in changed {
+            app.apply_component(&c)?;
+            crate::write(&app.components).insert(c.id.clone(), c);
         }
         Ok(())
     }
@@ -463,10 +460,15 @@ impl EntityKind for Component {
     /// A template with instances stays until they're deleted (composition
     /// spec §5).
     fn deletable(app: &App, id: &str) -> Result<(), String> {
-        let instances: Vec<String> = read(&app.components)
+        let components = read(&app.components);
+        let instances: Vec<String> = components
             .values()
             .filter(|c| c.template.as_deref() == Some(id))
             .map(|c| format!("{:?}", c.name))
+            .chain(
+                component::containers_of(id, &components)
+                    .map(|(c, slug, _)| format!("{slug:?} in {:?}", c.name)),
+            )
             .collect();
         if instances.is_empty() {
             Ok(())
@@ -493,14 +495,11 @@ impl EntityKind for Component {
         }
         app.forget_component(id);
         // An instance's runs of its template's flows end with it.
+        // So do its children's.
         let flows = read(&app.flows).clone();
         let components = read(&app.components).clone();
-        let templates: BTreeSet<&str> = components
-            .values()
-            .filter(|c| c.is_template())
-            .map(|c| c.id.as_str())
-            .collect();
-        crate::flows::place_owned(&app.runtime, &templates, &flows, &components);
+        let owners: BTreeSet<&str> = components.keys().map(String::as_str).collect();
+        crate::flows::place_owned(&app.runtime, &owners, &flows, &components);
         Ok(())
     }
 
@@ -544,12 +543,19 @@ impl App {
         }
         // So do its flows' homes, and an instance runs its template's
         // flows (composition spec §2).
+        // Its children, before and after, run their templates' flows.
         let flows = read(&app.flows).clone();
         let mut components = read(&app.components).clone();
+        let before: Vec<String> = components
+            .get(&this.id)
+            .map(|c| c.parts.iter().map(|p| p.template.clone()).collect())
+            .unwrap_or_default();
         components.insert(this.id.clone(), this.clone());
         let owners: BTreeSet<&str> = [Some(this.id.as_str()), this.template.as_deref()]
             .into_iter()
             .flatten()
+            .chain(before.iter().map(String::as_str))
+            .chain(this.parts.iter().map(|p| p.template.as_str()))
             .collect();
         crate::flows::place_owned(&app.runtime, &owners, &flows, &components);
         Ok(())

@@ -151,6 +151,18 @@ pub fn check_bindings(
     bindings: &BTreeMap<String, Source<Json>>,
     for_each: bool,
 ) -> Vec<Problem> {
+    check_bindings_in(defs, bindings, for_each, None)
+}
+
+/// [`check_bindings`] for an instance placed inside a template whose
+/// params are `outer`: a child of a component (composition §8), whose
+/// bindings read its container's `params`.
+pub fn check_bindings_in(
+    defs: &BTreeMap<String, ParamDef>,
+    bindings: &BTreeMap<String, Source<Json>>,
+    for_each: bool,
+    outer: Option<&BTreeMap<String, ParamDef>>,
+) -> Vec<Problem> {
     let mut out = Vec::new();
     let at = |name: &str| vec![key("params"), key(name)];
     for (name, source) in bindings {
@@ -192,7 +204,15 @@ pub fn check_bindings(
             }
         }
         source.walk(&mut at(name), &mut |path, part| {
-            if let Part::Ref(Ref::Scope { scope, .. }) = part {
+            if let Part::Ref(Ref::Scope { scope, path: rest }) = part {
+                if let (ScopeName::Params, Some(outer)) = (scope, outer) {
+                    if let Some((code, message)) =
+                        crate::binding::scope_problem(*scope, rest, outer)
+                    {
+                        out.push(Problem::new(path.clone(), code, message));
+                    }
+                    return;
+                }
                 let ok = *scope == ScopeName::Item && for_each;
                 if !ok {
                     out.push(Problem::new(

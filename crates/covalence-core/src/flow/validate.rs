@@ -94,6 +94,11 @@ pub enum Code {
     RecursiveTemplate,
     /// Instances nested more than 16 deep.
     TooDeep,
+    /// A child on a control that lacks a capability its template's control
+    /// needs (composition §8).
+    DoesNotFit,
+    /// A child that leaves one of its template's controls unmapped.
+    UnmappedControl,
     /// A `{scope}` ref to a name that isn't in scope there (dataflow §8).
     NotInScope,
     // Warnings.

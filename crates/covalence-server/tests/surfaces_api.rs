@@ -1454,6 +1454,32 @@ async fn component_instances_survive_a_restart() {
         )
     };
     let server = start();
+    let key = create(
+        &server,
+        "/components",
+        "component",
+        json!({
+            "name": "Tally key", "controls": [{ "id": "key", "inputs": ["momentary"], "outputs": ["image"] }],
+            "params": { "camera": { "type": "string", "required": true } },
+            "bindings": [{
+                "id": "look", "control": "key",
+                "props": { "label": { "ref": { "scope": "params", "path": ["camera"] } } },
+                "helpers": { "latched": { "use": "toggle" } },
+            }],
+        }),
+    )
+    .await;
+    create(
+        &server,
+        "/flows",
+        "flow",
+        json!({
+            "name": "Pick", "enabled": true, "concurrency": "parallel", "owner": id(&key),
+            "triggers": [{ "kind": "event", "from": { "controls": "key" }, "event": "press" }],
+            "body": [{ "id": "pick", "kind": "set", "path": "vars.selected", "value": "params.camera" }],
+        }),
+    )
+    .await;
     let template = create(
         &server,
         "/components",
@@ -1465,6 +1491,11 @@ async fn component_instances_survive_a_restart() {
                 "id": "name", "control": "k0",
                 "props": { "label": { "ref": { "scope": "params", "path": ["camera"] } } },
             }],
+            "children": { "tally": {
+                "template": id(&key),
+                "params": { "camera": { "ref": { "scope": "params", "path": ["camera"] } } },
+                "controls": { "key": "k1" },
+            } },
         }),
     )
     .await;
@@ -1484,6 +1515,20 @@ async fn component_instances_survive_a_restart() {
                 .then_some(())
         })
         .await;
+    // Its child comes back with it (composition spec §8).
+    for path in [
+        "component.camC.parts.tally.params.camera",
+        "component.camC.parts.tally.controls.key.latched",
+        "component.camC.parts.tally.flows.pick.running",
+    ] {
+        server.eventually(WAIT, path, || server.value(path)).await;
+    }
+    assert_eq!(
+        server
+            .value("component.camC.parts.tally.params.camera")
+            .await,
+        Some(json!("Cam C"))
+    );
     let problems = server.get("/components/problems").await;
     assert_eq!(problems, json!([]), "its binding evaluates: {problems}");
 }
@@ -1686,4 +1731,265 @@ async fn a_templates_owned_flow_runs_per_instance() {
             .is_some()
     );
     let _ = pick;
+}
+
+/// composition spec §8: a page with two "Camera strip" children, each with
+/// a "Tally key" child. Params pass down one binding at a time, helpers and
+/// owned flows live under each child's home, a press is made inside the
+/// chain of children it's in, and saving checks fit, coverage and recursion.
+#[tokio::test(flavor = "multi_thread")]
+async fn children_nest_and_pass_their_params_down() {
+    let server = Server::start();
+    let addr = server.listen().await;
+    let key = json!([{ "id": "key", "inputs": ["momentary"], "outputs": ["image"] }]);
+    let tally = create(
+        &server,
+        "/components",
+        "component",
+        json!({
+            "name": "Tally key", "controls": key,
+            "params": {
+                "camera": { "type": "string", "required": true },
+                "label": { "type": "string", "default": "?" },
+            },
+            "bindings": [{
+                "id": "look", "control": "key",
+                "props": { "label": { "ref": { "scope": "params", "path": ["label"] } } },
+                "helpers": { "latched": { "use": "toggle" } },
+            }],
+        }),
+    )
+    .await;
+    let strip = create(
+        &server,
+        "/components",
+        "component",
+        json!({
+            "name": "Camera strip",
+            "controls": [
+                { "id": "tally", "inputs": ["momentary"], "outputs": ["image"] },
+                { "id": "rec", "inputs": ["momentary"], "outputs": ["image"] },
+            ],
+            "params": { "camera": { "type": "string", "required": true } },
+            "children": { "tally": {
+                "template": id(&tally),
+                "params": {
+                    "camera": { "ref": { "scope": "params", "path": ["camera"] } },
+                    "label": { "expr": "params.camera + ' tally'" },
+                },
+                "controls": { "key": "tally" },
+            } },
+            "bindings": [{ "id": "rec", "control": "rec", "props": { "label": "REC" } }],
+        }),
+    )
+    .await;
+    let child = |camera: &str, tally: &str, rec: &str| json!({ "template": id(&strip), "params": { "camera": camera }, "controls": { "tally": tally, "rec": rec } });
+    let page = create(
+        &server,
+        "/components",
+        "component",
+        json!({
+            "name": "Cameras", "controls": keys(15), "show": {},
+            "children": { "camA": child("Cam A", "k0", "k5"), "camB": child("Cam B", "k1", "k6") },
+        }),
+    )
+    .await;
+    // Stored as written: children aren't expanded on the wire.
+    assert_eq!(page["children"]["camB"], child("Cam B", "k1", "k6"));
+    assert!(page.get("parts").is_none());
+
+    // Each child's params are cells under its home, read from its container's.
+    let tally_b = "component.cameras.parts.camB.parts.tally";
+    let label = format!("{tally_b}.params.label");
+    server
+        .eventually(WAIT, &label, || async {
+            (server.value(&label).await == Some(json!("Cam B tally"))).then_some(())
+        })
+        .await;
+    assert_eq!(
+        server
+            .value("component.cameras.parts.camA.params.camera")
+            .await,
+        Some(json!("Cam A"))
+    );
+    let problems = server.get("/components/problems").await;
+    assert_eq!(
+        problems,
+        json!([]),
+        "the children's bindings evaluate: {problems}"
+    );
+
+    // One flow owned by the key's template runs for each key.
+    create(
+        &server,
+        "/flows",
+        "flow",
+        json!({
+            "name": "Pick", "enabled": true, "concurrency": "parallel", "owner": id(&tally),
+            "triggers": [{ "kind": "event", "from": { "controls": "key" }, "event": "press" }],
+            "body": [{ "id": "pick", "kind": "set", "path": "vars.selected", "value": "params.camera" }],
+        }),
+    )
+    .await;
+    for path in [
+        "component.cameras.parts.camA.parts.tally.flows.pick.running".to_owned(),
+        format!("{tally_b}.flows.pick.running"),
+    ] {
+        server.eventually(WAIT, &path, || server.value(&path)).await;
+    }
+    create(
+        &server,
+        "/flows",
+        "flow",
+        json!({
+            "name": "Note", "enabled": true, "concurrency": "parallel",
+            "triggers": [{ "kind": "event", "from": { "component": id(&tally) }, "event": "press" }],
+            "body": [{
+                "id": "note", "kind": "set", "path": "vars.seen",
+                "value": "[trigger.component, trigger.control, trigger.instance.map(l => l.instance)]",
+            }],
+        }),
+    )
+    .await;
+
+    let deck = create(
+        &server,
+        "/surfaces",
+        "surface",
+        json!({ "name": "FOH deck", "model": "virtual.deck15", "startComponent": id(&page) }),
+    )
+    .await;
+    let mut ws = connect(&addr, id(&deck)).await;
+    send(&mut ws, attach("fohDeck")).await;
+    server
+        .eventually(WAIT, "the deck to attach", || async {
+            (server.value("surface.fohDeck.current.main").await == Some(json!("cameras")))
+                .then_some(())
+        })
+        .await;
+    send(&mut ws, input("fohDeck", "k1", "down", 1.0)).await;
+    send(&mut ws, input("fohDeck", "k1", "up", 1.1)).await;
+    server
+        .eventually(WAIT, "Cam B's tally key", || async {
+            (server.value("vars.selected").await == Some(json!("Cam B"))).then_some(())
+        })
+        .await;
+    let strip_b = format!("{}/camB", id(&page));
+    let tally_b_id = format!("{strip_b}/tally");
+    server
+        .eventually(WAIT, "the free-standing flow", || async {
+            server.value("vars.seen").await
+        })
+        .await;
+    assert_eq!(
+        server.value("vars.seen").await,
+        Some(json!([id(&page), "k1", [strip_b, tally_b_id]]))
+    );
+    let latched = format!("{tally_b}.controls.key.latched");
+    server
+        .eventually(WAIT, &latched, || async {
+            (server.value(&latched).await == Some(json!(true))).then_some(())
+        })
+        .await;
+
+    // The press is journaled inside the strip and its key, named by slug.
+    let inside = server
+        .get(&format!("/journal?from=1&limit=1000&instance={tally_b_id}"))
+        .await;
+    let press = inside
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["kind"] == "event" && e["data"]["event"] == "press")
+        .unwrap_or_else(|| panic!("no press inside Cam B's key: {inside}"));
+    assert_eq!(
+        press["instance"],
+        json!([
+            { "template": id(&strip), "instance": strip_b, "name": "camB", "templateName": "Camera strip" },
+            { "template": id(&tally), "instance": tally_b_id, "name": "tally", "templateName": "Tally key" },
+        ])
+    );
+
+    // Saving checks where children are placed.
+    let (status, body) = edit(&server, id(&page), |c| {
+        c["children"]["camC"] = json!({ "template": id(&strip), "params": { "camera": "Cam C" }, "controls": { "tally": "k1" } });
+    })
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(
+        codes(&body),
+        [
+            (
+                json!(["children", "camC", "controls"]),
+                "unmappedControl".into()
+            ),
+            (
+                json!(["children", "camC", "controls", "tally"]),
+                "duplicateControl".into()
+            ),
+        ]
+    );
+    let (status, body) = server
+        .post(
+            "/components",
+            json!({
+                "name": "Dial", "controls": [{ "id": "d", "inputs": ["relative"] }],
+                "children": { "t": { "template": id(&tally), "params": { "camera": "x" }, "controls": { "key": "d" } } },
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(
+        codes(&body),
+        [(
+            json!(["children", "t", "controls", "key"]),
+            "doesNotFit".into()
+        )]
+    );
+    let (status, body) = edit(&server, id(&tally), |c| {
+        c["controls"] = json!([
+            { "id": "key", "inputs": ["momentary"], "outputs": ["image"] },
+            { "id": "led", "outputs": ["image"] },
+        ]);
+        c["children"] = json!({ "s": { "template": id(&strip), "params": { "camera": "x" }, "controls": { "tally": "led", "rec": "key" } } });
+    })
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    let found = codes(&body);
+    assert!(
+        found.contains(&(json!(["children"]), "recursiveTemplate".into())),
+        "{found:?}"
+    );
+
+    // A change a child can't satisfy names it, and a used template stays.
+    let (status, body) = edit(&server, id(&tally), |c| {
+        c["params"]["input"] = json!({ "type": "number", "required": true });
+    })
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(codes(&body), [(json!(["params"]), "badInstance".into())]);
+    assert!(
+        body.to_string().contains("tally, in Camera strip"),
+        "{body}"
+    );
+    assert_eq!(
+        server.delete(&format!("/components/{}", id(&tally))).await,
+        StatusCode::CONFLICT
+    );
+
+    // A fix to the key reaches every use, two levels down.
+    let (status, body) = edit(&server, id(&tally), |c| {
+        c["bindings"][0]["props"]["label"] = json!({ "expr": "'[' + params.label + ']'" });
+        c["bindings"][0]["helpers"]["armed"] = json!({ "use": "toggle" });
+    })
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    for strip in ["camA", "camB"] {
+        let armed = format!("component.cameras.parts.{strip}.parts.tally.controls.key.armed");
+        server
+            .eventually(WAIT, &armed, || server.value(&armed))
+            .await;
+    }
+    let problems = server.get("/components/problems").await;
+    assert_eq!(problems, json!([]), "{problems}");
 }

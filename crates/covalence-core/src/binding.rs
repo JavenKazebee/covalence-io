@@ -43,6 +43,12 @@ pub struct ControlBinding {
     /// fills this in when it has params.
     #[serde(skip)]
     pub params: Option<StatePath>,
+    /// For a binding inside a child (composition spec §8): the child's home
+    /// and the control's ID in the child's template, where its helpers'
+    /// cells are, `<child's home>.controls.<id>.<name>`. `control` is the
+    /// shown component's control the child is on. Not stored.
+    #[serde(skip)]
+    pub part: Option<(StatePath, String)>,
     pub control: String,
     #[serde(default)]
     pub props: BTreeMap<Prop, Binding>,
@@ -350,15 +356,18 @@ impl ControlBinding {
             .filter(|(_, h)| h.scope == HelperScope::Component)
             .map(|(k, h)| {
                 let name = h.name.clone().unwrap_or_else(|| k.clone());
-                let home = StatePath::new(
-                    crate::source::Root::Component.as_str(),
-                    vec![
-                        key(component_slug),
-                        key("controls"),
-                        key(&self.control),
-                        key(&name),
-                    ],
-                );
+                let home = match &self.part {
+                    Some((part, control)) => part.key("controls").key(control).key(&name),
+                    None => StatePath::new(
+                        crate::source::Root::Component.as_str(),
+                        vec![
+                            key(component_slug),
+                            key("controls"),
+                            key(&self.control),
+                            key(&name),
+                        ],
+                    ),
+                };
                 let from = EventSource::Component {
                     component: self.component.clone(),
                     controls: Some(Selector::One(self.control.clone())),

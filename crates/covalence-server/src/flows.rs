@@ -286,9 +286,19 @@ pub(crate) fn place(
 }
 
 /// Who runs a flow `component` owns (composition spec §2): the component
-/// itself, unless it's an abstract template, and each instance of it.
+/// itself, unless it's an abstract template, each instance of it, and each
+/// child of it on a shown component, at any depth (composition spec §8).
 fn owners(component: &Component, components: &BTreeMap<ComponentId, Component>) -> Vec<Owner> {
     let itself = (!component.is_abstract()).then(|| Owner::of(component));
+    let parts = components
+        .values()
+        .filter(|c| c.show.is_some() && !c.is_abstract())
+        .flat_map(|c| {
+            c.parts
+                .iter()
+                .filter(|p| p.template == component.id)
+                .map(move |p| Owner::part(c, p))
+        });
     itself
         .into_iter()
         .chain(
@@ -297,6 +307,7 @@ fn owners(component: &Component, components: &BTreeMap<ComponentId, Component>) 
                 .filter(|c| c.template.as_deref() == Some(component.id.as_str()))
                 .map(Owner::of),
         )
+        .chain(parts)
         .collect()
 }
 
@@ -474,9 +485,15 @@ impl App {
         for link in links {
             for (field, named) in [("instance", "name"), ("template", "templateName")] {
                 let id = link.get(field).and_then(JsonValue::as_str);
+                // A child is named by its slug: `<container>/<slug>`
+                // (composition spec §8).
                 let name = id
                     .and_then(|id| flows.get(id).map(|f| f.name.clone()))
-                    .or_else(|| id.and_then(|id| components.get(id).map(|c| c.name.clone())));
+                    .or_else(|| id.and_then(|id| components.get(id).map(|c| c.name.clone())))
+                    .or_else(|| {
+                        id.and_then(|id| id.rsplit_once('/'))
+                            .map(|(_, slug)| slug.to_owned())
+                    });
                 if let (Some(name), Some(obj)) = (name, link.as_object_mut()) {
                     obj.insert(named.into(), JsonValue::String(name));
                 }

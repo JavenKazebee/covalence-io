@@ -86,6 +86,17 @@ export interface Component {
   template?: string;
   /** A template's param definitions, or an instance's bindings of them. */
   params?: Record<string, unknown>;
+  /** Components on some of its controls, by slug (composition spec §8). */
+  children?: Record<string, Child>;
+}
+
+/** A component inside another, on some of its controls (composition spec §8). */
+export interface Child {
+  template: string;
+  /** Bound in the container's scope: `{ref: {scope: "params", …}}` reads the container's. */
+  params?: Record<string, unknown>;
+  /** Each of its template's controls, to one of the container's. */
+  controls: Record<string, string>;
 }
 
 /**

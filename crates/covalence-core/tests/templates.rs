@@ -387,7 +387,8 @@ fn owner(slug: &str) -> Owner {
     Owner {
         component: "L".into(),
         home: StatePath::new("component", vec![PathSegment::Key(slug.into())]),
-        instance: None,
+        chain: Vec::new(),
+        controls: None,
     }
 }
 
